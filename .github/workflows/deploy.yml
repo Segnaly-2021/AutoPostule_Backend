@@ -45,12 +45,23 @@ jobs:
           # Push it
           docker push $IMAGE_PATH
 
-      # 5. Tell Cloud Run to launch the new container!
+      # 5. Tell Cloud Run to launch the new container and inject the secrets!
       - name: Deploy to Cloud Run
         uses: google-github-actions/deploy-cloudrun@v2
         with:
           service: ${{ env.SERVICE_NAME }}
           region: ${{ env.REGION }}
           image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
-          # Allow anyone on the internet to hit this API (your frontend will need access)
           flags: '--allow-unauthenticated'
+          env_vars: |
+            JWT_SECRET=${{ secrets.JWT_SECRET }}
+            DATABASE_URL=${{ secrets.DATABASE_URL }}
+            STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}
+            STRIPE_API_KEY=${{ secrets.STRIPE_API_KEY }}
+            REPOSITORY_TYPE=${{ secrets.REPOSITORY_TYPE }}
+            GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
+            ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
+            OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+            BASIC_PRICE_ID=${{ secrets.BASIC_PRICE_ID }}
+            PREMIUM_PRICE_ID=${{ secrets.PREMIUM_PRICE_ID }}
+            ENCRYPTION_KEY=${{ secrets.ENCRYPTION_KEY }}
