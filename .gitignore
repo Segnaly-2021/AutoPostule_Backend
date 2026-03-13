@@ -1,1 +1,14 @@
+# Environments
 .env
+venv/
+env/
+
+# GCP Service Account 
+*.json
+
+# Python Cache
+__pycache__/
+*.pyc
+
+
+.vscode/

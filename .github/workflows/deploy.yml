@@ -1,0 +1,56 @@
+name: Deploy Backend to Cloud Run
+
+# This tells GitHub to run this script EVERY time you push to the 'main' branch
+on:
+  push:
+    branches:
+      - main
+
+# Define our variables
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  REGION: europe-west9
+  REPO_NAME: autopostule-repo
+  SERVICE_NAME: autopostule-api
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Download your code onto the GitHub runner server
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # 2. Authenticate to Google Cloud using your secret JSON key
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.GCP_CREDENTIALS }}'
+
+      # 3. Log into your Artifact Registry vault in Paris
+      - name: Configure Docker for Artifact Registry
+        run: |
+          gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev
+
+      # 4. Build the Docker container and push it to the vault
+      - name: Build and Push Docker Image
+        run: |
+          IMAGE_PATH="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE_NAME }}:${{ github.sha }}"
+          
+          # Build it
+          docker build -t $IMAGE_PATH .
+          
+          # Push it
+          docker push $IMAGE_PATH
+
+      # 5. Tell Cloud Run to launch the new container!
+      - name: Deploy to Cloud Run
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ env.SERVICE_NAME }}
+          region: ${{ env.REGION }}
+          image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
+          # Allow anyone on the internet to hit this API (your frontend will need access)
+          flags: '--allow-unauthenticated'
