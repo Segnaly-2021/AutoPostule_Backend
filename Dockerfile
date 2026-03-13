@@ -1,5 +1,5 @@
 # 1. Use an official, lightweight Python image
-FROM python:3.13-9-slim
+FROM python:3.13.9-slim
 
 # 2. Stop Python from generating .pyc files and enable live logging
 ENV PYTHONDONTWRITEBYTECODE=1
