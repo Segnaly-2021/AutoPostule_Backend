@@ -4,6 +4,7 @@ uvicorn==0.41.0
 python-multipart
 python-dotenv==1.2.2
 pydantic==2.12.5
+email-validator==2.3.0
 pydantic-settings==2.12.0
 websockets==15.0.1
 
