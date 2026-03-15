@@ -2,6 +2,7 @@
 # user_repo_db.py
 # =============================================================================
 from uuid import UUID
+from typing import List
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,7 +27,18 @@ class UserRepoDB(UserRepository):
             raise UserNotFoundError(f"User {user_id} not found")
         return self._map_to_entity(user_db)
 
-    async def get_all(self, skip: int, take: int) -> list[User]:
+    # ✅ FIXED: Added missing get_by_email method
+    async def get_by_email(self, email: str) -> User:
+        result = await self.session.execute(
+            select(UserDB).where(UserDB.email == email)
+        )
+        user_db = result.scalar_one_or_none()
+        if user_db is None:
+            raise UserNotFoundError(f"User with email {email} not found")
+        return self._map_to_entity(user_db)
+
+    # ✅ FIXED: Made skip/take optional so it safely matches InMemory interface
+    async def get_all(self, skip: int = 0, take: int = 100) -> List[User]:
         result = await self.session.execute(select(UserDB).offset(skip).limit(take))
         return [self._map_to_entity(u) for u in result.scalars().all()]
 
@@ -37,7 +49,7 @@ class UserRepoDB(UserRepository):
             firstname=user.firstname,
             lastname=user.lastname,
             email=user.email,
-            is_active=user.is_active,
+            # ❌ is_active safely removed
             resume_path=user.resume_path,
             phone_number=user.phone_number,
             current_position=user.current_position,
@@ -56,14 +68,18 @@ class UserRepoDB(UserRepository):
             raise UserNotFoundError(f"User {user_id} not found")
         await self.session.delete(user_db)
 
-    async def update(self, user_id: UUID, data: dict) -> None:
+    # ✅ FIXED: Return type is now User, perfectly matching the In-Memory repo
+    async def update(self, user_id: UUID, data: dict) -> User:
         result = await self.session.execute(select(UserDB).where(UserDB.id == user_id))
         user_db = result.scalar_one_or_none()
         if user_db is None:
             raise UserNotFoundError(f"User {user_id} not found")
+            
         for key, value in data.items():
             if key not in self.IMMUTABLE_FIELDS and hasattr(user_db, key):
                 setattr(user_db, key, value)
+                
+        return self._map_to_entity(user_db)
 
     def _map_to_entity(self, user_db: UserDB) -> User:
         return User(
@@ -71,7 +87,7 @@ class UserRepoDB(UserRepository):
             firstname=user_db.firstname,
             lastname=user_db.lastname,
             email=user_db.email,
-            is_active=user_db.is_active,
+            # ❌ is_active safely removed
             resume_path=user_db.resume_path,
             phone_number=user_db.phone_number,
             current_position=user_db.current_position,

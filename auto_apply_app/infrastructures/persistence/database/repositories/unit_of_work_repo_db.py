@@ -16,17 +16,23 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
 
     async def __aenter__(self):
         self.session = self.session_factory()
+        
+        # ✅ Standardized names to perfectly match InMemoryUnitOfWork
         self.user_repo = UserRepoDB(self.session)
         self.auth_repo = AuthRepoDB(self.session)
         self.subscription_repo = SubscriptionRepoDB(self.session)
-        self.job_offer_repo = JobOfferRepoDB(self.session)
-        self.job_search_repo = JobSearchRepoDB(self.session)
+        self.job_repo = JobOfferRepoDB(self.session)       # Renamed from job_offer_repo
+        self.search_repo = JobSearchRepoDB(self.session)   # Renamed from job_search_repo
         self.user_pref_repo = UserPreferencesRepoDB(self.session)
         self.board_cred_repo = BoardCredentialRepoDB(self.session)
-        return await super().__aenter__()
+        
+        # ✅ Return self for the 'async with ... as uow' context manager
+        return self
 
     async def __aexit__(self, exc_type, exc_value, traceback):
-        await super().__aexit__(exc_type, exc_value, traceback)
+        # We handle rollbacks in the UoW base class or Use Cases, but let's ensure cleanup
+        if exc_type is not None:
+            await self.rollback()
         await self.session.close()
 
     async def commit(self):

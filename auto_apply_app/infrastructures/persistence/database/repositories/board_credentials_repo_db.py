@@ -2,28 +2,38 @@
 # board_credentials_repo_db.py
 # =============================================================================
 from uuid import UUID
-from typing import Optional
-from sqlalchemy import select
+from typing import Optional, List
+from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auto_apply_app.domain.entities.board_credentials import BoardCredential
 from auto_apply_app.infrastructures.persistence.database.models.schema import BoardCredentialDB
+from auto_apply_app.application.repositories.board_credentials_repo import BoardCredentialsRepository # ✅ Added import
 
 
-class BoardCredentialRepoDB:
+class BoardCredentialRepoDB(BoardCredentialsRepository): # ✅ Added inheritance
     def __init__(self, session: AsyncSession):
         self.session = session
 
+    # ✅ Standardized parameter name to board_name
     async def get_by_user_and_board(
-        self, user_id: UUID, job_board: str
+        self, user_id: UUID, board_name: str
     ) -> Optional[BoardCredential]:
         result = await self.session.execute(
             select(BoardCredentialDB)
             .where(BoardCredentialDB.user_id == user_id)
-            .where(BoardCredentialDB.job_board == job_board.lower())
+            .where(BoardCredentialDB.job_board == board_name.lower())
         )
         cred_db = result.scalar_one_or_none()
         return self._map_to_entity(cred_db) if cred_db else None
+
+    # ✅ ADDED: Missing method to fetch all credentials for a user
+    async def get_all_by_user(self, user_id: UUID) -> List[BoardCredential]:
+        result = await self.session.execute(
+            select(BoardCredentialDB)
+            .where(BoardCredentialDB.user_id == user_id)
+        )
+        return [self._map_to_entity(cred) for cred in result.scalars().all()]
 
     async def save(self, credential: BoardCredential) -> None:
         cred_db = BoardCredentialDB(
@@ -39,15 +49,23 @@ class BoardCredentialRepoDB:
         )
         await self.session.merge(cred_db)
 
-    async def delete(self, user_id: UUID, job_board: str) -> None:
+    # ✅ Standardized parameter name to board_name
+    async def delete(self, user_id: UUID, board_name: str) -> None:
         result = await self.session.execute(
             select(BoardCredentialDB)
             .where(BoardCredentialDB.user_id == user_id)
-            .where(BoardCredentialDB.job_board == job_board.lower())
+            .where(BoardCredentialDB.job_board == board_name.lower())
         )
         cred_db = result.scalar_one_or_none()
         if cred_db:
             await self.session.delete(cred_db)
+
+    # ✅ ADDED: Missing method for account cleanup
+    async def delete_all_by_user(self, user_id: UUID) -> None:
+        await self.session.execute(
+            delete(BoardCredentialDB)
+            .where(BoardCredentialDB.user_id == user_id)
+        )
 
     def _map_to_entity(self, cred_db: BoardCredentialDB) -> BoardCredential:
         return BoardCredential(

@@ -1,3 +1,6 @@
+# =============================================================================
+# subscription_repo_db.py
+# =============================================================================
 from uuid import UUID
 from typing import Optional
 from sqlalchemy import select
@@ -52,6 +55,7 @@ class SubscriptionRepoDB(SubscriptionRepository):
             is_active=subscription.is_active,
             is_past_due=subscription.is_past_due,
             grace_days=subscription.grace_days,
+            ai_credits_balance=subscription.ai_credits_balance, # ✅ Added AI Credits
             current_period_start=subscription.current_period_start,
             current_period_end=subscription.current_period_end,
             cancel_at=subscription.cancel_at,
@@ -63,12 +67,14 @@ class SubscriptionRepoDB(SubscriptionRepository):
 
     def _map_to_entity(self, sub_db: UserSubscriptionDB) -> UserSubscription:
         return UserSubscription(
+            # Optional: if UserSubscription extends Entity, you might need `id=sub_db.user_id` here too
             user_id=sub_db.user_id,
             email=sub_db.email,
             account_type=sub_db.account_type,
             is_active=sub_db.is_active,
             is_past_due=sub_db.is_past_due,
             grace_days=sub_db.grace_days,
+            ai_credits_balance=sub_db.ai_credits_balance, # ✅ Added AI Credits
             current_period_start=sub_db.current_period_start,
             current_period_end=sub_db.current_period_end,
             cancel_at=sub_db.cancel_at,

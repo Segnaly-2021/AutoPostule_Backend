@@ -1,3 +1,6 @@
+# =============================================================================
+# job_offer_repo_db.py
+# =============================================================================
 from uuid import UUID
 from datetime import datetime, timedelta, UTC, timezone
 from typing import Set, List, Tuple, Dict
@@ -6,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from auto_apply_app.domain.entities.job_offer import JobOffer
 from auto_apply_app.application.repositories.job_offer_repo import JobOfferRepository
-from auto_apply_app.infrastructures.persistence.database.models.schema import JobOfferDB, JobSearchDB
+from auto_apply_app.infrastructures.persistence.database.models.schema import JobOfferDB
 from auto_apply_app.domain.exceptions import JobNotFoundError
 from auto_apply_app.domain.value_objects import ApplicationStatus
 
@@ -33,6 +36,7 @@ class JobOfferRepoDB(JobOfferRepository):
             url=offer.url,
             form_url=offer.form_url,
             search_id=offer.search_id,
+            user_id=offer.user_id,  # ✅ FIXED: Added missing user_id
             company_name=offer.company_name,
             job_title=offer.job_title,
             location=offer.location,
@@ -101,8 +105,8 @@ class JobOfferRepoDB(JobOfferRepository):
         since_date = datetime.now(UTC) - timedelta(days=days)
         stmt = (
             select(JobOfferDB.job_posting_id)
-            .join(JobSearchDB, JobOfferDB.search_id == JobSearchDB.id)
-            .where(JobSearchDB.user_id == user_id)
+            # ✅ OPTIMIZED: Removed join(JobSearchDB), querying user_id directly
+            .where(JobOfferDB.user_id == user_id) 
             .where(JobOfferDB.application_date >= since_date)
             .where(JobOfferDB.job_posting_id.isnot(None))
         )
@@ -174,19 +178,17 @@ class JobOfferRepoDB(JobOfferRepository):
         Paginated, filtered list of applications for the tracker page.
         Returns (page_of_jobs, total_filtered_count, aggregations_dict).
         """
-        # ── Base query: join to job_searches to filter by user ──────────────
+        # ── Base query: Optimized to query user_id directly ───────────────────
         base_stmt = (
             select(JobOfferDB)
-            .join(JobSearchDB, JobOfferDB.search_id == JobSearchDB.id)
-            .where(JobSearchDB.user_id == UUID(user_id))
+            .where(JobOfferDB.user_id == UUID(user_id))
             .where(JobOfferDB.status == status)
         )
 
         # ── Total unfiltered (before dynamic filters) ────────────────────────
         total_unfiltered_result = await self.session.execute(
             select(func.count(JobOfferDB.id))
-            .join(JobSearchDB, JobOfferDB.search_id == JobSearchDB.id)
-            .where(JobSearchDB.user_id == UUID(user_id))
+            .where(JobOfferDB.user_id == UUID(user_id))
             .where(JobOfferDB.status == status)
         )
         total_unfiltered = total_unfiltered_result.scalar_one()
@@ -287,8 +289,8 @@ class JobOfferRepoDB(JobOfferRepository):
         # ── Base: all submitted jobs for this user ────────────────────────────
         base_stmt = (
             select(JobOfferDB)
-            .join(JobSearchDB, JobOfferDB.search_id == JobSearchDB.id)
-            .where(JobSearchDB.user_id == UUID(user_id))
+            # ✅ OPTIMIZED: Removed join(JobSearchDB), querying user_id directly
+            .where(JobOfferDB.user_id == UUID(user_id))
             .where(JobOfferDB.status == status)
         )
 
@@ -355,6 +357,7 @@ class JobOfferRepoDB(JobOfferRepository):
             url=offer_db.url,
             form_url=offer_db.form_url,
             search_id=offer_db.search_id,
+            user_id=offer_db.user_id, # ✅ FIXED: Added missing user_id
             company_name=offer_db.company_name,
             job_title=offer_db.job_title,
             location=offer_db.location,

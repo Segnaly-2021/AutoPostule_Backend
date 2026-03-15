@@ -3,14 +3,15 @@
 # =============================================================================
 from uuid import UUID
 from typing import Optional
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auto_apply_app.domain.entities.user_preferences import UserPreferences
 from auto_apply_app.infrastructures.persistence.database.models.schema import UserPreferencesDB
+from auto_apply_app.application.repositories.preferences_repo import UserPreferencesRepository # ✅ Added import
 
 
-class UserPreferencesRepoDB:
+class UserPreferencesRepoDB(UserPreferencesRepository): # ✅ Added inheritance
     def __init__(self, session: AsyncSession):
         self.session = session
 
@@ -27,8 +28,16 @@ class UserPreferencesRepoDB:
             is_full_automation=preferences.is_full_automation,
             active_boards=preferences.active_boards,
             creativity_level=preferences.creativity_level,
+            ai_model=preferences.ai_model, # ✅ Added ai_model
         )
         await self.session.merge(pref_db)
+
+    # ✅ Added missing delete method
+    async def delete(self, user_id: UUID) -> None:
+        await self.session.execute(
+            delete(UserPreferencesDB).where(UserPreferencesDB.user_id == user_id)
+        )
+        # Note: session.commit() is handled by your Unit of Work
 
     def _map_to_entity(self, pref_db: UserPreferencesDB) -> UserPreferences:
         return UserPreferences(
@@ -37,6 +46,5 @@ class UserPreferencesRepoDB:
             is_full_automation=pref_db.is_full_automation,
             active_boards=pref_db.active_boards,
             creativity_level=pref_db.creativity_level,
+            ai_model=pref_db.ai_model, # ✅ Added ai_model
         )
-
-

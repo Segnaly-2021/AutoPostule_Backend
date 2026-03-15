@@ -81,6 +81,7 @@ class UserSubscriptionDB(Base):
         SQLEnum(ClientType),
         default=ClientType.FREE
     )
+    ai_credits_balance: Mapped[int] = mapped_column(Integer, default=0)
     is_active: Mapped[bool] = mapped_column(default=False)
     is_past_due: Mapped[bool] = mapped_column(default=False)
     grace_days: Mapped[int] = mapped_column(Integer, default=0)
@@ -108,6 +109,7 @@ class UserPreferencesDB(Base):
         primary_key=True
     )
     is_full_automation: Mapped[bool] = mapped_column(Boolean, default=False)
+    ai_model: Mapped[str] = mapped_column(String(50), default="gemini")
     # Store active_boards dict as JSONB: {"hellowork": true, "wttj": false, ...}
     active_boards: Mapped[dict] = mapped_column(JSONB, default=lambda: {
         'hellowork': True,
@@ -151,7 +153,10 @@ class JobSearchDB(Base):
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
     job_title: Mapped[str] = mapped_column(String(200))
-    job_board: Mapped[JobBoard] = mapped_column(SQLEnum(JobBoard, native_enum=False))
+    job_boards: Mapped[List[JobBoard]] = mapped_column(
+        ARRAY(SQLEnum(JobBoard, native_enum=False)), 
+        default=list
+    )
     search_status: Mapped[SearchStatus] = mapped_column(
         SQLEnum(SearchStatus, native_enum=False),
         default=SearchStatus.PENDING
@@ -180,6 +185,10 @@ class JobOfferDB(Base):
     search_id: Mapped[UUID] = mapped_column(
         ForeignKey("job_searches.id", ondelete="CASCADE"), index=True
     )
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    
     url: Mapped[str] = mapped_column(String(500), index=True)
     form_url: Mapped[str] = mapped_column(String(500))
     company_name: Mapped[str] = mapped_column(String(200), index=True)
@@ -201,5 +210,9 @@ class JobOfferDB(Base):
     )
     has_interview: Mapped[bool] = mapped_column(Boolean, default=False)
     has_response: Mapped[bool] = mapped_column(Boolean, default=False)
+    
+    # Optional but highly recommended: Add the back-reference relationship to UserDB
+    # In UserDB add: job_offers: Mapped[List["JobOfferDB"]] = relationship("JobOfferDB", back_populates="user")
+    user: Mapped["UserDB"] = relationship("UserDB", back_populates="job_offers") # In JobOfferDB
 
     search: Mapped["JobSearchDB"] = relationship("JobSearchDB", back_populates="job_offers")
