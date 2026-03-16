@@ -8,7 +8,7 @@ from auto_apply_app.application.service_ports.file_storage_port import FileStora
 class GCSFileStorageAdapter(FileStoragePort):
     def __init__(self):
         # We pull these directly from the environment
-        bucket_name = os.getenv("GCP_BUCKET_NAME")
+        bucket_name = os.getenv("GCP_RESUME_BUCKET")
         creds_json = os.getenv("GCP_CREDENTIALS")
         
         if not bucket_name or not creds_json:
