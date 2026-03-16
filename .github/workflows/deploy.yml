@@ -65,3 +65,6 @@ jobs:
             BASIC_PRICE_ID=${{ secrets.BASIC_PRICE_ID }}
             PREMIUM_PRICE_ID=${{ secrets.PREMIUM_PRICE_ID }}
             ENCRYPTION_KEY=${{ secrets.ENCRYPTION_KEY }}
+            GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}
+            GCP_RESUME_BUCKET=${{ secrets.GCP_RESUME_BUCKET }}
+            GCP_CREDENTIALS=${{secrets.GCP_CREDENTIALS }}
