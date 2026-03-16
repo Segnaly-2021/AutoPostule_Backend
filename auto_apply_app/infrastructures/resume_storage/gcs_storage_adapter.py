@@ -7,15 +7,25 @@ from auto_apply_app.application.service_ports.file_storage_port import FileStora
 
 class GCSFileStorageAdapter(FileStoragePort):
     def __init__(self):
-        # We pull these directly from the environment
         bucket_name = os.getenv("GCP_RESUME_BUCKET")
+        if not bucket_name:
+            raise ValueError("GCP_RESUME_BUCKET environment variable is missing.")
+
         creds_json = os.getenv("GCP_CREDENTIALS")
         
-        if not bucket_name or not creds_json:
-            raise ValueError("GCP Storage environment variables are missing.")
+        if creds_json:
+            # 💻 LOCAL DEV MODE: Parse the JSON string from your local .env file
+            try:
+                creds_dict = json.loads(creds_json)
+                self.client = storage.Client.from_service_account_info(creds_dict)
+                print("☁️ GCS Adapter initialized using local JSON credentials.")
+            except json.JSONDecodeError as e:
+                raise ValueError(f"CRITICAL: Failed to parse GCP_CREDENTIALS JSON. {e}")
+        else:
+            # 🚀 PRODUCTION MODE (Cloud Run): Automatically uses the native Service Account!
+            self.client = storage.Client()
+            print("☁️ GCS Adapter initialized using native Cloud Run Service Account.")
 
-        creds_dict = json.loads(creds_json)
-        self.client = storage.Client.from_service_account_info(creds_dict)
         self.bucket = self.client.bucket(bucket_name)
 
     def _upload_sync(self, blob_name: str, file_bytes: bytes, content_type: str) -> str:
