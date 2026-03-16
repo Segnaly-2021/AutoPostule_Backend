@@ -4,21 +4,28 @@ from typing import Optional
 
 @dataclass(frozen=True)
 class UserViewModel:
-  id: str
-  full_name: str
-  firstname: str
-  lastname: str
-  email: str
-  initials: str
-  phone_number: str = None
-  resume_path: str = None
-  current_position: str = None
-  current_company: str = None
-  school_type: str = None
-  graduation_year: str = None
-  major: str  = None
-  study_level: str = None
-  
+    id: str
+    full_name: str
+    firstname: str
+    lastname: str
+    email: str
+    initials: str
+    phone_number: str = None
+    resume_path: str = None
+    resume_file_name: str = None  # 🚨 NEW: The human-readable name
+    current_position: str = None
+    current_company: str = None
+    school_type: str = None
+    graduation_year: str = None
+    major: str  = None
+    study_level: str = None
+
+# 🚨 NEW: Specific response for the upload endpoint
+@dataclass(frozen=True)
+class UploadResumeViewModel:
+    message: str
+    resume_path: str
+    resume_file_name: str
 
 @dataclass(frozen=True)
 class LoginViewModel:

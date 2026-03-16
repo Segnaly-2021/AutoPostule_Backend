@@ -65,6 +65,7 @@ class UpdateUserRequest:
   user_current_position: str = None
   user_current_company: str = None
   user_resume_dir: Optional[str] = None 
+  user_resume_file_name: Optional[str] = None
   user_phone_number: Optional[str] = None
   user_school_type: Optional[str] = None
   user_graduation_year: Optional[str] = None
@@ -97,6 +98,8 @@ class UpdateUserRequest:
             params["email"] = self.user_email 
         if self.user_resume_dir is not None:
             params["resume_path"] = self.user_resume_dir  
+        if self.user_resume_file_name is not None:
+            params["resume_file_name"] = self.user_resume_file_name  
         if self.user_current_position is not None:
             params["current_position"] = self.user_current_position
         if self.user_current_company is not None:
@@ -125,6 +128,7 @@ class UserResponse:
   res_lname: str
   res_email: EmailStr
   res_resume_path: Optional[str] = None 
+  res_resume_file_name: Optional[str] = None
   res_phone_number: Optional[str] = None    
   res_current_position: Optional[str] = None
   res_current_company: Optional[str] = None
@@ -140,7 +144,8 @@ class UserResponse:
       res_fname=user.firstname,
       res_lname=user.lastname,
       res_email=user.email,
-      res_resume_path=user.resume_path if user.resume_path else None,      
+      res_resume_path=user.resume_path if user.resume_path else None, 
+      res_resume_file_name=user.resume_file_name if user.resume_file_name else None,     
       res_phone_number=user.phone_number if user.phone_number else None,    
       res_current_position=user.current_position if user.current_position else None,
       res_current_company=user.current_company if user.current_company else None,

@@ -1,4 +1,6 @@
 # auto_apply_app/infrastructures/agent/master.py
+
+import io # 🚨 Needed for RAM reading
 import json
 import asyncio
 from uuid import UUID
@@ -14,6 +16,7 @@ from langchain_anthropic import ChatAnthropic
 
 
 from auto_apply_app.application.service_ports.agent_port import AgentServicePort
+from auto_apply_app.application.service_ports.file_storage_port import FileStoragePort
 from auto_apply_app.domain.value_objects import ApplicationStatus, ClientType, JobBoard
 from auto_apply_app.domain.entities.user import User
 from auto_apply_app.domain.entities.job_search import JobSearch
@@ -34,6 +37,7 @@ class MasterAgent(AgentServicePort):
         hellowork_worker: HelloWorkWorker,
         apec_worker: ApecWorker,
         api_keys: dict,                     # 🚨 [NEW] Master holds the LLM keys
+        file_storage: FileStoragePort,
         consume_credits_use_case: ConsumeAiCreditsUseCase,           # 🚨 [NEW] Master handles billing
         save_applications_use_case: SaveJobApplicationsUseCase          # 🚨 [NEW] Master handles DB saving
     ):
@@ -49,6 +53,7 @@ class MasterAgent(AgentServicePort):
         self._checkpointer = Config.get_checkpointer()
         
         self._active_workers: Dict[str, Any] = {}
+        self.file_storage = file_storage
 
 
 
@@ -83,13 +88,13 @@ class MasterAgent(AgentServicePort):
 
 
     # --- HELPER: Resume Extraction ---
-    def _extract_resume(self, resume_path: str) -> str:
+    def _extract_resume(self, resume_bytes: bytes) -> str:
         text = ""
         try:
-            # Note: Ensure resume_path is a valid string/path before opening
-            if not resume_path:
+            if not resume_bytes:
                 return ""
-            with pdfplumber.open(resume_path) as pdf:
+            # 🚨 pdfplumber reads from RAM using io.BytesIO!
+            with pdfplumber.open(io.BytesIO(resume_bytes)) as pdf:
                 for p in pdf.pages:
                     text += p.extract_text() + "\n"
         except Exception as e:

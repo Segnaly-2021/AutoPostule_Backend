@@ -7,7 +7,8 @@ from auto_apply_app.application.dtos.preferences_dtos import UserPreferencesResp
 from auto_apply_app.interfaces.viewmodels.user_vm import (
   UserViewModel, 
   LoginViewModel,
-  SubViewModel
+  SubViewModel,
+  UploadResumeViewModel
 )
 
 
@@ -27,6 +28,10 @@ class UserPresenter(ABC):
   def present_user(self, user: UserResponse) -> UserViewModel:
     pass
 
+
+  # Add this to your abstract UserPresenter class
+  def present_upload_resume_success(self, data: dict) -> UploadResumeViewModel:
+      pass
 
   @abstractmethod
   def present_login(self, user: LoginResponse) -> LoginViewModel:

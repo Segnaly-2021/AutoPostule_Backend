@@ -1,11 +1,11 @@
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, UploadFile, File, Depends, status
 from typing import Annotated
 
 from auto_apply_app.infrastructures.api.dependencies.result import handle_result
 from auto_apply_app.infrastructures.configuration.container import Application
 from auto_apply_app.interfaces.controllers.auth_controllers import AuthController
 from auto_apply_app.interfaces.controllers.user_controllers import UserController
-from auto_apply_app.interfaces.viewmodels.user_vm import UserViewModel, LoginViewModel
+from auto_apply_app.interfaces.viewmodels.user_vm import UserViewModel, LoginViewModel, UploadResumeViewModel 
 from auto_apply_app.infrastructures.api.dependencies.container_dep import get_container
 from auto_apply_app.infrastructures.api.dependencies.auth_deps import CurrentUserId, CurrentToken
 from auto_apply_app.infrastructures.api.schema.user_schema import (
@@ -32,9 +32,6 @@ def get_user_controller(
 UserControllerDep = Annotated[UserController, Depends(get_user_controller)]
 
 AuthControllerDep = Annotated[AuthController, Depends(get_auth_controller)]
-
-
-
 
 
 # 2. Updated Routes
@@ -170,6 +167,36 @@ async def get_my_profile(
     result = await user_controller.handle_get(current_user_id)
     return handle_result(result)
 
+
+
+@router.post(
+    "/update/me/resume",
+    status_code=status.HTTP_200_OK,
+    response_model=UploadResumeViewModel, # Optional: strictly document the response
+    summary="Upload user resume",
+    description="Uploads a PDF resume to Cloud Storage and updates the user profile with the human-readable filename."
+)
+async def upload_my_resume(
+    current_user_id: CurrentUserId,
+    user_controller: UserControllerDep,
+    resume_file: UploadFile = File(...)
+):
+    """
+    Expects a multipart/form-data request with a 'resume_file' field containing a PDF.
+    """
+    # 1. Read the file completely into the server's RAM (No temp files on disk!)
+    file_bytes = await resume_file.read()
+    
+    # 2. Pass the raw bytes and metadata to the controller
+    result = await user_controller.handle_upload_resume(
+        user_id=current_user_id,
+        file_bytes=file_bytes,
+        content_type=resume_file.content_type,
+        filename=resume_file.filename
+    )
+    
+    # 3. Use your standard result handler to return the ViewModel or Error
+    return handle_result(result)
 
 
 @router.patch(

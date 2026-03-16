@@ -8,7 +8,8 @@ from auto_apply_app.interfaces.presenters.base_presenter import UserPresenter
 from auto_apply_app.application.use_cases.user_use_cases import (
     GetUserUseCase,
     UpdateUserUseCase,
-    DeleteUserUseCase
+    DeleteUserUseCase,
+    UploadUserResumeUseCase
 )
 from auto_apply_app.application.dtos.user_dtos import (
     GetUserRequest,
@@ -25,6 +26,7 @@ class UserController:
     get_user_use_case: GetUserUseCase
     update_user_use_case: UpdateUserUseCase
     delete_user_use_case: DeleteUserUseCase
+    upload_resume_use_case: UploadUserResumeUseCase
     presenter: UserPresenter
    
 
@@ -98,6 +100,36 @@ class UserController:
 
         except ValueError as e:
             return self._present_validation_exception(e)
+        
+
+    # 🚨 NEW: The Resume Upload Handler
+    async def handle_upload_resume(
+        self, 
+        user_id: str, 
+        file_bytes: bytes, 
+        content_type: str, 
+        filename: str
+    ) -> OperationResult:
+        try:
+            # We bypass DTO creation here because moving massive byte arrays 
+            # through multiple object instantiations is an anti-pattern in high-perf Python.
+            result = await self.upload_resume_use_case.execute(
+                user_id=user_id,
+                file_bytes=file_bytes,
+                content_type=content_type,
+                original_filename=filename
+            )
+
+            if result.is_success:
+                # result.value is a dict: {"message": "...", "resume_path": "...", "resume_file_name": "..."}
+                view_model = self.presenter.present_upload_resume_success(result.value)
+                return OperationResult.succeed(value=view_model)
+            
+            return self._present_error(result)
+
+        except Exception as e: # Catching raw exceptions since binary handling can throw varied system errors
+             error_vm = self.presenter.present_error(f"Upload failed: {str(e)}", "SYSTEM_ERROR")
+             return OperationResult.fail(error_vm.message, error_vm.code)
 
     # --- Private Helpers for Consistent Error Handling ---
 

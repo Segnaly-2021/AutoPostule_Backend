@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from uuid import UUID
 import datetime
 
 
@@ -25,6 +26,7 @@ from auto_apply_app.application.dtos.auth_user_dtos import (
 
 from auto_apply_app.application.repositories.unit_of_work import UnitOfWork
 from auto_apply_app.application.service_ports.password_service_port import PasswordServicePort
+from auto_apply_app.application.service_ports.file_storage_port import FileStoragePort
 from auto_apply_app.application.dtos.auth_user_dtos import LoginRequest
 from auto_apply_app.application.service_ports.token_provider_port import TokenProviderPort
 from auto_apply_app.domain.entities.auth_user import AuthUser
@@ -259,6 +261,56 @@ class GetUserUseCase:
 
         except UserNotFoundError:
             return Result.failure(Error.not_found("User", str(params["user_id"])))
+
+
+
+@dataclass
+class UploadUserResumeUseCase:
+    uow: UnitOfWork
+    storage_port: FileStoragePort
+
+    async def execute(self, user_id: str, file_bytes: bytes, content_type: str, original_filename: str) -> Result:
+        try:
+            # 1. Validation
+            if content_type != "application/pdf" and not original_filename.lower().endswith(".pdf"):
+                return Result.failure(Error.validation_error("Only PDF resumes are accepted."))
+
+            # 2MB Limit check (optional but recommended for LLM context windows)
+            if len(file_bytes) > 2 * 1024 * 1024:
+                return Result.failure(Error.validation_error("Resume file size must be under 2MB."))
+
+            async with self.uow as uow:
+                # 2. Fetch User
+                user = await uow.user_repo.get(UUID(user_id.strip()))
+                if not user:
+                    return Result.failure(Error.not_found("User", str(user_id)))
+
+                # 3. Upload to Cloud (Machine Naming logic)
+                # This automatically overwrites any existing resume for this user in the bucket
+                storage_path = await self.storage_port.upload_file(
+                    user_id=str(user.id),
+                    file_bytes=file_bytes,
+                    content_type=content_type,
+                    extension="pdf"
+                )
+
+                # 4. Update Domain Entity (Human Naming logic)
+                user.resume_path = storage_path
+                user.resume_file_name = original_filename
+                
+                await uow.user_repo.save(user)
+                await uow.commit()
+
+            return Result.success({
+                "message": "Resume uploaded successfully",
+                "resume_path": storage_path,
+                "resume_file_name": original_filename
+            })
+
+        except Exception as e:
+            return Result.failure(Error.system_error(f"Failed to process resume: {str(e)}"))
+
+
 
 
 @dataclass

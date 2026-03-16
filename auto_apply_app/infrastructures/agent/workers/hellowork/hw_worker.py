@@ -18,21 +18,25 @@ from auto_apply_app.domain.value_objects import ContractType, JobBoard, Applicat
 
 # --- INFRA & APP IMPORTS ---
 from auto_apply_app.infrastructures.agent.state import JobApplicationState
-from auto_apply_app.application.service_ports.encryption_port import EncryptionServicePort 
+from auto_apply_app.application.service_ports.encryption_port import EncryptionServicePort
+from auto_apply_app.application.service_ports.file_storage_port import FileStoragePort 
 from auto_apply_app.application.use_cases.agent_use_cases import GetIgnoredHashesUseCase
 
 class HelloWorkWorker:
     # 1. INJECTION: V2 Diet (Only what the "Hands" need)
     def __init__(self, 
                  get_ignored_hashes: GetIgnoredHashesUseCase,
-                 encryption_service: EncryptionServicePort
+                 encryption_service: EncryptionServicePort,
+                 file_storage: FileStoragePort
                 ):
         
         # Static Dependencies
         self.get_ignored_hashes = get_ignored_hashes
         self.encryption_service = encryption_service
         self.base_url = "https://www.hellowork.com/fr-fr/"
-        
+        self.file_storage = file_storage
+
+
         # Runtime State (Lazy Initialization)
         self.playwright: Optional[Playwright] = None
         self.browser: Optional[Browser] = None
@@ -614,7 +618,19 @@ class HelloWorkWorker:
                 await self.page.locator('input[name="LastName"]').fill(user.lastname)
                 
                 if user.resume_path:
-                    await self.page.locator('[data-cy="cv-uploader-input"]').set_input_files(user.resume_path)
+                
+                    print("⬇️ Downloading resume from cloud to RAM...")
+                    resume_bytes = await self.file_storage.download_file(user.resume_path)
+                    
+                    # Fallback if the user entity doesn't have the new human name yet
+                    human_name = user.resume_file_name or f"{user.firstname}_{user.lastname}_CV.pdf"
+
+                    # 🚨 Playwright uploads securely from RAM! No temp files!
+                    await self.page.locator('[data-cy="cv-uploader-input"]').set_input_files({
+                        "name": human_name,
+                        "mimeType": "application/pdf",
+                        "buffer": resume_bytes
+                    })
                 
                 if offer.cover_letter:
                     await self.page.locator('[data-cy="motivationFieldButton"]').click()

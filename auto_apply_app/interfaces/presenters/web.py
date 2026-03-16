@@ -21,7 +21,8 @@ from auto_apply_app.interfaces.presenters.base_presenter import (
 from auto_apply_app.interfaces.viewmodels.user_vm import (
   UserViewModel, 
   LoginViewModel,
-  SubViewModel
+  SubViewModel,
+  UploadResumeViewModel
 )
 from auto_apply_app.interfaces.viewmodels.preferences_vm import (
     PreferencesViewModel, 
@@ -50,27 +51,36 @@ class WebUserPresenter(UserPresenter):
     """
 
     def present_user(self, user: UserResponse) -> UserViewModel:
-        """
-        Formats a UserResponse DTO into a UserViewModel for the web.
-        
-        """
         return UserViewModel(
             id=user.res_id,
             full_name=f"{user.res_fname} {user.res_lname}".strip(),
             email=user.res_email,
             firstname=user.res_fname if user.res_fname else None,
             lastname=user.res_lname if user.res_lname else None,
-            # We can add web-specific formatting here, like a 'display_name'
             initials=f"{user.res_fname[0]}{user.res_lname[0]}".upper() if user.res_fname and user.res_lname else "",
             phone_number=user.res_phone_number if user.res_phone_number else None,
             resume_path=user.res_resume_path if user.res_resume_path else None,   
+            # 🚨 NEW: Map the human-readable name from the DTO
+            resume_file_name=user.res_resume_file_name, 
             current_position=user.res_current_position if user.res_current_position else None,
             current_company=user.res_current_company if user.res_current_company else None,
             school_type=user.res_school_type,
             graduation_year=user.res_graduation_year,
             major=user.res_major,
             study_level=user.res_study_level,
-            
+        )
+
+    # ... (keep present_login and present_error as they are) ...
+
+    # 🚨 NEW: Presenter method for the upload response
+    def present_upload_resume_success(self, data: dict) -> UploadResumeViewModel:
+        """
+        Formats the dictionary returned by UploadUserResumeUseCase into a typed ViewModel.
+        """
+        return UploadResumeViewModel(
+            message=data.get("message", "Success"),
+            resume_path=data.get("resume_path", ""),
+            resume_file_name=data.get("resume_file_name", "")
         )
 
     def present_login(self, login: LoginResponse) -> LoginViewModel:

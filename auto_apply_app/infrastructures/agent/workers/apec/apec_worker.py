@@ -19,6 +19,7 @@ from auto_apply_app.application.use_cases.agent_use_cases import (
   GetIgnoredHashesUseCase
 )
 from auto_apply_app.application.service_ports.encryption_port import EncryptionServicePort
+from auto_apply_app.application.service_ports.file_storage_port import FileStoragePort
 
 
 
@@ -30,6 +31,7 @@ class ApecWorker():
     def __init__(self, 
                  get_ignored_hashes: GetIgnoredHashesUseCase,
                  encryption_service: EncryptionServicePort,
+                 file_storage: FileStoragePort
                 ):
         
         # Static Dependencies
@@ -37,12 +39,14 @@ class ApecWorker():
         self.get_ignored_hashes = get_ignored_hashes       
         self.encryption_service = encryption_service
         self.base_url = "https://www.apec.fr/"
+        self.file_storage = file_storage
         
         # Runtime State (Lazy Initialization)
         self.playwright: Optional[Playwright] = None
         self.browser: Optional[Browser] = None
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
+      
 
 
     # --- HELPER: Error Router ---
@@ -830,7 +834,19 @@ class ApecWorker():
                     await self.page.locator('label:has-text("Importer un CV")').click() 
                 
                 if user.resume_path:
-                    await self.page.locator('input[type="file"]').set_input_files(user.resume_path)
+                    print("⬇️ Downloading resume from cloud to RAM...")
+                    resume_bytes = await self.file_storage.download_file(user.resume_path)
+                    
+                    # Fallback if the user entity doesn't have the new human name yet
+                    human_name = user.resume_file_name or f"{user.firstname}_{user.lastname}_CV.pdf"
+
+                    # 🚨 Playwright uploads securely from RAM! No temp files!
+                    await self.page.locator('input[type="file"]').set_input_files({
+                        "name": human_name,
+                        "mimeType": "application/pdf",
+                        "buffer": resume_bytes
+                    })
+                   
                     try:
                         await self.page.locator('input[formcontrolname="isCvSave"]').uncheck()
                     except Exception:

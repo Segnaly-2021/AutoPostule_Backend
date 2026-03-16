@@ -11,7 +11,8 @@ from auto_apply_app.application.use_cases.agent_use_cases import (
     SaveJobApplicationsUseCase,
     ConsumeAiCreditsUseCase,
 )
-from auto_apply_app.application.service_ports.encryption_port import EncryptionServicePort 
+from auto_apply_app.application.service_ports.encryption_port import EncryptionServicePort
+from auto_apply_app.application.service_ports.file_storage_port import FileStoragePort  
 from auto_apply_app.application.use_cases.agent_use_cases import GetIgnoredHashesUseCase
 
 api_keys = {
@@ -25,6 +26,7 @@ def create_agent(
     results_saver: SaveJobApplicationsUseCase,
     consume_credits_use_case: ConsumeAiCreditsUseCase,
     encryption_service: EncryptionServicePort,
+    file_storage: FileStoragePort,
     get_ignored_hashes_use_case: GetIgnoredHashesUseCase
 ) -> MasterAgent:
     """
@@ -48,19 +50,22 @@ def create_agent(
     # 1. Instantiate Apec Worker (Stateless)
     apec_worker = ApecWorker(
        get_ignored_hashes=get_ignored_hashes_use_case,
-       encryption_service=encryption_service
+       encryption_service=encryption_service,
+       file_storage=file_storage
     )
     
     # 2. Instantiate HelloWork Worker (Stateless)
     hw_worker = HelloWorkWorker(
         get_ignored_hashes=get_ignored_hashes_use_case,
-        encryption_service=encryption_service
+        encryption_service=encryption_service,
+        file_storage=file_storage
     )
     
     # 3. Instantiate WTTJ Worker (Stateless)
     wttj_worker = WelcomeToTheJungleWorker(
         get_ignored_hashes=get_ignored_hashes_use_case,
-        encryption_service=encryption_service
+        encryption_service=encryption_service,
+        file_storage=file_storage
     )
     
     # 4. Return Master Agent
@@ -71,6 +76,7 @@ def create_agent(
         hellowork_worker=hw_worker,
         apec_worker=apec_worker,
         api_keys=api_keys,
+        file_storage=file_storage,
         consume_credits_use_case=consume_credits_use_case,
         save_applications_use_case=results_saver
 

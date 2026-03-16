@@ -13,6 +13,7 @@ from auto_apply_app.infrastructures.agent.create_agent import create_agent
 
 # Service Ports
 from auto_apply_app.application.service_ports.password_service_port import PasswordServicePort
+from auto_apply_app.application.service_ports.file_storage_port import FileStoragePort
 from auto_apply_app.application.service_ports.token_provider_port import TokenProviderPort
 from auto_apply_app.application.service_ports.payment_port import PaymentPort
 from auto_apply_app.application.service_ports.encryption_port import EncryptionServicePort
@@ -40,6 +41,7 @@ from auto_apply_app.application.use_cases.user_use_cases import (
     LogoutUseCase,
     GetUserUseCase,
     ChangePasswordUseCase,
+    UploadUserResumeUseCase
 )
 from auto_apply_app.application.use_cases.agent_use_cases import (
     ApproveJobUseCase,
@@ -96,6 +98,7 @@ def create_application(
     preferences_presenter: PreferencesPresenter,
     password_service: PasswordServicePort,
     token_provider: TokenProviderPort,
+    file_storage_port: FileStoragePort,
     payment_port: PaymentPort,
     encryption_port: EncryptionServicePort,
     free_search_presenter: FreeSearchPresenter
@@ -116,6 +119,7 @@ def create_application(
         sub_presenter=sub_presenter,
         password_service=password_service,
         token_provider=token_provider,
+        file_storage_port=file_storage_port,
         payment_port=payment_port,
         encryption_port=encryption_port,
         free_search_presenter=free_search_presenter
@@ -132,6 +136,7 @@ class Application:
     # Infrastructure Services (Ports)
     password_service: PasswordServicePort
     token_provider: TokenProviderPort
+    file_storage_port: FileStoragePort
     payment_port: PaymentPort
     encryption_port: EncryptionServicePort
     
@@ -170,6 +175,10 @@ class Application:
             password_service=self.password_service,
             uow=self.uow
         )
+        self.upload_resume_use_case = UploadUserResumeUseCase(
+            uow=self.uow,
+            storage_port=self.file_storage_port 
+        )
 
         # --- 3. JobOffer Use Cases ---
         self.get_user_applications_use_case = GetUserApplicationsUseCase(uow=self.uow)
@@ -192,6 +201,7 @@ class Application:
             results_saver=self.save_job_applications_use_case,
             consume_credits_use_case=self.consume_ai_credits_use_case,
             get_ignored_hashes_use_case=self.get_hashed_ignored_use_case,
+            file_storage=self.file_storage_port,
             encryption_service=self.encryption_port,
         )
 
@@ -235,6 +245,7 @@ class Application:
             get_user_use_case=self.get_user_use_case,
             update_user_use_case=self.update_user_use_case,
             delete_user_use_case=self.delete_user_use_case,
+            upload_resume_use_case=self.upload_resume_use_case, # 🚨 Add this line
             presenter=self.user_presenter 
         )
 

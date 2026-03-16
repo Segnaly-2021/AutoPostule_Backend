@@ -9,6 +9,7 @@ from auto_apply_app.infrastructures.configuration.container import create_applic
 
 # Import your concrete implementations
 from auto_apply_app.infrastructures.authentication.password_service import PasswordService
+from auto_apply_app.infrastructures.resume_storage.gcs_storage_adapter import GCSFileStorageAdapter
 from auto_apply_app.infrastructures.authentication.token_provider import JwtTokenProvider
 from auto_apply_app.infrastructures.payment.stripe_payment import StripePaymentAdapter
 from auto_apply_app.infrastructures.board_credentials_encryption.encryption import EncryptionService
@@ -64,6 +65,7 @@ async def lifespan(app: FastAPI):
         token_provider=JwtTokenProvider(),
         preferences_presenter=WebPreferencesPresenter(),
         encryption_port=EncryptionService(Config.get_encryption_key()),
+        file_storage_port=GCSFileStorageAdapter(),
         payment_port=StripePaymentAdapter(),
         sub_presenter=WebSubPresenter(),
         free_search_presenter=WebFreeSearchPresenter()
@@ -101,9 +103,9 @@ def create_fastapi_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=[
             "http://localhost:5173",  # Vite default dev server
-            "http://localhost:3000",  # Alternative port
-            "http://127.0.0.1:5173",
-            "http://127.0.0.1:3000",
+            "https://autopostule.com",
+            "https://www.autopostule.com",
+            "https://autopostule.netlify.app", 
         ],
         allow_credentials=True,
         allow_methods=["*"],  # Allow all methods (GET, POST, PUT, DELETE, etc.)
