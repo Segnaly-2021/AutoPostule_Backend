@@ -192,7 +192,11 @@ class MasterAgent(AgentServicePort):
         # 2. Prepare Resume & LLM
         # (Assuming you moved the _extract_resume helper to the MasterAgent)
         resume_path = state["user"].resume_path
-        resume_text = await asyncio.to_thread(self._extract_resume, resume_path)
+
+        # 🚨 Fetch bytes from Cloud Storage into RAM
+        resume_bytes = await self.file_storage.download_file(resume_path)
+
+        resume_text = await asyncio.to_thread(self._extract_resume, resume_bytes)
         system_messages = {
             "wttj": SystemMessage(
                 """
