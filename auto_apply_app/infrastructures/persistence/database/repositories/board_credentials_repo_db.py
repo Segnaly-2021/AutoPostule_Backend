@@ -68,8 +68,7 @@ class BoardCredentialRepoDB(BoardCredentialsRepository): # ✅ Added inheritance
         )
 
     def _map_to_entity(self, cred_db: BoardCredentialDB) -> BoardCredential:
-        return BoardCredential(
-            id=cred_db.id,
+        board = BoardCredential(
             user_id=cred_db.user_id,
             job_board=cred_db.job_board,
             login_encrypted=cred_db.login_encrypted,
@@ -79,3 +78,6 @@ class BoardCredentialRepoDB(BoardCredentialsRepository): # ✅ Added inheritance
             created_at=cred_db.created_at,
             updated_at=cred_db.updated_at,
         )
+
+        board.id = cred_db.id
+        return board

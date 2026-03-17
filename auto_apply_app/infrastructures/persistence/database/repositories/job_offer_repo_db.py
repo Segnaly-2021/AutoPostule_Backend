@@ -32,7 +32,6 @@ class JobOfferRepoDB(JobOfferRepository):
             posting_id = None
 
         offer_db = JobOfferDB(
-            id=offer.id,
             url=offer.url,
             form_url=offer.form_url,
             search_id=offer.search_id,
@@ -353,7 +352,6 @@ class JobOfferRepoDB(JobOfferRepository):
 
     def _map_to_entity(self, offer_db: JobOfferDB) -> JobOffer:
         offer = JobOffer(
-            id=offer_db.id,
             url=offer_db.url,
             form_url=offer_db.form_url,
             search_id=offer_db.search_id,
@@ -371,6 +369,7 @@ class JobOfferRepoDB(JobOfferRepository):
             has_interview=offer_db.has_interview,
             has_response=offer_db.has_response,
         )
+        offer.id = offer_db.id
         # Restore private field directly — bypasses dataclass init restriction
         object.__setattr__(offer, '_job_posting_id', offer_db.job_posting_id)
         return offer

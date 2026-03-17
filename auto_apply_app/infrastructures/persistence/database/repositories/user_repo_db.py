@@ -49,7 +49,6 @@ class UserRepoDB(UserRepository):
             firstname=user.firstname,
             lastname=user.lastname,
             email=user.email,
-            # ❌ is_active safely removed
             resume_path=user.resume_path,
             phone_number=user.phone_number,
             current_position=user.current_position,
@@ -82,13 +81,13 @@ class UserRepoDB(UserRepository):
         return self._map_to_entity(user_db)
 
     def _map_to_entity(self, user_db: UserDB) -> User:
-        return User(
-            id=user_db.id,
+        # 1. Instantiate without the 'id' argument
+        user = User(
             firstname=user_db.firstname,
             lastname=user_db.lastname,
             email=user_db.email,
-            # ❌ is_active safely removed
             resume_path=user_db.resume_path,
+            resume_file_name=user_db.resume_file_name, # <-- Added this!
             phone_number=user_db.phone_number,
             current_position=user_db.current_position,
             current_company=user_db.current_company,
@@ -97,3 +96,8 @@ class UserRepoDB(UserRepository):
             major=user_db.major,
             study_level=user_db.study_level,
         )
+        
+        # 2. Overwrite the auto-generated UUID with the real one from the DB
+        user.id = user_db.id 
+        
+        return user

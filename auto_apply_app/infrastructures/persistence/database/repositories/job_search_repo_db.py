@@ -109,8 +109,7 @@ class JobSearchRepoDB(JobSearchRepository):
             offer_db.id: self._map_offer_to_entity(offer_db)
             for offer_db in search_db.job_offers
         }
-        return JobSearch(
-            id=search_db.id,
+        search = JobSearch(
             user_id=search_db.user_id,
             job_title=search_db.job_title,
             job_boards=search_db.job_boards, # ✅ FIXED: plural
@@ -122,9 +121,12 @@ class JobSearchRepoDB(JobSearchRepository):
             updated_at=search_db.updated_at,
         )
 
+        search.id = search_db.id
+
+        return search
+
     def _map_offer_to_entity(self, offer_db) -> JobOffer:
         offer = JobOffer(
-            id=offer_db.id,
             url=offer_db.url,
             form_url=offer_db.form_url,
             search_id=offer_db.search_id,
@@ -142,10 +144,11 @@ class JobSearchRepoDB(JobSearchRepository):
             has_interview=offer_db.has_interview,
             has_response=offer_db.has_response,
         )
+        offer.id = offer_db.id
         object.__setattr__(offer, '_job_posting_id', offer_db.job_posting_id)
         return 
     
-    
+
     
     async def delete_job(self, job_id: UUID) -> None:
         """Delete a specific job offer from the database."""

@@ -40,11 +40,13 @@ class UserPreferencesRepoDB(UserPreferencesRepository): # ✅ Added inheritance
         # Note: session.commit() is handled by your Unit of Work
 
     def _map_to_entity(self, pref_db: UserPreferencesDB) -> UserPreferences:
-        return UserPreferences(
-            id=pref_db.user_id,  # UserPreferences extends Entity, reuse user_id as id
+        pref = UserPreferences(
             user_id=pref_db.user_id,
             is_full_automation=pref_db.is_full_automation,
             active_boards=pref_db.active_boards,
             creativity_level=pref_db.creativity_level,
             ai_model=pref_db.ai_model, # ✅ Added ai_model
         )
+
+        pref.id = pref_db.id
+        return pref

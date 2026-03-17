@@ -47,7 +47,7 @@ class AuthRepoDB(AuthRepository):
 
     def _map_to_entity(self, db_auth: AuthUserDB) -> AuthUser:
         """Convert Database model to Domain Entity."""
-        return AuthUser(
+        auth = AuthUser(
             user_id=db_auth.user_id,
             email=db_auth.email,
             password_hash=db_auth.password_hash,
@@ -57,3 +57,5 @@ class AuthRepoDB(AuthRepository):
             updated_at=db_auth.updated_at,
             last_login=db_auth.last_login
         )
+        auth.id = db_auth.user_id
+        return auth
