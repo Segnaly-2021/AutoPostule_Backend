@@ -43,6 +43,10 @@ class UserDB(Base):
     board_credentials: Mapped[List["BoardCredentialDB"]] = relationship(
         "BoardCredentialDB", back_populates="user"
     )
+    job_offers: Mapped[List["JobOfferDB"]] = relationship("JobOfferDB", 
+                                                          back_populates="user", 
+                                                          cascade="all, delete-orphan"
+    )
 
 
 class AuthUserDB(Base):

@@ -9,8 +9,10 @@ from auto_apply_app.infrastructures.persistence.database.models.schema import Ba
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 # 🚨 FIX: Auto-convert standard postgres URL to the async driver URL
-if DATABASE_URL and DATABASE_URL.startswith("postgresql://"):
+if DATABASE_URL:
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
+    # 2. Translate 'sslmode' to 'ssl' so asyncpg doesn't crash
+    DATABASE_URL = DATABASE_URL.replace("sslmode=require", "ssl=require")
 
 # 1. Create the engine
 engine = create_async_engine(DATABASE_URL)
