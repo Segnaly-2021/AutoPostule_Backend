@@ -56,6 +56,7 @@ jobs:
           env_vars: |
             JWT_SECRET=${{ secrets.JWT_SECRET }}
             DATABASE_URL=${{ secrets.DATABASE_URL }}
+            DATABASE_DIRECT_URL=${{ secrets.DATABASE_DIRECT_URL }}
             STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}
             STRIPE_API_KEY=${{ secrets.STRIPE_API_KEY }}
             REPOSITORY_TYPE=${{ secrets.REPOSITORY_TYPE }}
