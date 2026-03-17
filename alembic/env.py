@@ -27,14 +27,15 @@ load_dotenv()
 
 # 2. Tell Alembic to use the Supabase URL from your .env file
 # (This overrides whatever is written in alembic.ini)
-database_url = os.environ.get("DATABASE_URL")
+database_url = os.environ.get("DATABASE_DIRECT_URL")
 if database_url:
     # SQLAlchemy requires 'postgresql+asyncpg://' for async connections
     if database_url.startswith("postgresql://"):
         database_url = database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
     config.set_main_option("sqlalchemy.url", database_url)
 
-# 3. Import your Base and set the target_metadata so Alembic can "see" your tables
+# 3. Import your Base and set 
+# the target_metadata so Alembic can "see" your tables
 from auto_apply_app.infrastructures.persistence.database.models.schema import Base
 target_metadata = Base.metadata
 
@@ -85,17 +86,16 @@ def do_run_migrations(connection: Connection) -> None:
     with context.begin_transaction():
         context.run_migrations()
 
-
 async def run_async_migrations() -> None:
-    """In this scenario we need to create an Engine
-    and associate a connection with the context.
-
     """
-
+    In this scenario we need to create an Engine
+    and associate a connection with the context.
+    """
     connectable = async_engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
+        
     )
 
     async with connectable.connect() as connection:

@@ -43,9 +43,8 @@ class UserDB(Base):
     board_credentials: Mapped[List["BoardCredentialDB"]] = relationship(
         "BoardCredentialDB", back_populates="user"
     )
-    job_offers: Mapped[List["JobOfferDB"]] = relationship("JobOfferDB", 
-                                                          back_populates="user", 
-                                                          cascade="all, delete-orphan"
+    job_offers: Mapped[List["JobOfferDB"]] = relationship(
+        "JobOfferDB", back_populates="user", cascade="all, delete-orphan"
     )
 
 
@@ -56,6 +55,7 @@ class AuthUserDB(Base):
         ForeignKey("users.id", ondelete="CASCADE"),
         primary_key=True
     )
+    id: Mapped[UUID] = mapped_column(default=uuid4, nullable=True)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -77,6 +77,7 @@ class AuthUserDB(Base):
 class UserSubscriptionDB(Base):
     __tablename__ = "user_subscriptions"
 
+    id: Mapped[UUID] = mapped_column(default=uuid4, nullable=True)
     user_id: Mapped[UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"),
         primary_key=True
@@ -109,10 +110,12 @@ class UserSubscriptionDB(Base):
 class UserPreferencesDB(Base):
     __tablename__ = "user_preferences"
 
+    
     user_id: Mapped[UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"),
         primary_key=True
     )
+    id: Mapped[UUID] = mapped_column(default=uuid4, nullable=True)
     is_full_automation: Mapped[bool] = mapped_column(Boolean, default=False)
     ai_model: Mapped[str] = mapped_column(String(50), default="gemini")
     # Store active_boards dict as JSONB: {"hellowork": true, "wttj": false, ...}

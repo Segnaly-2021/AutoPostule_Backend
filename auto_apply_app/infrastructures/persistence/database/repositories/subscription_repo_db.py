@@ -82,5 +82,5 @@ class SubscriptionRepoDB(SubscriptionRepository):
             stripe_customer_id=sub_db.stripe_customer_id,
             stripe_subscription_id=sub_db.stripe_subscription_id,
         )
-        subs.id = sub_db.id
+        
         return subs
