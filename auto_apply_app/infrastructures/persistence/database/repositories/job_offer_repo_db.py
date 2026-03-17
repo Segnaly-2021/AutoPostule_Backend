@@ -370,6 +370,6 @@ class JobOfferRepoDB(JobOfferRepository):
             has_response=offer_db.has_response,
         )
         offer.id = offer_db.id
-        # Restore private field directly — bypasses dataclass init restriction
-        object.__setattr__(offer, '_job_posting_id', offer_db.job_posting_id)
+        offer._job_posting_id = offer_db.job_posting_id
+        
         return offer
