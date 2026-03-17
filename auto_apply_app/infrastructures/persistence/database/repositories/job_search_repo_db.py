@@ -3,7 +3,7 @@
 # =============================================================================
 from uuid import UUID
 from typing import List
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -143,4 +143,12 @@ class JobSearchRepoDB(JobSearchRepository):
             has_response=offer_db.has_response,
         )
         object.__setattr__(offer, '_job_posting_id', offer_db.job_posting_id)
-        return offer
+        return 
+    
+    
+    
+    async def delete_job(self, job_id: UUID) -> None:
+        """Delete a specific job offer from the database."""
+        await self.session.execute(
+            delete(JobOfferDB).where(JobOfferDB.id == job_id)
+        )
