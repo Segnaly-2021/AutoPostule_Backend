@@ -645,7 +645,7 @@ class HelloWorkWorker:
                     await submit_btn.click() 
                     await self.page.wait_for_timeout(5000)
                     try:
-                        self.page.wait_for_selector('div[data-controller="removable intersect toggle "][data-intersect-name-value="notification"]', timeout=2000)
+                        await self.page.wait_for_selector('div[data-controller="removable intersect toggle "][data-intersect-name-value="notification"]', timeout=2000)
 
                     except Exception:
                         print(f"Submission of {offer.form_url} failed because of random input fields in the application form")

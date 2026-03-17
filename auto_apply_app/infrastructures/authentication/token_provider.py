@@ -12,7 +12,7 @@ from auto_apply_app.domain.exceptions import InvalidTokenException
 class JwtTokenProvider(TokenProviderPort):
     def __init__(self):
         # Best Practice: Never hardcode secrets. Read from Environment.
-        self.secret = os.getenv("JWT_SECRET", "BoulSakhKhallateSecretLaaa")
+        self.secret = os.getenv("JWT_SECRET")
         self.algo = "HS256"
         self.token_lifespan_minutes = 240
 

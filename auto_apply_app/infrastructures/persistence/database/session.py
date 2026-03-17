@@ -20,9 +20,8 @@ engine = create_async_engine(DATABASE_URL)
 # 2. Create the Session factory
 async_session = async_sessionmaker(
     class_=AsyncSession, 
-    autocommit=False, 
-    autoflush=False, 
-    bind=engine
+    bind=engine,
+    expire_on_commit=False
 )
 
 
@@ -33,13 +32,11 @@ async def init_db() -> None:
 
 @asynccontextmanager
 async def get_db_session():
-    """Provides a transactional scope around a series of operations."""
-    try:
-        async with async_session() as session:
+    async with async_session() as session:
+        try:
             yield session
-    except Exception:
-        await session.rollback()
-        raise
-    finally:
-        await session.close()
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
 

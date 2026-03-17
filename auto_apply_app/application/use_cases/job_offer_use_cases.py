@@ -73,7 +73,7 @@ class ToggleResponseStatusUseCase:
                 
                 # Commit the transaction (if the repo method doesn't auto-commit)
                 # In strict UoW patterns, changes are only persisted on exit/commit
-                await self.uow.commit() 
+               
                 
                 return Result.success({
                     "id": job.id,

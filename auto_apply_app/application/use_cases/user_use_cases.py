@@ -100,10 +100,7 @@ class RegisterUserUseCase:
                 await self.uow.user_repo.save(user)
                 await self.uow.auth_repo.save(auth_user)
                 await self.uow.subscription_repo.save(sub_user)
-                await self.uow.user_pref_repo.save(user_prefs)
-
-                await self.uow.commit()
-                
+                await self.uow.user_pref_repo.save(user_prefs)               
                
 
             return Result.success(UserResponse.from_entity(user))

@@ -10,29 +10,30 @@ from auto_apply_app.infrastructures.persistence.database.repositories.user_prefe
 from auto_apply_app.infrastructures.persistence.database.repositories.board_credentials_repo_db import BoardCredentialRepoDB
 
 
+
 class SqlAlchemyUnitOfWork(UnitOfWork):
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]):
         self.session_factory = session_factory
 
     async def __aenter__(self):
         self.session = self.session_factory()
+        await self.session.begin()  # ← explicitly start ONE transaction here
         
-        # ✅ Standardized names to perfectly match InMemoryUnitOfWork
         self.user_repo = UserRepoDB(self.session)
         self.auth_repo = AuthRepoDB(self.session)
         self.subscription_repo = SubscriptionRepoDB(self.session)
-        self.job_repo = JobOfferRepoDB(self.session)       # Renamed from job_offer_repo
-        self.search_repo = JobSearchRepoDB(self.session)   # Renamed from job_search_repo
+        self.job_repo = JobOfferRepoDB(self.session)
+        self.search_repo = JobSearchRepoDB(self.session)
         self.user_pref_repo = UserPreferencesRepoDB(self.session)
         self.board_cred_repo = BoardCredentialRepoDB(self.session)
         
-        # ✅ Return self for the 'async with ... as uow' context manager
         return self
 
     async def __aexit__(self, exc_type, exc_value, traceback):
-        # We handle rollbacks in the UoW base class or Use Cases, but let's ensure cleanup
         if exc_type is not None:
             await self.rollback()
+        else:
+            await self.commit()  # ← auto-commit on clean exit
         await self.session.close()
 
     async def commit(self):
