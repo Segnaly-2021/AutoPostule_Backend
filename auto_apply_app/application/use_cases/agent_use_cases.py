@@ -217,7 +217,7 @@ class KillJobSearchUseCase:
                 search_id = params["search_id"]
 
                 # 1. Fetch and validate
-                search = await uow.search_repo.get(str(search_id))
+                search = await uow.search_repo.get(search_id)
                 if not search:
                     return Result.failure(Error.not_found("JobSearch", str(search_id)))
                 
@@ -228,6 +228,7 @@ class KillJobSearchUseCase:
                 # 3. Mark as cancelled in DB
                 search.cancel()
                 await uow.search_repo.save(search)
+                await uow.commit()
             
             # 4. Kill the agent process (force cleanup)
             await self.agent_service.kill_job_search(search_id)
@@ -349,7 +350,7 @@ class GetJobsForReviewUseCase:
         try:
             async with self.uow as uow:
                 # 1. Verify search exists and belongs to user
-                search = await uow.search_repo.get(UUID(search_id))
+                search = await uow.search_repo.get(UUID(search_id.strip()))
                 
                 if not search:
                     return Result.failure(
@@ -417,7 +418,7 @@ class UpdateCoverLetterUseCase:
             
             async with self.uow as uow:
                 # 2. Fetch job
-                job = await uow.job_repo.get(job_id)
+                job = await uow.job_repo.get(UUID(job_id.strip()))
                 
                 if not job:
                     return Result.failure(
@@ -425,7 +426,7 @@ class UpdateCoverLetterUseCase:
                     )
                 
                 # 3. Verify ownership (job → search → user)
-                search = await uow.search_repo.get(str(job.search_id))
+                search = await uow.search_repo.get(job.search_id)
                 
                 if not search or str(search.user_id) != user_id:
                     return Result.failure(
@@ -482,7 +483,7 @@ class ApproveJobUseCase:
         try:
             async with self.uow as uow:
                 # 1. Fetch job
-                job = await uow.job_repo.get(job_id)
+                job = await uow.job_repo.get(UUID(job_id.strip()))
                 
                 if not job:
                     return Result.failure(
@@ -490,7 +491,7 @@ class ApproveJobUseCase:
                     )
                 
                 # 2. Verify ownership
-                search = await uow.search_repo.get(str(job.search_id))
+                search = await uow.search_repo.get(job.search_id)
                 
                 if not search or str(search.user_id) != user_id:
                     return Result.failure(
@@ -584,7 +585,7 @@ class DiscardJobUseCase:
         try:
             async with self.uow as uow:
                 # 1. Fetch job
-                job = await uow.job_repo.get(job_id)
+                job = await uow.job_repo.get(UUID(job_id.strip()))
                 
                 if not job:
                     return Result.failure(
@@ -592,7 +593,7 @@ class DiscardJobUseCase:
                     )
                 
                 # 2. Verify ownership
-                search = await uow.search_repo.get(str(job.search_id))
+                search = await uow.search_repo.get(job.search_id)
                 
                 if not search or str(search.user_id) != user_id:
                     return Result.failure(
@@ -602,7 +603,7 @@ class DiscardJobUseCase:
                     )
                 
                 # 3. Validate status (cannot discard submitted jobs)
-                if job.status in [ApplicationStatus.SUBMITTED, ApplicationStatus.INTERVIEW]:
+                if job.status in [ApplicationStatus.SUBMITTED]:
                     return Result.failure(
                         Error.conflict(
                             f"Cannot discard job in {job.status.value} status. "

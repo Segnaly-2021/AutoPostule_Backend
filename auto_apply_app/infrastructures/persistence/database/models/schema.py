@@ -21,6 +21,7 @@ class UserDB(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     is_active: Mapped[bool] = mapped_column(default=True)
     resume_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    resume_file_name: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     phone_number: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
     current_position: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     current_company: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
