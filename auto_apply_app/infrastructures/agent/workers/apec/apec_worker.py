@@ -917,8 +917,15 @@ class ApecWorker():
                 if await submit_btn.is_visible():
                     await submit_btn.click() 
                     await self.page.wait_for_timeout(5000)
-                    print("Application submitted")
-                    
+
+                    try:
+                        self.page.wait_for_selector('div[class="notification-title"]', timeout=2000)
+
+                    except Exception:
+                        print(f"Submission of {offer.form_url} failed because of random input fields in the application form")
+                        continue 
+
+                    print("Application submitted")                    
                     offer.status = ApplicationStatus.SUBMITTED
                     successful_submissions.append(offer)
                 else:

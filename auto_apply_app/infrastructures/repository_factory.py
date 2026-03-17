@@ -1,48 +1,52 @@
+import os
 from typing import Tuple
+from redis.asyncio import Redis
 
-from auto_apply_app.application.repositories.job_offer_repo import JobOfferRepository
-from auto_apply_app.application.repositories.job_search_repo import JobSearchRepository
-from auto_apply_app.application.repositories.user_repo import UserRepository
-from auto_apply_app.application.repositories.auth_repo import AuthRepository
-from auto_apply_app.application.repositories.subscription_repo import SubscriptionRepository
-from auto_apply_app.application.repositories.unit_of_work import UnitOfWork 
+# Interfaces
 from auto_apply_app.application.repositories.token_blacklist import TokenBlacklistRepository
+from auto_apply_app.application.repositories.unit_of_work import UnitOfWork 
+
+# InMemory Implementations
 from auto_apply_app.infrastructures.persistence.in_memory.memory import (
-  InMemoryTokenBlacklistRepository,
-  InMemoryUnitOfWork
+    InMemoryTokenBlacklistRepository,
+    InMemoryUnitOfWork
 )
+
+# Database/Production Implementations
+from auto_apply_app.infrastructures.persistence.database.repositories.unit_of_work_repo_db import SqlAlchemyUnitOfWork
+from auto_apply_app.infrastructures.persistence.database.session import async_session
+from auto_apply_app.infrastructures.persistence.database.repositories.token_blacklist_repo_db import RedisTokenBlacklistRepository
+
 from auto_apply_app.infrastructures.config import Config, RepositoryType
 
 
-def create_repositories() -> Tuple[
-    UserRepository, 
-    JobOfferRepository, 
-    JobSearchRepository,
-    AuthRepository,
-    SubscriptionRepository,
-    TokenBlacklistRepository,
-    UnitOfWork
-]:
-    
+def create_repositories() -> Tuple[TokenBlacklistRepository, UnitOfWork]:
+    """
+    Factory to create and return the core data access components based on configuration.
+    Returns a tuple of (TokenBlacklistRepository, UnitOfWork).
+    """
     repo_type = Config.get_repository_type() 
-    # users = {}
-    # auth_storage = {}
-    # sub_storage = {}
 
     if repo_type == RepositoryType.MEMORY:
-
-        # user_repo = InMemoryUserRepository(users)
-        # job_repo = InMemoryJobOfferRepository()
-        # search_repo = InMemoryJobSearchRepository()
-        # auth_repo = InMemoryAuthRepository(auth_storage)
-        # sub_repo = InMemorySubscriptionRepository(sub_storage)
+        # --- DEVELOPMENT / TESTING ---
         token_repo = InMemoryTokenBlacklistRepository()
         uow = InMemoryUnitOfWork()
-
-        #search_repo.set_job_repository(job_repo)
-        return token_repo, uow #user_repo, job_repo, search_repo, auth_repo, sub_repo,  
+        return token_repo, uow  
     
     elif repo_type == RepositoryType.DATABASE:
-        pass
+        # --- PRODUCTION ---
+        
+        # 1. Setup Redis Token Blacklist
+        # Fallback to localhost if not set (useful for local database testing)
+        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+        redis_client = Redis.from_url(redis_url, decode_responses=True)
+        token_repo = RedisTokenBlacklistRepository(redis_client)
+
+        # 2. Setup SQLAlchemy Unit of Work
+        # We pass the async_sessionmaker imported from our session.py
+        uow = SqlAlchemyUnitOfWork(session_factory=async_session)
+
+        return token_repo, uow
+
     else:
         raise ValueError(f"Repository type: {repo_type} not supported")

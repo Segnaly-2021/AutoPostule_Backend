@@ -912,9 +912,17 @@ class WelcomeToTheJungleWorker:
                 
                 if await submit_btn.is_visible():
                     await submit_btn.click() 
-                    await self.page.wait_for_timeout(3000) # Wait for network confirmation
-                    print(f"✅ Application submitted for {offer.job_title}")
-                    
+                    await self.page.wait_for_timeout(5000) # Wait for network confirmation
+
+                    try:
+                        await self.page.wait_for_selector('svg[alt="Paperplane"]', timeout=2000)
+
+                    except Exception:
+                        print(f"Submission of {offer.form_url} failed because of random input fields in the application form")
+                        continue 
+
+
+                    print(f"✅ Application submitted for {offer.job_title}")                    
                     # Update domain entity state
                     offer.status = ApplicationStatus.SUBMITTED
                     successful_submissions.append(offer)

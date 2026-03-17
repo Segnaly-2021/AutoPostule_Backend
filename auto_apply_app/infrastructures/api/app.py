@@ -5,7 +5,8 @@ import logging
 
 from auto_apply_app.infrastructures.config import Config
 from auto_apply_app.infrastructures.configuration.container import create_application
-#from auto_apply_app.infrastructures.persistence.database.session import init_db, engine
+from auto_apply_app.infrastructures.persistence.database.session import init_db, engine
+from auto_apply_app.infrastructures.config import RepositoryType
 
 # Import your concrete implementations
 from auto_apply_app.infrastructures.authentication.password_service import PasswordService
@@ -45,15 +46,17 @@ async def lifespan(app: FastAPI):
     """
     logger.info("Starting application...")
     
-    # 1. Initialize database tables
-    #await init_db()
-    logger.info("Database initialized")
-    
     # 2. Load configuration
     config = Config()
 
-    
-   
+    # 1. Initialize database tables (Only if in DATABASE mode)
+    if config.get_repository_type() == RepositoryType.DATABASE:
+        # A quick note on init_db(): Since you use Alembic for migrations, 
+        # SQLAlchemy's create_all() will just safely skip tables that already exist.
+        await init_db()
+        logger.info("PostgreSQL Database initialized and verified.")
+    else:
+        logger.info("Running in MEMORY mode. Skipping DB initialization.")
     
     # 3. Build the Application container
     container = create_application(
@@ -71,21 +74,27 @@ async def lifespan(app: FastAPI):
         free_search_presenter=WebFreeSearchPresenter()
     )
     
-    # 6. Attach container to app state
+    # 4. Attach container to app state
     app.state.container = container
     app.state.config = config
     
     logger.info("Application container initialized successfully")
     
-    yield
+    yield  # 🚀 THIS IS WHERE YOUR APP RUNS AND ACCEPTS TRAFFIC
     
-    # Cleanup on shutdown
+    # --- CLEANUP ON SHUTDOWN ---
     logger.info("Shutting down application...")
     
-    # Close database connections
-    #await engine.dispose()
-    
+    # 5. Close database connection pool gracefully
+    if config.get_repository_type() == RepositoryType.DATABASE:
+        await engine.dispose()
+        logger.info("PostgreSQL connection pool closed successfully.")
+        
     logger.info("Application shutdown complete")
+
+
+
+
 
 def create_fastapi_app() -> FastAPI:
     """

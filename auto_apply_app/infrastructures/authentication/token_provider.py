@@ -14,7 +14,7 @@ class JwtTokenProvider(TokenProviderPort):
         # Best Practice: Never hardcode secrets. Read from Environment.
         self.secret = os.getenv("JWT_SECRET", "BoulSakhKhallateSecretLaaa")
         self.algo = "HS256"
-        self.token_lifespan_minutes = 120
+        self.token_lifespan_minutes = 240
 
     def encode_token(self, user_id: UUID, claims: Optional[Dict[str, Any]] = None) -> str:
         # 1. Prepare base payload
