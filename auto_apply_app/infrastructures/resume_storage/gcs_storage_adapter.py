@@ -11,12 +11,12 @@ class GCSFileStorageAdapter(FileStoragePort):
         if not bucket_name:
             raise ValueError("GCP_RESUME_BUCKET environment variable is missing.")
 
-        creds_json = os.getenv("GCP_CREDENTIALS")
+        creds_json = os.getenv("GCP_CREDENTIALS")        
         
         if creds_json:
             # 💻 LOCAL DEV MODE: Parse the JSON string from your local .env file
             try:
-                creds_dict = json.loads(creds_json)
+                creds_dict = json.loads(creds_json)                
                 self.client = storage.Client.from_service_account_info(creds_dict)
                 print("☁️ GCS Adapter initialized using local JSON credentials.")
             except json.JSONDecodeError as e:
