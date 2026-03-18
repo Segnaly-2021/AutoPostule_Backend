@@ -15,7 +15,15 @@ if DATABASE_URL:
     DATABASE_URL = DATABASE_URL.replace("sslmode=require", "ssl=require")
 
 # 1. Create the engine
-engine = create_async_engine(DATABASE_URL)
+engine = create_async_engine(
+    DATABASE_URL,
+    # just for testing
+    connect_args={
+        "prepared_statement_cache_size": 0,
+        "statement_cache_size": 0
+    }
+        
+)
 
 # 2. Create the Session factory
 async_session = async_sessionmaker(
