@@ -348,7 +348,7 @@ class WelcomeToTheJungleWorker:
         # 2. Initialize Browser
         self.playwright = await async_playwright().start()
         self.browser = await self.playwright.chromium.launch(
-            headless= not preferences.browser_headless, # ✅ Runtime Value
+            headless= preferences.browser_headless, # ✅ Runtime Value
             args=['--disable-blink-features=AutomationControlled']
         )
         self.context = await self.browser.new_context()

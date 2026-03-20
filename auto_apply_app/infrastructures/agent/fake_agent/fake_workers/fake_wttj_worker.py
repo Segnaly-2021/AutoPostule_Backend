@@ -34,7 +34,7 @@ class FakeWTTJWorker:
         """Initialize headless browser."""
         self.playwright = await async_playwright().start()
         self.browser = await self.playwright.chromium.launch(
-            headless=False,  # Always headless for free tier
+            headless=True,  # Always headless for free tier
             args=['--disable-blink-features=AutomationControlled']
         )
         self.context = await self.browser.new_context()

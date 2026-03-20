@@ -14,7 +14,7 @@ class UserPreferences(Entity):
     user_id: UUID
     
     # Automation Strategy
-    is_full_automation: bool = False
+    is_full_automation: bool = True
     
     # Active Boards
     active_boards: Dict[str, bool] = field(default_factory=lambda: {
