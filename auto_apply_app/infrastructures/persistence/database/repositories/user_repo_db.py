@@ -50,6 +50,7 @@ class UserRepoDB(UserRepository):
             lastname=user.lastname,
             email=user.email,
             resume_path=user.resume_path,
+            resume_file_name=user.resume_file_name,
             phone_number=user.phone_number,
             current_position=user.current_position,
             current_company=user.current_company,

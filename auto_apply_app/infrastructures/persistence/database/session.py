@@ -17,7 +17,6 @@ if DATABASE_URL:
 # 1. Create the engine
 engine = create_async_engine(
     DATABASE_URL,
-    # just for testing
     connect_args={
         "prepared_statement_cache_size": 0,
         "statement_cache_size": 0
