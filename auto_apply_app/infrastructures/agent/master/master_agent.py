@@ -524,7 +524,8 @@ class MasterAgent(AgentServicePort):
             subscription=subscription,
             preferences=preferences,
             credentials=credentials,
-            max_jobs=10 if subscription.account_type.name == "BASIC" else 60, # Inject limits!
+            max_jobs=10 if "BASIC" in subscription.account_type.name else 60, # Inject limits!
+            worker_job_limit=0,
             found_raw_offers=[],
             processed_offers=[],
             submitted_offers=[], # New Outbox
@@ -611,7 +612,7 @@ class MasterAgent(AgentServicePort):
                 print("Kicking off : emit progress")
                 await self._emit_progress(chunk, search_id, namespace, progress_callback)
 
-        except Exception as e:
+        except Exception:
             print("🚨 FATAL GRAPH ERROR:")
             traceback.print_exc() # This will reveal the exact line causing the silent crash!
 
@@ -665,8 +666,8 @@ class MasterAgent(AgentServicePort):
             
             print(f"✅ Streamed [{source.upper()}]: {stage_mapping.get(node_name, node_name)}")
 
-        except Exception as e:
-            print(f"🚨 FATAL GRAPH ERROR:")
+        except Exception:
+            print("🚨 FATAL GRAPH ERROR:")
             traceback.print_exc() # This will reveal the exact line causing the silent crash!
 
 
@@ -681,7 +682,7 @@ class MasterAgent(AgentServicePort):
         
         if not self._checkpointer:
             self._checkpointer = await Config.get_checkpointer()
-            
+
         app = self.get_graph()
         config = {"configurable": {"thread_id": f"search_{search.id}"}}
         
