@@ -5,7 +5,7 @@ import logging
 
 from auto_apply_app.infrastructures.config import Config
 from auto_apply_app.infrastructures.configuration.container import create_application
-from auto_apply_app.infrastructures.persistence.database.session import init_db, engine
+from auto_apply_app.infrastructures.persistence.database.session import engine #,init_db
 from auto_apply_app.infrastructures.config import RepositoryType
 
 # Import your concrete implementations

@@ -64,7 +64,7 @@ class Config:
                     num_workers=1,
                     kwargs={
                         "autocommit": True,
-                        "prepare_threshold": 0,
+                        "prepare_threshold": None,
                     }
                 )
             
