@@ -39,9 +39,9 @@ class Config:
     @classmethod
     def get_database_url(cls) -> str:
         """Get the database connection string."""
-        url = os.getenv("DATABASE_URL")
+        url = os.getenv("DATABASE_DIRECT_URL")
         if not url and cls.get_repository_type() == RepositoryType.DATABASE:
-            raise ValueError("DATABASE_URL is required when RepositoryType is DATABASE")
+            raise ValueError("DATABASE_DIRECT_URL is required when RepositoryType is DATABASE")
         return url
 
     @classmethod
