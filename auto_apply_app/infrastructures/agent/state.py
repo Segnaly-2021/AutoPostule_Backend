@@ -1,7 +1,6 @@
 import operator
 from typing import TypedDict, List, Optional, Annotated, Dict
 
-# Domain Entities
 from auto_apply_app.domain.entities.user import User
 from auto_apply_app.domain.entities.user_subscription import UserSubscription
 from auto_apply_app.domain.entities.user_preferences import UserPreferences
@@ -9,35 +8,50 @@ from auto_apply_app.domain.entities.board_credentials import BoardCredential
 from auto_apply_app.domain.entities.job_search import JobSearch
 from auto_apply_app.domain.entities.job_offer import JobOffer
 
+
+def keep_first(old, new):
+    """
+    For fields that should never be overwritten by workers.
+    Workers echo these back unchanged — we always keep the original.
+    If old is None (first write), accept the new value.
+    """
+    if old is None:
+        return new
+    return old  # always keep the master's original value
+
+
+def take_latest(old, new):
+    """
+    For fields that represent current status/progress.
+    Always take the most recent non-None value.
+    """
+    if new is None:
+        return old
+    return new
+
+
 class JobApplicationState(TypedDict):
-    # --- DOMAIN CONTEXT (Inputs) ---
-    user: User
-    subscription: UserSubscription 
-    job_search: JobSearch
-    preferences: UserPreferences 
-    
-    # 🚨 [NEW] Action Intent (The remote control from the Master)
-    # Expected values: "SCRAPE" or "SUBMIT"
-    action_intent: str 
+    # --- IMMUTABLE MASTER DATA ---
+    # Workers echo these back unchanged. keep_first ensures
+    # receiving 3 identical copies from 3 parallel workers doesn't crash.
+    user: Annotated[User, keep_first]
+    subscription: Annotated[UserSubscription, keep_first]
+    job_search: Annotated[JobSearch, keep_first]
+    preferences: Annotated[UserPreferences, keep_first]
+    credentials: Annotated[Optional[Dict[str, BoardCredential]], keep_first]
+    max_jobs: Annotated[int, keep_first]
+    worker_job_limit: Annotated[int, keep_first]
 
-    # --- PROCESS BUFFER ---
-    # 🚨 [UPDATED] LangGraph Reducers for Parallel Execution
-    # operator.add ensures that if APEC and HelloWork run simultaneously,
-    # their outputs are merged into one giant list instead of overwriting each other.
+    # --- MUTABLE STATUS FIELDS ---
+    # Last worker to update wins — fine for status/url tracking
+    action_intent: Annotated[str, take_latest]
+    status: Annotated[str, take_latest]
+    current_url: Annotated[str, take_latest]
+    is_logged_in: Annotated[bool, take_latest]
+    error: Annotated[Optional[str], take_latest]
+
+    # --- PARALLEL MERGE LISTS ---
+    # operator.add safely concatenates results from all workers
     found_raw_offers: Annotated[List[JobOffer], operator.add]
-    
     processed_offers: Annotated[List[JobOffer], operator.add]
-
-    # 🚨 [NEW] The "Outbox" for jobs that actually got submitted
     submitted_offers: Annotated[List[JobOffer], operator.add]
-
-    # [NEW] Workload Management
-    max_jobs: int # e.g., 20 for Basic, 60 for Premium
-    worker_job_limit: int # The split number (e.g., max_jobs // active_boards)
-
-    # --- TECHNICAL STATE ---
-    current_url: str
-    is_logged_in: bool
-    status: str 
-    credentials: Optional[Dict[str, BoardCredential]]
-    error: Optional[str]
