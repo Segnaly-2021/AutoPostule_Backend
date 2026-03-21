@@ -296,7 +296,8 @@ class ApecWorker():
             )
             self.context = await self.browser.new_context()
             self.page = await self.context.new_page()
-            return {"status": "session_started"}
+            #return {"status": "session_started"}
+            return {}
         except Exception as e:
             print(f"Session Error: {e}")
             return {"error": "Failed to start the secure browsing session. Our servers might be under heavy load, please try again."}
@@ -333,10 +334,11 @@ class ApecWorker():
             # Navigate to base URL to initialize the page object
             await self.page.goto(self.base_url, wait_until="domcontentloaded")
             
-            return {
-                "current_url": self.page.url, 
-                "is_logged_in": True if session_path else False
-            }
+            # return {
+            #     "current_url": self.page.url, 
+            #     "is_logged_in": True if session_path else False
+            # }
+            return {}
             
         except Exception as e:
             print(f"Browser Auth Initialization Error: {e}")
@@ -349,10 +351,11 @@ class ApecWorker():
         try:
             await self.page.goto(self.base_url)
             await self._handle_cookies()
-            return {
-                "status": "on_homepage",
-                "current_url": self.base_url
-            }
+            # return {
+            #     "status": "on_homepage",
+            #     "current_url": self.base_url
+            # }
+            return {}
         except Exception as e:
             print(f"Nav Error: {e}")
             return {"error": "Could not reach APEC.fr. The job board might be down or undergoing maintenance."}
@@ -360,9 +363,7 @@ class ApecWorker():
         
     # --- NODE 3: Login ---
     async def request_login(self, state: JobApplicationState):
-        if state.get("is_logged_in"):
-            return {"status": "already_logged_in"}
-
+        
         prefs = state["preferences"]
         creds = state.get("credentials")
 
@@ -404,7 +405,8 @@ class ApecWorker():
                 # 🚨 [NEW] Save the session cookies!
                 await self._save_auth_state(user_id)
 
-                return {"is_logged_in": True, "status": "login_complete"}
+                #return {"is_logged_in": True, "status": "login_complete"}
+                return {}
 
             except Exception as e:
                 print(f"❌ Auto-login failed: {e}")
@@ -425,7 +427,8 @@ class ApecWorker():
                 # 🚨 [NEW] Save the session cookies! (Works for manual login too!)
                 await self._save_auth_state(user_id)
 
-                return {"is_logged_in": True, "status": "login_complete"}
+                #return {"is_logged_in": True, "status": "login_complete"}
+                return {}
             except Exception as e:
                 print(f"Manual Login Error: {e}")
                 return {"error": "Login timed out. We didn't detect a successful login within the allowed time."}
@@ -466,10 +469,11 @@ class ApecWorker():
                 "error": "We encountered an issue applying your search filters. The job board may have updated its layout."
             }
             
-        return {
-            "status": "on search page",
-            "current_url": self.page.url
-        }
+        # return {
+        #     "status": "on search page",
+        #     "current_url": self.page.url
+        # }
+        return {}
 
     # --- NODE 5: Scrape Jobs (Integrated & Paginated) ---
     async def get_matched_jobs(self, state: JobApplicationState):
@@ -946,8 +950,7 @@ class ApecWorker():
         print(f"✅ Successfully submitted {len(successful_submissions)} applications. Handing back to Orchestrator...")
 
         return {
-            "submitted_offers": successful_submissions,
-            "status": "batch_complete",
+            "submitted_offers": successful_submissions
         }
     
 
@@ -956,7 +959,8 @@ class ApecWorker():
         print("--- [APEC] Cleanup ---")
         # Reuse force_cleanup logic but as a step
         await self.force_cleanup()
-        return {"status": "finished"}
+        #return {"status": "finished"}
+        return {}
 
     # --- ROUTING HELPER ---
     def route_action_intent(self, state: JobApplicationState):

@@ -941,8 +941,7 @@ class WelcomeToTheJungleWorker:
         print(f"✅ Successfully submitted {len(successful_submissions)} WTTJ applications. Handing back to Master...")
         
         return {
-            "submitted_offers": successful_submissions, 
-            "status": "batch_complete"
+            "submitted_offers": successful_submissions
         }
     
 
@@ -951,7 +950,7 @@ class WelcomeToTheJungleWorker:
         print("--- [APEC] Cleanup ---")
         # Reuse force_cleanup logic but as a step
         await self.force_cleanup()
-        return {"status": "finished"}
+        return {}
     
 
     # --- HELPER: Error Router ---

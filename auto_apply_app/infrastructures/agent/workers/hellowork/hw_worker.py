@@ -248,7 +248,8 @@ class HelloWorkWorker:
         )
         self.context = await self.browser.new_context()
         self.page = await self.context.new_page()
-        return {"status": "session_started"}
+        #return {"status": "session_started"}
+        return {}
 
     async def start_session_with_auth(self, state: JobApplicationState):
         """V2: Boot directly with injected session for SUBMIT track."""
@@ -269,7 +270,8 @@ class HelloWorkWorker:
             self.page = await self.context.new_page()
             await self.page.goto(self.base_url, wait_until="domcontentloaded")
             await self._handle_cookies()
-            return {"current_url": self.page.url, "is_logged_in": True if session_path else False}
+            #return {"current_url": self.page.url, "is_logged_in": True if session_path else False}
+            return {}
         except Exception as e:
             return {"error": f"Failed to initialize HelloWork browser: {e}"}
 
@@ -279,14 +281,13 @@ class HelloWorkWorker:
             await self.page.goto(self.base_url)
             await self.page.wait_for_timeout(2000)
             await self._handle_cookies()  
-            return {"current_url": self.base_url, "status": "on_homepage"}         
+            #return {"current_url": self.base_url, "status": "on_homepage"} 
+            return {}        
         except Exception as e:
             return {"error": f"Navigation failed: {e}"}
 
     async def request_login(self, state: JobApplicationState):
-        if state.get("is_logged_in"): 
-            return {"status": "already_logged_in"}
-        
+       
         prefs = state["preferences"]
         creds = state.get("credentials")
         user_id = str(state["user"].id)
@@ -312,7 +313,8 @@ class HelloWorkWorker:
 
                 print("✅ Auto-login successful")
                 await self._save_auth_state(user_id) # 🚨 V2 SAVE SESSION
-                return {"is_logged_in": True, "status": "login_complete"}
+                #return {"is_logged_in": True, "status": "login_complete"}
+                return {}
             except Exception:
                 return {"error": "Failed to log into HelloWork. Check credentials."}
 
@@ -325,7 +327,8 @@ class HelloWorkWorker:
                 await self.page.locator('a[href="/fr-fr"]').first.click()            
                 
                 await self._save_auth_state(user_id) # 🚨 V2 SAVE SESSION
-                return {"is_logged_in": True, "status": "login_complete"}
+                #return {"is_logged_in": True, "status": "login_complete"}
+                return {}
             except Exception:
                 return {"error": "Manual login timed out."}
         
@@ -350,7 +353,8 @@ class HelloWorkWorker:
                 await self._apply_filters(contract_types, min_salary)
                 
             await self.page.wait_for_timeout(2000)
-            return {"status": "search_complete", "current_url": self.page.url}
+            #return {"status": "search_complete", "current_url": self.page.url}
+            return {}
         except Exception as e:
             return {"error": f"Failed to search HelloWork: {e}"}
         
@@ -666,11 +670,12 @@ class HelloWorkWorker:
             return {"error": "All HW submissions failed."}
         
         # 🚨 V2 OUTBOX RETURN
-        return {"submitted_offers": successful_submissions, "status": "batch_complete"}
+        return {"submitted_offers": successful_submissions}
 
     async def cleanup(self, state: JobApplicationState):
         await self.force_cleanup()
-        return {"status": "finished"}
+        # return {"status": "finished"}
+        return {}
 
     # ==========================================
     # --- V2 GRAPH ROUTER ---
