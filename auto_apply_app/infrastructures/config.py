@@ -3,9 +3,9 @@ from enum import Enum
 import os
 
 # --- LangGraph Imports ---
-from langgraph.checkpoint.memory import MemorySaver
-from langgraph.checkpoint.postgres import PostgresSaver 
-from psycopg_pool import ConnectionPool
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from psycopg_pool import AsyncConnectionPool
+
 
 # Load environment variables from .env file
 load_dotenv()
@@ -22,6 +22,10 @@ class Config:
 
     # Default values
     DEFAULT_REPOSITORY_TYPE: RepositoryType = RepositoryType.MEMORY
+
+
+    # 🚨 SINGLETON POOL: Prevents creating thousands of connections
+    _langgraph_db_pool = None
     
     @classmethod
     def get_repository_type(cls) -> RepositoryType:
@@ -41,34 +45,30 @@ class Config:
         return url
 
     @classmethod
-    def get_checkpointer(cls):
-        """
-        Factory method to return the appropriate LangGraph checkpointer.
-        """
+    async def get_checkpointer(cls): # 🚨 Changed to async def
         repo_type = cls.get_repository_type()
 
         if repo_type == RepositoryType.MEMORY:
-            # Ephemeral checkpointer (Lost on restart)
-            return MemorySaver()
+            from langgraph.checkpoint.memory import AsyncMemorySaver
+            return AsyncMemorySaver()
 
         elif repo_type == RepositoryType.DATABASE:
-            # Persistent checkpointer (Survives restarts)
-            # Create connection pool
-            # In a real app, this pool should be managed (opened/closed) at the app lifecycle level
-            db_url = cls.get_database_url()
-            connection_kwargs = {
-                "autocommit": True,
-                "prepare_threshold": 0,
-            }
+            db_url = cls.get_database_url().replace("+asyncpg", "")
             
-            pool = ConnectionPool(
-                conninfo=db_url,
-                max_size=20,
-                kwargs=connection_kwargs,
-            )
+            if cls._langgraph_db_pool is None:
+                # 🚨 Because this is now inside an async def, it will bind to the 
+                # running asyncio event loop perfectly!
+                cls._langgraph_db_pool = AsyncConnectionPool(
+                    conninfo=db_url,
+                    max_size=5,
+                    num_workers=1,
+                    kwargs={
+                        "autocommit": True,
+                        "prepare_threshold": 0,
+                    }
+                )
             
-            # The checkpointer automatically creates the necessary tables on first run
-            return PostgresSaver(pool)
+            return AsyncPostgresSaver(cls._langgraph_db_pool)
 
         raise ValueError(f"No checkpointer implementation for {repo_type}")
 

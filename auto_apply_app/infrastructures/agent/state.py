@@ -39,5 +39,5 @@ class JobApplicationState(TypedDict):
     current_url: str
     is_logged_in: bool
     status: str 
-    credentials: Optional[Dict[str, BoardCredential]] = None
+    credentials: Optional[Dict[str, BoardCredential]]
     error: Optional[str]

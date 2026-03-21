@@ -3,6 +3,7 @@
 import io # 🚨 Needed for RAM reading
 import json
 import asyncio
+import traceback
 from uuid import UUID
 import pdfplumber
 from typing import Callable, Optional, Dict, Any
@@ -50,7 +51,7 @@ class MasterAgent(AgentServicePort):
         self.api_keys = api_keys
         self.consume_credits = consume_credits_use_case
         self.save_applications = save_applications_use_case
-        self._checkpointer = Config.get_checkpointer()
+        self._checkpointer = None
         
         self._active_workers: Dict[str, Any] = {}
         self.file_storage = file_storage
@@ -511,7 +512,7 @@ class MasterAgent(AgentServicePort):
         search: JobSearch,
         subscription: UserSubscription,
         preferences: UserPreferences,
-        credentials: Optional[BoardCredential] = None,
+        credentials: Optional[Dict[str, BoardCredential]] = None,
         progress_callback: Optional[Callable] = None
     ) -> None:
         print(f"🤖 Master Agent waking up for user: {user.email}")
@@ -585,19 +586,34 @@ class MasterAgent(AgentServicePort):
         search_id: UUID,
         progress_callback: Optional[Callable]
     ):
-        app = self.get_graph()
-        config = {"configurable": {"thread_id": f"search_{search_id}"}}
         
-        async for event in app.astream(initial_state, config, subgraphs=True):
-            if isinstance(event, tuple) and len(event) == 2:
-                namespace, chunk = event
-            else:
-                namespace = ("master",) # If no namespace, it's a Master node
-                chunk = event
-                
-            # 🚨 Pass namespace to the emitter!
-            await self._emit_progress(chunk, search_id, namespace, progress_callback)
+        if not self._checkpointer:
+            self._checkpointer = await Config.get_checkpointer()
 
+
+        app = self.get_graph()
+        print('streaming: graph created')
+
+        config = {"configurable": {"thread_id": f"search_{search_id}"}}
+        print('streaming: config validated ')
+
+        try: 
+
+
+            async for event in app.astream(initial_state, config, subgraphs=True):
+                if isinstance(event, tuple) and len(event) == 2:
+                    namespace, chunk = event
+                else:
+                    namespace = ("master",) # If no namespace, it's a Master node
+                    chunk = event
+                    
+                # 🚨 Pass namespace to the emitter!
+                print("Kicking off : emit progress")
+                await self._emit_progress(chunk, search_id, namespace, progress_callback)
+
+        except Exception as e:
+            print("🚨 FATAL GRAPH ERROR:")
+            traceback.print_exc() # This will reveal the exact line causing the silent crash!
 
     async def _emit_progress(
         self, 
@@ -605,46 +621,53 @@ class MasterAgent(AgentServicePort):
         search_id: UUID, 
         namespace: tuple, # 🚨 New argument!
         callback: Optional[Callable]
+
     ):
-        if not chunk: 
-            return
+        
+        try: 
+            if not chunk: 
+                return
+                
+            node_name = list(chunk.keys())[0]
+            if node_name == "__end__": 
+                return
+                
+            node_state = chunk[node_name]
             
-        node_name = list(chunk.keys())[0]
-        if node_name == "__end__": 
-            return
+            # 🚨 UPDATE: Added Master nodes & Submit track nodes
+            stage_mapping = {
+                "start": "Initializing Browser",
+                "start_with_session": "Booting Secure Session",
+                "nav": "Navigating to Job Board",
+                "login": "Authenticating",
+                "search": "Searching for Jobs",
+                "scrape": "Extracting Job Data",
+                "analyze": "AI Generating Applications", # Master Node
+                "review_gate": "Waiting for User Review", # Master Node
+                "submit": "Submitting Applications",
+                "finalize": "Saving to Database", # Master Node
+                "cleanup": "Cleaning Up"
+            }
             
-        node_state = chunk[node_name]
-        
-        # 🚨 UPDATE: Added Master nodes & Submit track nodes
-        stage_mapping = {
-            "start": "Initializing Browser",
-            "start_with_session": "Booting Secure Session",
-            "nav": "Navigating to Job Board",
-            "login": "Authenticating",
-            "search": "Searching for Jobs",
-            "scrape": "Extracting Job Data",
-            "analyze": "AI Generating Applications", # Master Node
-            "review_gate": "Waiting for User Review", # Master Node
-            "submit": "Submitting Applications",
-            "finalize": "Saving to Database", # Master Node
-            "cleanup": "Cleaning Up"
-        }
-        
-        # Determine the source (e.g., 'apec', 'hellowork', 'master')
-        source = namespace[0].replace("_worker", "") if namespace else "master"
-        
-        if callback:
-            status_val = node_state.get("status", "in_progress") if isinstance(node_state, dict) else "in_progress"
+            # Determine the source (e.g., 'apec', 'hellowork', 'master')
+            source = namespace[0].replace("_worker", "") if namespace else "master"
             
-            await callback({
-                "source": source.upper(), # 🚨 Tells UI which progress bar to update!
-                "stage": stage_mapping.get(node_name, node_name),
-                "node": node_name,
-                "status": status_val,
-                "search_id": str(search_id)
-            })
-        
-        print(f"✅ Streamed [{source.upper()}]: {stage_mapping.get(node_name, node_name)}")
+            if callback:
+                status_val = node_state.get("status", "in_progress") if isinstance(node_state, dict) else "in_progress"
+                
+                await callback({
+                    "source": source.upper(), # 🚨 Tells UI which progress bar to update!
+                    "stage": stage_mapping.get(node_name, node_name),
+                    "node": node_name,
+                    "status": status_val,
+                    "search_id": str(search_id)
+                })
+            
+            print(f"✅ Streamed [{source.upper()}]: {stage_mapping.get(node_name, node_name)}")
+
+        except Exception as e:
+            print(f"🚨 FATAL GRAPH ERROR:")
+            traceback.print_exc() # This will reveal the exact line causing the silent crash!
 
 
     async def resume_job_search(
@@ -656,6 +679,9 @@ class MasterAgent(AgentServicePort):
     ) -> None:
         print(f"🔄 Resuming job search {search.id} for user: {user.email}")
         
+        if not self._checkpointer:
+            self._checkpointer = await Config.get_checkpointer()
+            
         app = self.get_graph()
         config = {"configurable": {"thread_id": f"search_{search.id}"}}
         

@@ -2,6 +2,7 @@ import uvicorn
 import sys
 import traceback
 
+
 print("🚀 Starting boot sequence...", file=sys.stderr)
 
 try:

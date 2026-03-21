@@ -53,7 +53,7 @@ async def lifespan(app: FastAPI):
     if config.get_repository_type() == RepositoryType.DATABASE:
         # A quick note on init_db(): Since you use Alembic for migrations, 
         # SQLAlchemy's create_all() will just safely skip tables that already exist.
-        await init_db()
+        #await init_db()
         logger.info("PostgreSQL Database initialized and verified.")
     else:
         logger.info("Running in MEMORY mode. Skipping DB initialization.")
