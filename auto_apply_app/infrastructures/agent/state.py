@@ -9,35 +9,39 @@ from auto_apply_app.domain.entities.board_credentials import BoardCredential
 from auto_apply_app.domain.entities.job_search import JobSearch
 from auto_apply_app.domain.entities.job_offer import JobOffer
 
+# --- REDUCER HELPERS ---
+
+def keep_original(old, new):
+    """Used for static data. Always keeps the initial value from the Master."""
+    return old
+
+def take_latest(old, new):
+    """Used for status/logs. Keeps the most recent update, preventing crashes."""
+    return new
+
 class JobApplicationState(TypedDict):
-    # --- DOMAIN CONTEXT (Inputs) ---
-    user: User
-    subscription: UserSubscription 
-    job_search: JobSearch
-    preferences: UserPreferences 
+    # --- DOMAIN CONTEXT (Annotated to prevent parallel merge crashes) ---
+    user: Annotated[User, keep_original]
+    subscription: Annotated[UserSubscription, keep_original] 
+    job_search: Annotated[JobSearch, keep_original]
+    preferences: Annotated[UserPreferences, keep_original] 
+    credentials: Annotated[Optional[Dict[str, BoardCredential]], keep_original]
     
-    # 🚨 [NEW] Action Intent (The remote control from the Master)
-    # Expected values: "SCRAPE" or "SUBMIT"
-    action_intent: str 
+    # --- CONTROL FLAGS ---
+    # We use take_latest so workers can update these without crashing the Master
+    action_intent: Annotated[str, take_latest] 
+    status: Annotated[str, take_latest] 
+    current_url: Annotated[str, take_latest]
+    is_logged_in: Annotated[bool, take_latest]
+    error: Annotated[Optional[str], take_latest]
 
-    # --- PROCESS BUFFER ---
-    # 🚨 [UPDATED] LangGraph Reducers for Parallel Execution
-    # operator.add ensures that if APEC and HelloWork run simultaneously,
-    # their outputs are merged into one giant list instead of overwriting each other.
+    # --- WORKLOAD ---
+    max_jobs: Annotated[int, keep_original]
+    worker_job_limit: Annotated[int, keep_original]
+
+    # --- PROCESS BUFFER (Annotated to MERGE lists) ---
+    # operator.add is the most important reducer: it combines the 3 worker 
+    # lists into one big list instead of overwriting.
     found_raw_offers: Annotated[List[JobOffer], operator.add]
-    
     processed_offers: Annotated[List[JobOffer], operator.add]
-
-    # 🚨 [NEW] The "Outbox" for jobs that actually got submitted
     submitted_offers: Annotated[List[JobOffer], operator.add]
-
-    # [NEW] Workload Management
-    max_jobs: int # e.g., 20 for Basic, 60 for Premium
-    worker_job_limit: int # The split number (e.g., max_jobs // active_boards)
-
-    # --- TECHNICAL STATE ---
-    current_url: str
-    is_logged_in: bool
-    status: str 
-    credentials: Optional[Dict[str, BoardCredential]]
-    error: Optional[str]
