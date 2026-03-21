@@ -39,8 +39,8 @@ class JobApplicationState(TypedDict):
     job_search: Annotated[JobSearch, keep_first]
     preferences: Annotated[UserPreferences, keep_first]
     credentials: Annotated[Optional[Dict[str, BoardCredential]], keep_first]
-    max_jobs: Annotated[int, keep_first]
-    worker_job_limit: Annotated[int, keep_first]
+    max_jobs: Annotated[int, take_latest]
+    worker_job_limit: Annotated[int, take_latest]
 
     # --- MUTABLE STATUS FIELDS ---
     # Last worker to update wins — fine for status/url tracking

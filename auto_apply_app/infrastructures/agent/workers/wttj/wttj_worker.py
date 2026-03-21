@@ -354,7 +354,7 @@ class WelcomeToTheJungleWorker:
         self.context = await self.browser.new_context()
         self.page = await self.context.new_page()
         
-        return {"status": "session_started"}
+        return {}
     
     # --- NODE 1 Bis: Boot & Inject Session (Submit Track) ---
     async def start_session_with_auth(self, state: JobApplicationState):
@@ -385,10 +385,11 @@ class WelcomeToTheJungleWorker:
             await self.page.goto(self.base_url, wait_until="domcontentloaded")
             await self._handle_cookies()
             
-            return {
-                "current_url": self.page.url, 
-                "is_logged_in": True if session_path else False
-            }
+            # return {
+            #     "current_url": self.page.url, 
+            #     "is_logged_in": True if session_path else False
+            # }
+            return {}
             
         except Exception as e:
             print(f"Browser Auth Initialization Error: {e}")
@@ -404,7 +405,8 @@ class WelcomeToTheJungleWorker:
         except Exception as e:
             print(f"Nav Error: {e}")
             
-        return {"status": "on_homepage"}
+        #return {"status": "on_homepage"}
+        return {}
     
 
     # --- NODE 3: Login (UPDATED FOR V2) ---
@@ -448,7 +450,8 @@ class WelcomeToTheJungleWorker:
                 # 🚨 SAVE SESSION COOKIES
                 await self._save_auth_state(user_id)
                 
-                return {"is_logged_in": True, "status": "login_complete"}
+                # return {"is_logged_in": True, "status": "login_complete"}
+                return {}
 
             except Exception as e:
                 print(f"❌ Auto-login failed: {e}")
@@ -467,7 +470,8 @@ class WelcomeToTheJungleWorker:
                 # 🚨 SAVE SESSION COOKIES
                 await self._save_auth_state(user_id)
                 
-                return {"is_logged_in": True, "status": "login_step_complete"}
+                #return {"is_logged_in": True, "status": "login_step_complete"}
+                return {}
             except Exception as e:
                 print(f"Login Error: {e}")
                 return {"error": "Manual login timed out. We didn't detect a successful login."}
@@ -501,10 +505,11 @@ class WelcomeToTheJungleWorker:
             await self.page.wait_for_timeout(3000)
             await self._handle_cookies()
             
-            return {
-                "status": "on search page",
-                "current_url": self.page.url
-            }
+            # return {
+            #     "status": "on search page",
+            #     "current_url": self.page.url
+            # }
+            return {}
             
         except Exception as e:
             print(f"Search Error: {e}")
@@ -521,7 +526,7 @@ class WelcomeToTheJungleWorker:
         found_job_entities = []
         
         # 🚨 V2 REQUIREMENT: Get the target limit from the Master
-        worker_job_limit = state.get("worker_job_limit", 10) 
+        worker_job_limit = state.get("worker_job_limit", 5) 
         
         # 🚨 V2 REQUIREMENT: Fetch Ignored Hashes
         hash_result = await self.get_ignored_hashes.execute(user_id=user_id, days=14)

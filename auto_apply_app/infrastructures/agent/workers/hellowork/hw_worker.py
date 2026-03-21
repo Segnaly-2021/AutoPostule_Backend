@@ -366,7 +366,7 @@ class HelloWorkWorker:
         found_job_entities = []
         
         # 🚨 V2 Setup
-        worker_job_limit = state.get("worker_job_limit", 10) 
+        worker_job_limit = state.get("worker_job_limit", 5) 
         hash_result = await self.get_ignored_hashes.execute(user_id=user_id, days=14)
         ignored_hashes = hash_result.value if hash_result.is_success else set()
         
