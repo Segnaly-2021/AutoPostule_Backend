@@ -46,7 +46,11 @@ class ApecWorker():
         self.browser: Optional[Browser] = None
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
-      
+
+        # Progress callback (set per-run by master)
+        self._progress_callback = None
+        self._source_name = "APEC"  # each worker defines its own name
+        
 
 
     # --- HELPER: Error Router ---
@@ -59,6 +63,20 @@ class ApecWorker():
             print(f"🛑 Circuit Breaker Tripped: {state['error']}")
             return "error"
         return "continue"
+    
+    async def _emit(self, stage: str, status: str = "in_progress", error: str = None):
+        """Emit progress to the frontend if a callback is registered."""
+        if not self._progress_callback:
+            return
+        try:
+            await self._progress_callback({
+                "source": self._source_name,
+                "stage": stage,
+                "status": status,
+                "error": error
+            })
+        except Exception:
+            pass  # never let a progress emit crash a worker node
 
     # --- HELPER: Fast Hash Generation ---
     def _generate_fast_hash(self, company_name: str, job_title: str, user_id: str) -> str:
@@ -285,6 +303,8 @@ class ApecWorker():
 
     # --- NODE 1: Start Session ---
     async def start_session(self, state: JobApplicationState):
+        await self._emit("Initializing Browser")  # ← fires immediately
+
         print(f"--- [APEC] Starting session for {state['user'].firstname} ---")
         preferences = state["preferences"]
         
@@ -305,6 +325,8 @@ class ApecWorker():
 
     # --- NODE 1 Bis: Boot & Inject Session (Submit Track) ---
     async def start_session_with_auth(self, state: JobApplicationState):
+        await self._emit("Initializing Secure Browser") 
+
         """Used by the SUBMIT track to boot directly into an authenticated browser."""
         print("--- [APEC] Booting Browser (Session Injection) ---")
         user_id = str(state["user"].id)
@@ -347,6 +369,7 @@ class ApecWorker():
 
     # --- NODE 2: Navigation ---
     async def go_to_job_board(self, state: JobApplicationState):
+        await self._emit("Navigating to Job Board")
         print("--- [APEC] Navigating to Board ---")
         try:
             await self.page.goto(self.base_url)
@@ -363,6 +386,7 @@ class ApecWorker():
         
     # --- NODE 3: Login ---
     async def request_login(self, state: JobApplicationState):
+        await self._emit("Authenticating")  # ← fires immediately
         
         prefs = state["preferences"]
         creds = state.get("credentials")
@@ -436,6 +460,7 @@ class ApecWorker():
 
 
     async def search_jobs(self, state: JobApplicationState):
+        await self._emit("Searching for Jobs") 
         search_entity = state["job_search"]
         job_title = search_entity.job_title
         
@@ -477,6 +502,7 @@ class ApecWorker():
 
     # --- NODE 5: Scrape Jobs (Integrated & Paginated) ---
     async def get_matched_jobs(self, state: JobApplicationState):
+        await self._emit("Extracting Job Data") 
         print("--- [APEC] Scraping Jobs ---")
 
         user_id = state["user"].id
@@ -812,8 +838,8 @@ class ApecWorker():
 
     # --- NODE 7: Submit & Save (APEC) ---
     async def submit_applications(self, state: JobApplicationState):
-        print("--- [APEC] Submitting Applications ---")
-        
+        await self._emit("Submitting Applications")
+        print("--- [APEC] Submitting Applications ---")        
         # 1. Get Inputs from State
         # 🚨 BUG FIX: Pull from processed_offers so we get the Gemini Cover Letters!
         jobs_to_submit = state.get("processed_offers", [])
@@ -956,6 +982,7 @@ class ApecWorker():
 
     # --- NODE 9: Cleanup ---
     async def cleanup(self, state: JobApplicationState):
+        await self._emit("Cleaning Up")
         print("--- [APEC] Cleanup ---")
         # Reuse force_cleanup logic but as a step
         await self.force_cleanup()

@@ -2,6 +2,7 @@
 
 import io # 🚨 Needed for RAM reading
 import json
+import sys
 import asyncio
 import traceback
 from uuid import UUID
@@ -670,6 +671,73 @@ class MasterAgent(AgentServicePort):
             print("🚨 FATAL GRAPH ERROR:")
             traceback.print_exc() # This will reveal the exact line causing the silent crash!
 
+
+
+    async def _emit_progress(
+    self,
+    chunk: dict,
+    search_id: UUID,
+    namespace: tuple,
+    callback: Optional[Callable]
+    ):
+        try:
+            if not chunk:
+                return
+
+            node_name = list(chunk.keys())[0]
+            if node_name == "__end__":
+                return
+
+            node_state = chunk[node_name]
+
+            stage_mapping = {
+                "start": "Initializing Browser",
+                "start_with_session": "Booting Secure Session",
+                "nav": "Navigating to Job Board",
+                "login": "Authenticating",
+                "search": "Searching for Jobs",
+                "scrape": "Extracting Job Data",
+                "analyze": "AI Generating Applications",
+                "review_gate": "Waiting for User Review",
+                "submit": "Submitting Applications",
+                "finalize": "Saving to Database",
+                "cleanup": "Cleaning Up"
+            }
+
+            source = namespace[0].replace("_worker", "") if namespace else "master"
+
+            if callback:
+                status_val = "in_progress"
+                error_val = None
+
+                if isinstance(node_state, dict):
+                    status_val = node_state.get("status", "in_progress")
+
+                    # 🚨 KEY FIX: Check if this node's state carries an error
+                    error_val = node_state.get("error")
+
+                    # If worker is routing to cleanup because of an error,
+                    # the error lives in state — surface it now
+                    if node_name == "cleanup" and not error_val:
+                        # Error was set in a previous node, already in state
+                        # LangGraph passes full state to cleanup so we can read it
+                        error_val = node_state.get("error")
+
+                await callback({
+                    "source": source.upper(),
+                    "stage": stage_mapping.get(node_name, node_name),
+                    "node": node_name,
+                    "status": "error" if error_val else status_val,
+                    "error": error_val,  # None if no error — frontend handles this
+                    "search_id": str(search_id)
+                })
+
+            print(f"✅ Streamed [{source.upper()}]: {stage_mapping.get(node_name, node_name)}")
+
+        except Exception:
+            print("🚨 FATAL EMIT ERROR:")
+            traceback.print_exc(file=sys.stdout)
+            sys.stdout.flush()
 
     async def resume_job_search(
         self,

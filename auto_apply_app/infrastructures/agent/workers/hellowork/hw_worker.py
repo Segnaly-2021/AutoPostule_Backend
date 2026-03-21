@@ -42,7 +42,11 @@ class HelloWorkWorker:
         self.browser: Optional[Browser] = None
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
-        
+
+        # Progress callback (set per-run by master)
+        self._progress_callback = None
+        self._source_name = "HELLOWORK"  # each worker defines its own name
+            
     # ==========================================
     # --- V2 CORE HELPERS (SESSION & HASH) ---
     # ==========================================
@@ -62,6 +66,20 @@ class HelloWorkWorker:
         if os.path.exists(path):
             return path
         return None
+    
+    async def _emit(self, stage: str, status: str = "in_progress", error: str = None):
+        """Emit progress to the frontend if a callback is registered."""
+        if not self._progress_callback:
+            return
+        try:
+            await self._progress_callback({
+                "source": self._source_name,
+                "stage": stage,
+                "status": status,
+                "error": error
+            })
+        except Exception:
+            pass  # never let a progress emit crash a worker node
 
     def _generate_fast_hash(self, company_name: str, job_title: str, user_id: str) -> str:
         """Memory-efficient deduplication using MD5 hash."""
@@ -240,6 +258,7 @@ class HelloWorkWorker:
     # --- THE NODES ---
     # ==========================================
     async def start_session(self, state: JobApplicationState):
+        await self._emit("Initializing Browser") 
         print(f"--- [HW] Starting session for {state['user'].firstname} ---")
         preferences = state["preferences"]
         self.playwright = await async_playwright().start()
@@ -253,6 +272,7 @@ class HelloWorkWorker:
         return {}
 
     async def start_session_with_auth(self, state: JobApplicationState):
+        await self._emit("Initializing Secure Browser") 
         """V2: Boot directly with injected session for SUBMIT track."""
         print("--- [HW] Booting Browser (Session Injection) ---")
         user_id = str(state["user"].id)
@@ -277,6 +297,7 @@ class HelloWorkWorker:
             return {"error": f"Failed to initialize HelloWork browser: {e}"}
 
     async def go_to_job_board(self, state: JobApplicationState):
+        await self._emit("Navigating to Job Board")
         print("--- [HW] Navigating to HelloWork ---")
         try:
             await self.page.goto(self.base_url)
@@ -288,7 +309,7 @@ class HelloWorkWorker:
             return {"error": f"Navigation failed: {e}"}
 
     async def request_login(self, state: JobApplicationState):
-       
+        await self._emit("Authenticating")  # ← fires immediately
         prefs = state["preferences"]
         creds = state.get("credentials")
         user_id = str(state["user"].id)
@@ -334,6 +355,7 @@ class HelloWorkWorker:
                 return {"error": "Manual login timed out."}
         
     async def search_jobs(self, state: JobApplicationState):
+        await self._emit("Searching for Jobs") 
         search_entity = state["job_search"]
         job_title = search_entity.job_title
         contract_types = getattr(search_entity, 'contract_types', [])
@@ -361,6 +383,7 @@ class HelloWorkWorker:
         
 
     async def get_matched_jobs(self, state: JobApplicationState):
+        await self._emit("Extracting Job Data")
         print("--- [HW] Scraping Jobs (V2 Paginated) ---")
         user_id = state["user"].id
         search_id = state["job_search"].id
@@ -602,6 +625,7 @@ class HelloWorkWorker:
         
 
     async def submit_applications(self, state: JobApplicationState):
+        await self._emit("Submitting Applications")
         print("--- [HW] Submitting Applications ---")
         jobs_to_submit = state.get("processed_offers", [])
         user = state["user"]
@@ -674,6 +698,7 @@ class HelloWorkWorker:
         return {"submitted_offers": successful_submissions}
 
     async def cleanup(self, state: JobApplicationState):
+        await self._emit("Cleaning Up")
         await self.force_cleanup()
         # return {"status": "finished"}
         return {}

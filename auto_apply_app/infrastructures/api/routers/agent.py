@@ -84,7 +84,7 @@ async def start_job_search_agent_stream(
             controller.handle_start_agent(
                 user_id=current_user_id,
                 job_title=data.job_title,
-                job_boards=data.job_boards, # 🚨 V2 UPDATE: Plural List
+                job_boards=data.job_boards,
                 resume_path=data.resume_path,
                 contract_types=data.contract_types,
                 location=data.location,
@@ -98,18 +98,24 @@ async def start_job_search_agent_stream(
                 progress = await asyncio.wait_for(queue.get(), timeout=1.0)
                 yield f"data: {json.dumps(progress)}\n\n"
             except asyncio.TimeoutError:
-                yield ": heartbeat\n\n"  # keeps connection alive
+                yield ": heartbeat\n\n"
 
-        # Drain any remaining events
+        # Drain any remaining events before closing
         while not queue.empty():
             progress = queue.get_nowait()
             yield f"data: {json.dumps(progress)}\n\n"
 
-        result = agent_task.result()
-        if result.is_success:
-            yield f"data: {json.dumps({'source': 'MASTER', 'stage': 'Complete', 'status': 'success'})}\n\n"
-        else:
-            yield f"data: {json.dumps({'source': 'MASTER', 'stage': 'Failed', 'status': 'error', 'error': str(result.error)})}\n\n"
+        # ← Safe exception handling — never let agent_task.result() crash the generator
+        try:
+            result = agent_task.result()
+            if result.is_success:
+                yield f"data: {json.dumps({'source': 'MASTER', 'stage': 'Complete', 'status': 'success'})}\n\n"
+            else:
+                yield f"data: {json.dumps({'source': 'MASTER', 'stage': 'Failed', 'status': 'error', 'error': str(result.error)})}\n\n"
+        except Exception as e:
+            # Task raised an unhandled exception — send error event instead of crashing
+            print(f"🚨 Agent task raised exception: {e}")
+            yield f"data: {json.dumps({'source': 'MASTER', 'stage': 'Failed', 'status': 'error', 'error': str(e)})}\n\n"
 
     return StreamingResponse(
         event_generator(),
