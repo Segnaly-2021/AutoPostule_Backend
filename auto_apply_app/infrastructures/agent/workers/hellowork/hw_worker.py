@@ -333,7 +333,7 @@ class HelloWorkWorker:
                 await self.page.wait_for_timeout(10000)
                 await self.page.wait_for_load_state("networkidle")
 
-               
+                await self._handle_cookies()
                 await self.page.locator('a[href="/fr-fr"]').first.click() 
                 
 
