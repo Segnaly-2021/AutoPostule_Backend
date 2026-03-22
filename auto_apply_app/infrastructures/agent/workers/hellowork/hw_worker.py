@@ -332,9 +332,8 @@ class HelloWorkWorker:
                 await self.page.locator('button[type="button"][class="profile-button"]').click()
                 await self.page.wait_for_timeout(10000)
                 await self.page.wait_for_load_state("networkidle")
+                await self.page.goto("https://www.hellowork.com/fr-fr/")
 
-                await self._handle_cookies()
-                await self.page.locator('a[href="/fr-fr"]').first.click() 
                 
 
                 await self._save_auth_state(user_id) # 🚨 V2 SAVE SESSION
