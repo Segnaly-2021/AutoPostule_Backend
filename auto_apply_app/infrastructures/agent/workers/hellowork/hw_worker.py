@@ -330,10 +330,12 @@ class HelloWorkWorker:
                 await self.page.locator('input[name="password2"]').fill(pass_plain)                
                 
                 await self.page.locator('button[type="button"][class="profile-button"]').click()
-
                 await self.page.wait_for_timeout(10000)
-                await self.page.locator('a[href="/fr-fr"]').first.click() 
                 await self.page.wait_for_load_state("networkidle")
+
+               
+                await self.page.locator('a[href="/fr-fr"]').first.click() 
+                
 
                 await self._save_auth_state(user_id) # 🚨 V2 SAVE SESSION
                 print("✅ Auto-login successful")                
