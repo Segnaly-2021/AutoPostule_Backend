@@ -324,17 +324,19 @@ class MasterAgent(AgentServicePort):
         if not billing_result.is_success:
             return {"error": "A billing error occurred while processing your AI credits. Please contact support."}
         
-        daily_processed = processed_offers[:daily_limit]
+
+        if daily_limit < len(processed_offers):
+            processed_offers = processed_offers[:daily_limit]
+        
         # 6. Save Drafts Centrally
-        print(f"💾 Saving {len(daily_processed)} drafts to database...")
-        save_result = await self.save_applications.execute(daily_processed)
+        print(f"💾 Saving {len(processed_offers)} drafts to database...")
+        save_result = await self.save_applications.execute(processed_offers)
         if not save_result.is_success:
             print(f"⚠ Error saving drafts: {save_result.error.message}")
 
         # Return to State
         return {
-            "processed_offers": daily_processed,
-            "status": "analysis_complete"
+            "processed_offers": processed_offers
         }
     
 
@@ -544,12 +546,19 @@ class MasterAgent(AgentServicePort):
 
         self._active_workers[str(search.id)] = active_instances
         print(f"🚀 Registered {len(active_instances)} active workers for search {search.id}: {[type(w).__name__ for w in active_instances]}")
+    
+        # Set callback on all workers for this run
+        self._wttj._progress_callback = progress_callback
+        self._hw._progress_callback = progress_callback
+        self._apec._progress_callback = progress_callback
 
         try:
-            await self._execute_with_progress(
-                initial_state, search.id, progress_callback
-            )
+            await self._execute_with_progress(initial_state, search.id, progress_callback)
         finally:
+            # Clear callbacks after run — prevents stale references
+            self._wttj._progress_callback = None
+            self._hw._progress_callback = None
+            self._apec._progress_callback = None
             self._active_workers.pop(str(search.id), None)
 
 
@@ -616,62 +625,6 @@ class MasterAgent(AgentServicePort):
         except Exception:
             print("🚨 FATAL GRAPH ERROR:")
             traceback.print_exc() # This will reveal the exact line causing the silent crash!
-
-    async def _emit_progress(
-        self, 
-        chunk: dict, 
-        search_id: UUID, 
-        namespace: tuple, # 🚨 New argument!
-        callback: Optional[Callable]
-
-    ):
-        
-        try: 
-            if not chunk: 
-                return
-                
-            node_name = list(chunk.keys())[0]
-            if node_name == "__end__": 
-                return
-                
-            node_state = chunk[node_name]
-            
-            # 🚨 UPDATE: Added Master nodes & Submit track nodes
-            stage_mapping = {
-                "start": "Initializing Browser",
-                "start_with_session": "Booting Secure Session",
-                "nav": "Navigating to Job Board",
-                "login": "Authenticating",
-                "search": "Searching for Jobs",
-                "scrape": "Extracting Job Data",
-                "analyze": "AI Generating Applications", # Master Node
-                "review_gate": "Waiting for User Review", # Master Node
-                "submit": "Submitting Applications",
-                "finalize": "Saving to Database", # Master Node
-                "cleanup": "Cleaning Up"
-            }
-            
-            # Determine the source (e.g., 'apec', 'hellowork', 'master')
-            source = namespace[0].replace("_worker", "") if namespace else "master"
-            
-            if callback:
-                status_val = node_state.get("status", "in_progress") if isinstance(node_state, dict) else "in_progress"
-                
-                await callback({
-                    "source": source.upper(), # 🚨 Tells UI which progress bar to update!
-                    "stage": stage_mapping.get(node_name, node_name),
-                    "node": node_name,
-                    "status": status_val,
-                    "search_id": str(search_id)
-                })
-            
-            print(f"✅ Streamed [{source.upper()}]: {stage_mapping.get(node_name, node_name)}")
-
-        except Exception:
-            print("🚨 FATAL GRAPH ERROR:")
-            traceback.print_exc() # This will reveal the exact line causing the silent crash!
-
-
 
     async def _emit_progress(
     self,
