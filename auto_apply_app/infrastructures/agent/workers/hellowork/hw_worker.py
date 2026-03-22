@@ -341,8 +341,8 @@ class HelloWorkWorker:
                 print("✅ Auto-login successful")                
                 #return {"is_logged_in": True, "status": "login_complete"}
                 return {}
-            except Exception:
-                return {"error": "Failed to log into HelloWork. Check credentials."}
+            except Exception as e:
+                return {"error": f"Failed to log into HelloWork. Check credentials: {e}."}
 
         else:
             try:
