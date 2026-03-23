@@ -4,6 +4,7 @@ import json
 from typing import Optional
 from langgraph.graph import StateGraph, END
 from langchain_core.messages import SystemMessage, HumanMessage
+from playwright_stealth import Stealth
 from playwright.async_api import async_playwright, Page, Browser, BrowserContext, Playwright, Locator
 import pdfplumber
 import os
@@ -14,6 +15,7 @@ from auto_apply_app.domain.entities.job_offer import JobOffer
 from auto_apply_app.domain.value_objects import ContractType, JobBoard, ApplicationStatus
 
 # --- INFRA & APP IMPORTS ---
+from auto_apply_app.application.use_cases.agent_state_use_cases import GetAgentStateUseCase
 from auto_apply_app.infrastructures.agent.state import JobApplicationState
 from auto_apply_app.application.use_cases.agent_use_cases import (
   GetIgnoredHashesUseCase
@@ -31,15 +33,16 @@ class ApecWorker():
     def __init__(self, 
                  get_ignored_hashes: GetIgnoredHashesUseCase,
                  encryption_service: EncryptionServicePort,
-                 file_storage: FileStoragePort
+                 file_storage: FileStoragePort,
+                 get_agent_state: GetAgentStateUseCase 
                 ):
         
         # Static Dependencies
-        
         self.get_ignored_hashes = get_ignored_hashes       
         self.encryption_service = encryption_service
         self.base_url = "https://www.apec.fr/"
         self.file_storage = file_storage
+        self.get_agent_state = get_agent_state 
         
         # Runtime State (Lazy Initialization)
         self.playwright: Optional[Playwright] = None
@@ -53,16 +56,32 @@ class ApecWorker():
         
 
 
-    # --- HELPER: Error Router ---
-    def check_for_errors(self, state: JobApplicationState) -> str:
+    # --- HELPER: Universal Exit Router ---
+    async def route_node_exit(self, state: JobApplicationState) -> str:
         """
-        Generic router. If an error exists in the state, it forces the graph 
-        to skip to cleanup. Otherwise, it tells LangGraph to continue.
+        Generic router. Checks internal state for errors, AND checks the DB 
+        for a user-triggered kill switch. Routes to cleanup if either is true.
         """
+        # 1. Internal Error Check
         if state.get("error"):
-            print(f"🛑 Circuit Breaker Tripped: {state['error']}")
-            return "error"
+            print(f"🛑 [APEC Worker] Circuit Breaker Tripped: {state['error']}")
+            return "cleanup"
+
+        # 2. External Kill Switch Check
+        try:
+            user_id = state["user"].id
+            state_result = await self.get_agent_state.execute(user_id)
+            
+            if state_result.is_success and state_result.value.is_shutdown:
+                print("🛑 [APEC Worker] User Kill Switch Detected! Aborting gracefully...")
+                return "cleanup"
+        except Exception as e:
+            print(f"⚠️ [APEC] Failed to check DB for agent state: {e}")
+            pass # Failsafe: Continue if the DB check fails so we don't randomly crash
+
         return "continue"
+    
+
     
     async def _emit(self, stage: str, status: str = "in_progress", error: str = None):
         """Emit progress to the frontend if a callback is registered."""
@@ -301,7 +320,7 @@ class ApecWorker():
             return default_value
     
 
-    # --- NODE 1: Start Session ---
+   # --- NODE 1: Start Session ---
     async def start_session(self, state: JobApplicationState):
         await self._emit("Initializing Browser")  # ← fires immediately
 
@@ -311,17 +330,27 @@ class ApecWorker():
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless= preferences.browser_headless,
+                headless= not preferences.browser_headless,
                 args=['--disable-blink-features=AutomationControlled']
             )
-            self.context = await self.browser.new_context()
+            
+            # 1. Inject Human Fingerprint
+            real_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+            self.context = await self.browser.new_context(
+                user_agent=real_user_agent,
+                viewport={"width": 1920, "height": 1080}
+            )
+            
+            # 2. Apply V2 Stealth
+            stealth = Stealth()
+            await stealth.apply_stealth_async(self.context)
+            
             self.page = await self.context.new_page()
-            #return {"status": "session_started"}
+            
             return {}
         except Exception as e:
             print(f"Session Error: {e}")
             return {"error": "Failed to start the secure browsing session. Our servers might be under heavy load, please try again."}
-
 
     # --- NODE 1 Bis: Boot & Inject Session (Submit Track) ---
     async def start_session_with_auth(self, state: JobApplicationState):
@@ -334,32 +363,42 @@ class ApecWorker():
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless= state["preferences"].browser_headless,
+                headless= not state["preferences"].browser_headless,
                 args=['--disable-blink-features=AutomationControlled']
             )
             
-            # 🚨 1. Look for the saved session file
+            # 1. Inject Human Fingerprint
+            real_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+            
+            # 🚨 Look for the saved session file
             session_path = self._get_auth_state_path(user_id)
             
             if session_path:
                 print(f"🔓 Found saved session for user {user_id}. Injecting cookies...")
-                # 🚨 2. INJECT THE COOKIES HERE
-                self.context = await self.browser.new_context(storage_state=session_path)
+                self.context = await self.browser.new_context(
+                    storage_state=session_path,
+                    user_agent=real_user_agent,
+                    viewport={"width": 1920, "height": 1080},
+                    device_scale_factor=1,
+                    has_touch=False,
+                    is_mobile=False
+                )
             else:
-                # [Fallback Logic] If no session exists, boot normally. 
-                # We can add a conditional edge later to route this back to `request_login` if needed!
                 print("⚠ No session found. Booting fresh context...")
-                self.context = await self.browser.new_context()
+                self.context = await self.browser.new_context(
+                    user_agent=real_user_agent,
+                    viewport={"width": 1920, "height": 1080}
+                )
+
+            # 2. Apply V2 Stealth
+            stealth = Stealth()
+            await stealth.apply_stealth_async(self.context)
 
             self.page = await self.context.new_page()
             
             # Navigate to base URL to initialize the page object
             await self.page.goto(self.base_url, wait_until="domcontentloaded")
             
-            # return {
-            #     "current_url": self.page.url, 
-            #     "is_logged_in": True if session_path else False
-            # }
             return {}
             
         except Exception as e:
@@ -855,11 +894,18 @@ class ApecWorker():
         for offer in jobs_to_submit:
             print(f"📝 Applying to: {offer.job_title}: {i+1} out of {len(jobs_to_submit)}")
             try:
-                # A. Navigation
-                await self.page.goto(offer.form_url, wait_until='networkidle')
+                # 🚨 V2 WAF BYPASS: Commit early, don't wait for networkidle
+                await self.page.goto(offer.form_url, wait_until='commit', timeout=60000)
                 await self.page.wait_for_timeout(2000)
 
                 # B. CV Upload (APEC Specific Logic)
+                # 🚨 Wait for the CV container to prove the form actually loaded past the WAF
+                try:
+                    await self.page.wait_for_selector('.form-check:has-text("Importer un CV")', state="attached", timeout=15000)
+                except Exception:
+                    print(f"⚠ Form did not load correctly for {offer.form_url}. Possible WAF block.")
+                    continue
+
                 if await self.page.locator('.form-check:has-text("Importer un CV")').count() > 0:
                     await self.page.locator('label:has-text("Importer un CV")').click() 
                 
@@ -978,7 +1024,6 @@ class ApecWorker():
         return {
             "submitted_offers": successful_submissions
         }
-    
 
     # --- NODE 9: Cleanup ---
     async def cleanup(self, state: JobApplicationState):
@@ -1031,16 +1076,16 @@ class ApecWorker():
         )
         
         # --- TRACK A EDGES (SCRAPE) ---
-        workflow.add_conditional_edges("start", self.check_for_errors, {"error": "cleanup", "continue": "nav"})
-        workflow.add_conditional_edges("nav", self.check_for_errors, {"error": "cleanup", "continue": "login"})
-        workflow.add_conditional_edges("login", self.check_for_errors, {"error": "cleanup", "continue": "search"})
-        workflow.add_conditional_edges("search", self.check_for_errors, {"error": "cleanup", "continue": "scrape"})
+        workflow.add_conditional_edges("start", self.route_node_exit, {"error": "cleanup", "continue": "nav"})
+        workflow.add_conditional_edges("nav", self.route_node_exit, {"error": "cleanup", "continue": "login"})
+        workflow.add_conditional_edges("login", self.route_node_exit, {"error": "cleanup", "continue": "search"})
+        workflow.add_conditional_edges("search", self.route_node_exit, {"error": "cleanup", "continue": "scrape"})
         # After scraping is done, we go straight to cleanup. No more LLM!
-        workflow.add_conditional_edges("scrape", self.check_for_errors, {"error": "cleanup", "continue": "cleanup"}) 
+        workflow.add_conditional_edges("scrape", self.route_node_exit, {"error": "cleanup", "continue": "cleanup"}) 
 
         # --- TRACK B EDGES (SUBMIT) ---
-        workflow.add_conditional_edges("start_with_session", self.check_for_errors, {"error": "cleanup", "continue": "submit"})
-        workflow.add_conditional_edges("submit", self.check_for_errors, {"error": "cleanup", "continue": "cleanup"})
+        workflow.add_conditional_edges("start_with_session", self.route_node_exit, {"error": "cleanup", "continue": "submit"})
+        workflow.add_conditional_edges("submit", self.route_node_exit, {"error": "cleanup", "continue": "cleanup"})
         
         # --- FINAL EXIT ---
         workflow.add_edge("cleanup", END)

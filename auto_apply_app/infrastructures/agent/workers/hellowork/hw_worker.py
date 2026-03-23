@@ -10,6 +10,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_google_genai import ChatGoogleGenerativeAI
 from playwright.async_api import Locator, async_playwright, Page, Browser, BrowserContext, Playwright
 import pdfplumber
+from playwright_stealth import Stealth
 
 # --- DOMAIN IMPORTS ---
 from auto_apply_app.domain.entities.job_offer import JobOffer
@@ -18,23 +19,26 @@ from auto_apply_app.domain.value_objects import ContractType, JobBoard, Applicat
 
 # --- INFRA & APP IMPORTS ---
 from auto_apply_app.infrastructures.agent.state import JobApplicationState
+from auto_apply_app.application.use_cases.agent_state_use_cases import GetAgentStateUseCase
 from auto_apply_app.application.service_ports.encryption_port import EncryptionServicePort
 from auto_apply_app.application.service_ports.file_storage_port import FileStoragePort 
 from auto_apply_app.application.use_cases.agent_use_cases import GetIgnoredHashesUseCase
 
 class HelloWorkWorker:
-    # 1. INJECTION: V2 Diet (Only what the "Hands" need)
+    # 1. INJECTION: Dependencies come from the Container
     def __init__(self, 
                  get_ignored_hashes: GetIgnoredHashesUseCase,
                  encryption_service: EncryptionServicePort,
-                 file_storage: FileStoragePort
+                 file_storage: FileStoragePort,
+                 get_agent_state: GetAgentStateUseCase
                 ):
         
         # Static Dependencies
-        self.get_ignored_hashes = get_ignored_hashes
+        self.get_ignored_hashes = get_ignored_hashes       
         self.encryption_service = encryption_service
-        self.base_url = "https://www.hellowork.com/fr-fr/"
+        self.base_url = "https://www.apec.fr/"
         self.file_storage = file_storage
+        self.get_agent_state = get_agent_state 
 
 
         # Runtime State (Lazy Initialization)
@@ -67,19 +71,26 @@ class HelloWorkWorker:
             return path
         return None
     
-    async def _emit(self, stage: str, status: str = "in_progress", error: str = None):
-        """Emit progress to the frontend if a callback is registered."""
+    # --- HELPER: Unified Explicit Emit (Workers) ---
+    async def _emit(self, state: JobApplicationState, stage: str, status: str = "in_progress", error: str = None):
+        """Emit progress to the frontend matching the universal schema."""
         if not self._progress_callback:
             return
         try:
+            # Safely extract search_id from the state
+            search_id = str(state["job_search"].id) if "job_search" in state else ""
+            
             await self._progress_callback({
-                "source": self._source_name,
-                "stage": stage,
-                "status": status,
-                "error": error
+                "source": self._source_name.upper(), # e.g., "APEC"
+                "stage": stage,                      # e.g., "Extracting Job Data"
+                "node": self._source_name.lower(),   # 🚨 Using your class prop!
+                "status": "error" if error else status,
+                "error": error,
+                "search_id": search_id
             })
         except Exception:
             pass  # never let a progress emit crash a worker node
+
 
     def _generate_fast_hash(self, company_name: str, job_title: str, user_id: str) -> str:
         """Memory-efficient deduplication using MD5 hash."""
@@ -241,11 +252,32 @@ class HelloWorkWorker:
     # ==========================================
     # --- V2 ROUTING HELPERS ---
     # ==========================================
-    def check_for_errors(self, state: JobApplicationState) -> str:
+    
+    async def route_node_exit(self, state: JobApplicationState) -> str:
+        """
+        Generic router. Checks internal state for errors, AND checks the DB 
+        for a user-triggered kill switch. Routes to cleanup if either is true.
+        """
+        # 1. Internal Error Check
         if state.get("error"):
-            print(f"🛑 [HW] Circuit Breaker Tripped: {state['error']}")
-            return "error"
+            print(f"🛑 [APEC Worker] Circuit Breaker Tripped: {state['error']}")
+            return "cleanup"
+
+        # 2. External Kill Switch Check
+        try:
+            user_id = state["user"].id
+            state_result = await self.get_agent_state.execute(user_id)
+            
+            if state_result.is_success and state_result.value.is_shutdown:
+                print("🛑 [APEC Worker] User Kill Switch Detected! Aborting gracefully...")
+                return "cleanup"
+        except Exception as e:
+            print(f"⚠️ [APEC] Failed to check DB for agent state: {e}")
+            pass # Failsafe: Continue if the DB check fails so we don't randomly crash
+
         return "continue"
+    
+
 
     def route_action_intent(self, state: JobApplicationState):
         if state.get("action_intent", "SCRAPE") == "SUBMIT":
@@ -258,46 +290,73 @@ class HelloWorkWorker:
     # --- THE NODES ---
     # ==========================================
     async def start_session(self, state: JobApplicationState):
-        await self._emit("Initializing Browser") 
+        await self._emit(state,"Initializing Browser") 
         print(f"--- [HW] Starting session for {state['user'].firstname} ---")
         preferences = state["preferences"]
         self.playwright = await async_playwright().start()
         self.browser = await self.playwright.chromium.launch(
-            headless= preferences.browser_headless, 
+            headless= not preferences.browser_headless, 
             args=['--disable-blink-features=AutomationControlled']
         )
-        self.context = await self.browser.new_context()
+        
+        # 1. Inject Human Fingerprint
+        real_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        self.context = await self.browser.new_context(
+            user_agent=real_user_agent,
+            viewport={"width": 1920, "height": 1080}
+        )
+        stealth = Stealth()
+        await stealth.apply_stealth_async(self.context)
         self.page = await self.context.new_page()
         #return {"status": "session_started"}
         return {}
 
     async def start_session_with_auth(self, state: JobApplicationState):
-        await self._emit("Initializing Secure Browser") 
-        """V2: Boot directly with injected session for SUBMIT track."""
+        await self._emit(state,"Initializing Secure Browser") 
         print("--- [HW] Booting Browser (Session Injection) ---")
         user_id = str(state["user"].id)
+        
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless= state["preferences"].browser_headless, 
+                headless=not state["preferences"].browser_headless, 
                 args=['--disable-blink-features=AutomationControlled']
             )
+            
+            # 1. Inject a realistic Human Fingerprint
+            real_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+            
             session_path = self._get_auth_state_path(user_id)
             if session_path:
-                self.context = await self.browser.new_context(storage_state=session_path)
+                self.context = await self.browser.new_context(
+                    storage_state=session_path,
+                    user_agent=real_user_agent,
+                    viewport={"width": 1920, "height": 1080},
+                    device_scale_factor=1,
+                    has_touch=False,
+                    is_mobile=False
+                )
             else:
-                self.context = await self.browser.new_context()
+                self.context = await self.browser.new_context(
+                    user_agent=real_user_agent,
+                    viewport={"width": 1920, "height": 1080}
+                )
 
+            # 🚨 2. The NEW V2 Stealth Fix: Apply it to the entire context
+            stealth = Stealth()
+            await stealth.apply_stealth_async(self.context)
+
+            # 3. Create the page and navigate
             self.page = await self.context.new_page()
             await self.page.goto(self.base_url, wait_until="domcontentloaded")
             await self._handle_cookies()
-            #return {"current_url": self.page.url, "is_logged_in": True if session_path else False}
+            
             return {}
         except Exception as e:
             return {"error": f"Failed to initialize HelloWork browser: {e}"}
 
     async def go_to_job_board(self, state: JobApplicationState):
-        await self._emit("Navigating to Job Board")
+        await self._emit(state,"Navigating to Job Board")
         print("--- [HW] Navigating to HelloWork ---")
         try:
             await self.page.goto(self.base_url)
@@ -309,7 +368,7 @@ class HelloWorkWorker:
             return {"error": f"Navigation failed: {e}"}
 
     async def request_login(self, state: JobApplicationState):
-        await self._emit("Authenticating")  # ← fires immediately
+        await self._emit(state,"Authenticating")  # ← fires immediately
         prefs = state["preferences"]
         creds = state.get("credentials")
         user_id = str(state["user"].id)
@@ -356,9 +415,12 @@ class HelloWorkWorker:
                 return {}
             except Exception:
                 return {"error": "Manual login timed out."}
+
+
+
         
     async def search_jobs(self, state: JobApplicationState):
-        await self._emit("Searching for Jobs") 
+        await self._emit(state,"Searching for Jobs") 
         search_entity = state["job_search"]
         job_title = search_entity.job_title
         contract_types = getattr(search_entity, 'contract_types', [])
@@ -386,7 +448,7 @@ class HelloWorkWorker:
         
 
     async def get_matched_jobs(self, state: JobApplicationState):
-        await self._emit("Extracting Job Data")
+        await self._emit(state,"Extracting Job Data")
         print("--- [HW] Scraping Jobs (V2 Paginated) ---")
         user_id = state["user"].id
         search_id = state["job_search"].id
@@ -425,7 +487,7 @@ class HelloWorkWorker:
                         cards = self.page.locator('[data-id-storage-target="item"]')
                         card = cards.nth(i)
                         
-                        current_url = self.page.url
+                        
                         raw_company, raw_title, raw_location  = await self.get_raw_job_data(card) 
                         
                         if not raw_title or not raw_company:
@@ -434,7 +496,8 @@ class HelloWorkWorker:
 
                         await card.click()
                         await self.page.wait_for_load_state("domcontentloaded")
-                        await self.page.wait_for_timeout(1000)        
+                        await self.page.wait_for_timeout(1000)  
+                        current_url = self.page.url      
                             
                         # 🚨 V2 HASH GATE
                         fast_hash = self._generate_fast_hash(raw_company, raw_title, str(user_id))
@@ -628,7 +691,7 @@ class HelloWorkWorker:
         
 
     async def submit_applications(self, state: JobApplicationState):
-        await self._emit("Submitting Applications")
+        await self._emit(state,"Submitting Applications")
         print("--- [HW] Submitting Applications ---")
         jobs_to_submit = state.get("processed_offers", [])
         user = state["user"]
@@ -637,19 +700,22 @@ class HelloWorkWorker:
         hw_jobs = [job for job in jobs_to_submit if job.job_board == JobBoard.HELLOWORK and job.status == ApplicationStatus.APPROVED]
 
         if not hw_jobs: 
-            return {"status": "no_hw_jobs"}
+            return {"error": "no job to submit for HW worker"}
 
         successful_submissions = []
         i = 0
         for offer in hw_jobs:
             print(f"📝 Applying to: {offer.job_title} ({i+1}/{len(hw_jobs)})")
             try:
-                await self.page.goto(offer.form_url, wait_until="domcontentloaded")  
-                await self.page.wait_for_timeout(2000)              
+                await self.page.goto(offer.form_url, wait_until="commit", timeout=60000)
 
-                await self.page.locator('input[name="Firstname"]').fill(user.firstname)
-                await self.page.locator('input[name="LastName"]').fill(user.lastname)
+                moving_to_form_btn = self.page.locator('a[data-cy="applyButton"]').first
+                if await moving_to_form_btn.count() > 0:
+                    await moving_to_form_btn.click()
+
                 
+                await self.page.wait_for_selector('input[name="Firstname"]', timeout=15000) 
+                await self.page.locator('input[name="LastName"]').fill(user.lastname)
                 if user.resume_path:
                 
                     print("⬇️ Downloading resume from cloud to RAM...")
@@ -701,7 +767,7 @@ class HelloWorkWorker:
         return {"submitted_offers": successful_submissions}
 
     async def cleanup(self, state: JobApplicationState):
-        await self._emit("Cleaning Up")
+        await self._emit(state,"Cleaning Up")
         await self.force_cleanup()
         # return {"status": "finished"}
         return {}
@@ -733,15 +799,15 @@ class HelloWorkWorker:
         )
         
         # TRACK A EDGES (Scrape)
-        workflow.add_conditional_edges("start", self.check_for_errors, {"error": "cleanup", "continue": "nav"})
-        workflow.add_conditional_edges("nav", self.check_for_errors, {"error": "cleanup", "continue": "login"})
-        workflow.add_conditional_edges("login", self.check_for_errors, {"error": "cleanup", "continue": "search"})
-        workflow.add_conditional_edges("search", self.check_for_errors, {"error": "cleanup", "continue": "scrape"})
-        workflow.add_conditional_edges("scrape", self.check_for_errors, {"error": "cleanup", "continue": "cleanup"})
+        workflow.add_conditional_edges("start", self.route_node_exit, {"error": "cleanup", "continue": "nav"})
+        workflow.add_conditional_edges("nav", self.route_node_exit, {"error": "cleanup", "continue": "login"})
+        workflow.add_conditional_edges("login", self.route_node_exit, {"error": "cleanup", "continue": "search"})
+        workflow.add_conditional_edges("search", self.route_node_exit, {"error": "cleanup", "continue": "scrape"})
+        workflow.add_conditional_edges("scrape", self.route_node_exit, {"error": "cleanup", "continue": "cleanup"})
 
         # TRACK B EDGES (Submit)
-        workflow.add_conditional_edges("start_with_session", self.check_for_errors, {"error": "cleanup", "continue": "submit"})
-        workflow.add_conditional_edges("submit", self.check_for_errors, {"error": "cleanup", "continue": "cleanup"})
+        workflow.add_conditional_edges("start_with_session", self.route_node_exit, {"error": "cleanup", "continue": "submit"})
+        workflow.add_conditional_edges("submit", self.route_node_exit, {"error": "cleanup", "continue": "cleanup"})
         
         workflow.add_edge("cleanup", END)
         return workflow.compile()

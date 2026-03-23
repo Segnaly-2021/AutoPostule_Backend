@@ -46,6 +46,9 @@ class UserDB(Base):
     job_offers: Mapped[List["JobOfferDB"]] = relationship(
         "JobOfferDB", back_populates="user", cascade="all, delete-orphan"
     )
+    agent_state: Mapped[Optional["AgentStateDB"]] = relationship(
+        "AgentStateDB", back_populates="user", uselist=False
+    )
 
 
 class AuthUserDB(Base):
@@ -224,3 +227,17 @@ class JobOfferDB(Base):
     user: Mapped["UserDB"] = relationship("UserDB", back_populates="job_offers") # In JobOfferDB
 
     search: Mapped["JobSearchDB"] = relationship("JobSearchDB", back_populates="job_offers")
+
+
+
+class AgentStateDB(Base):
+    __tablename__ = "agent_states"
+
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True
+    )
+    is_shutdown: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Relationship
+    user: Mapped["UserDB"] = relationship("UserDB", back_populates="agent_state")

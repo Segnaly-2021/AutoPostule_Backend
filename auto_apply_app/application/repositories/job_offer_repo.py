@@ -70,6 +70,16 @@ class JobOfferRepository(ABC):
     async def delete(self, job_id: UUID) -> None:
         """Delete a job offer from the repository."""
         pass
+
+    @abstractmethod
+    async def delete_by_search_and_status(self, search_id: UUID, status: ApplicationStatus) -> int:
+        """
+        Delete all job offers for a given search ID that match a specific status.
+        Returns the number of deleted records.
+        """
+        pass
+
+    
     @abstractmethod
     async def get_total_job(self) -> int:
         pass

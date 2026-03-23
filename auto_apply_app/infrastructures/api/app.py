@@ -23,7 +23,8 @@ from auto_apply_app.interfaces.presenters.web import (
   WebSubPresenter,
   WebAgentPresenter,
   WebPreferencesPresenter,
-  WebFreeSearchPresenter
+  WebFreeSearchPresenter,
+  WebAgentStatePresenter
 )
 
 # Import routers
@@ -64,6 +65,7 @@ async def lifespan(app: FastAPI):
         job_presenter=WebJobPresenter(),
         search_presenter=WebJobSearchPresenter(),
         agent_presenter=WebAgentPresenter(),
+        agent_state_presenter=WebAgentStatePresenter(),
         password_service=PasswordService(),
         token_provider=JwtTokenProvider(),
         preferences_presenter=WebPreferencesPresenter(),

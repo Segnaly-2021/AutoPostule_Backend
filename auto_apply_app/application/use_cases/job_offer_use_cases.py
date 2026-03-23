@@ -1,5 +1,8 @@
 from dataclasses import dataclass
 import math
+from uuid import UUID
+
+from auto_apply_app.domain.value_objects import ApplicationStatus
 
 from auto_apply_app.application.repositories.job_offer_repo import JobOfferRepository
 from auto_apply_app.application.repositories.unit_of_work import UnitOfWork
@@ -127,6 +130,30 @@ class GetApplicationAnalyticsUseCase:
             return Result.failure(Error.system_error(str(e)))
 
 
+@dataclass
+class CleanupUnsubmittedJobsUseCase:
+    uow: UnitOfWork
+
+    async def execute(self, search_id: UUID) -> Result[dict]:
+        try:
+            # 1. The UoW context opens the transaction
+            async with self.uow:
+                deleted_count = await self.uow.job_repo.delete_by_search_and_status(
+                    search_id=search_id,
+                    status=ApplicationStatus.APPROVED
+                )
+            # 2. Context exits gracefully -> UoW auto-commits here!
+
+            # 3. Return the result outside the context
+            return Result.success({
+                "message": f"Cleaned up {deleted_count} failed/unsubmitted jobs.",
+                "deleted_count": deleted_count
+            })
+                
+        except Exception as e:
+            # If an error happened inside the context, UoW auto-rollbacks, 
+            # and we catch the error here.
+            return Result.failure(Error.system_error(str(e)))
 
 
 

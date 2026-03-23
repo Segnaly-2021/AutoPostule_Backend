@@ -2,7 +2,6 @@
 
 import io # 🚨 Needed for RAM reading
 import json
-import sys
 import asyncio
 import traceback
 from uuid import UUID
@@ -26,22 +25,30 @@ from auto_apply_app.domain.entities.user_subscription import UserSubscription
 from auto_apply_app.domain.entities.board_credentials import BoardCredential
 from auto_apply_app.domain.entities.user_preferences import UserPreferences
 from auto_apply_app.infrastructures.agent.state import JobApplicationState
+from auto_apply_app.application.use_cases.job_offer_use_cases import CleanupUnsubmittedJobsUseCase
 from auto_apply_app.application.use_cases.agent_use_cases import ConsumeAiCreditsUseCase, SaveJobApplicationsUseCase
 from auto_apply_app.infrastructures.agent.workers.wttj.wttj_worker import WelcomeToTheJungleWorker
 from auto_apply_app.infrastructures.agent.workers.hellowork.hw_worker_v1 import HelloWorkWorker
 from auto_apply_app.infrastructures.agent.workers.apec.apec_worker import ApecWorker
 from auto_apply_app.infrastructures.config import Config
+from auto_apply_app.application.use_cases.agent_state_use_cases import GetAgentStateUseCase, ResetAgentUseCase
 
+
+
+# --- Update __init__ ---
 class MasterAgent(AgentServicePort):
     def __init__(
         self, 
         wttj_worker: WelcomeToTheJungleWorker,
         hellowork_worker: HelloWorkWorker,
         apec_worker: ApecWorker,
-        api_keys: dict,                     # 🚨 [NEW] Master holds the LLM keys
+        api_keys: dict,
         file_storage: FileStoragePort,
-        consume_credits_use_case: ConsumeAiCreditsUseCase,           # 🚨 [NEW] Master handles billing
-        save_applications_use_case: SaveJobApplicationsUseCase          # 🚨 [NEW] Master handles DB saving
+        consume_credits_use_case: ConsumeAiCreditsUseCase,
+        save_applications_use_case: SaveJobApplicationsUseCase,
+        cleanup_unsubmitted_use_case: CleanupUnsubmittedJobsUseCase,
+        get_agent_state: GetAgentStateUseCase,    # 🚨 NEW
+        reset_agent_state: ResetAgentUseCase      # 🚨 NEW
     ):
         # Workers
         self._wttj = wttj_worker
@@ -52,10 +59,14 @@ class MasterAgent(AgentServicePort):
         self.api_keys = api_keys
         self.consume_credits = consume_credits_use_case
         self.save_applications = save_applications_use_case
+        self.cleanup_unsubmitted = cleanup_unsubmitted_use_case
+        self.get_agent_state = get_agent_state       # 🚨 NEW
+        self.reset_agent_state = reset_agent_state   # 🚨 NEW
         self._checkpointer = None
         
         self._active_workers: Dict[str, Any] = {}
         self.file_storage = file_storage
+        self._progress_callback = None
 
 
 
@@ -102,6 +113,25 @@ class MasterAgent(AgentServicePort):
         except Exception as e:
             print(f"Error reading resume: {e}")
         return text
+    
+    # --- HELPER: Unified Explicit Emit (Master Agent) ---
+    async def _emit(self, state: JobApplicationState, stage: str, status: str = "in_progress", error: str = None):
+        """Master Agent explicit progress emitter."""
+        if not self._progress_callback:
+            return
+        try:
+            search_id = str(state["job_search"].id) if "job_search" in state else ""
+            
+            await self._progress_callback({
+                "source": "MASTER",
+                "stage": stage,
+                "node": "master", 
+                "status": "error" if error else status,
+                "error": error,
+                "search_id": search_id
+            })
+        except Exception:
+            pass
 
     # --- NODE 1: The Scrape Dispatcher ---
     def dispatch_scrape(self, state: JobApplicationState):
@@ -163,6 +193,9 @@ class MasterAgent(AgentServicePort):
 
     # --- NODE 2: The Brain ---
     async def analyze_and_generate(self, state: JobApplicationState):
+
+        await self._emit(state, "AI Generating Cover Letters")
+
         print("--- [Master Brain] Analyzing Jobs with LLM ---")       
         
         user_id = state["user"].id
@@ -391,30 +424,54 @@ class MasterAgent(AgentServicePort):
     # --- NODE 5: The Final Save ---
     async def finalize_batch(self, state: JobApplicationState):
         """Final cleanup and state synchronization."""
+
+        await self._emit(state, "Saving Final Results")
+
         print("--- [Master] Finalizing Batch ---")
         
+        # 1. GRACEFUL EXIT RESET (From our previous Kill Switch feature)
+        user_id = state["user"].id
+        await self.reset_agent_state.execute(user_id)
+        
+        # 2. Persist Successful Submissions
         submitted_offers = state.get("submitted_offers", [])
-        
-        if not submitted_offers:
+        if submitted_offers:
+            print(f"💾 Persisting {len(submitted_offers)} submitted applications...")
+            save_result = await self.save_applications.execute(submitted_offers)
+            if not save_result.is_success:
+                print(f"⚠ Error updating DB with final statuses: {save_result.error.message}")
+        else:
              print("⚠️ No applications were successfully submitted.")
-             return {"status": "finished_with_errors"}
-             
-        # Because we only modified the status property in memory, we should 
-        # ensure those changes are persisted to the database.
-        print(f"💾 Persisting {len(submitted_offers)} submitted applications...")
-        save_result = await self.save_applications.execute(submitted_offers)
+
+        # 🚨 3. THE NEW CLEANUP PHASE
+        search_id = state["job_search"].id
+        print(f"🧹 Sweeping database for leftover APPROVED (failed) jobs for search {search_id}...")
         
-        if not save_result.is_success:
-             print(f"⚠ Error updating DB with final statuses: {save_result.error.message}")
-             
-        return {"status": "finished_successfully"}
+        cleanup_result = await self.cleanup_unsubmitted.execute(search_id)
+        
+        if cleanup_result.is_success:
+            deleted = cleanup_result.value.get("deleted_count", 0)
+            print(f"✅ Cleanup complete. Deleted {deleted} zombie job offers.")
+        else:
+            print(f"⚠ Database cleanup failed: {cleanup_result.error.message}")
+
+        return {"status": "finished_successfully" if submitted_offers else "finished_with_errors"}
     
-    def worker_return_router(self, state: JobApplicationState):
-        """
-        Catches returning workers and routes them to the correct Master phase.
-        """
+
+    
+    async def worker_return_router(self, state: JobApplicationState):
+        """Catches returning workers and routes them to the correct Master phase."""
+        # 1. Check for Kill Switch first!
+        try:
+            state_result = await self.get_agent_state.execute(state["user"].id)
+            if state_result.is_success and state_result.value.is_shutdown:
+                print("🛑 [Master] Kill switch detected! Aborting orchestrator and routing to Finalize.")
+                return "finalize"
+        except Exception:
+            pass # Failsafe
+
+        # 2. Standard routing
         intent = state.get("action_intent", "SCRAPE")
-        
         if intent == "SUBMIT":
             print("🛬 [Master] Workers returned from SUBMIT. Routing to Finalize.")
             return "finalize"
@@ -424,12 +481,19 @@ class MasterAgent(AgentServicePort):
     
 
     # --- 1. THE ROUTER (Conditional Edge) ---
-    def route_review(self, state: JobApplicationState):       
-        """
-        Routes to human review if Premium, else bypasses straight to submit.
-        """
+    async def route_review(self, state: JobApplicationState):       
+        """Routes to human review if Premium, else bypasses straight to submit."""
+        # 1. Check for Kill Switch (in case they stopped it during the LLM phase)
+        try:
+            state_result = await self.get_agent_state.execute(state["user"].id)
+            if state_result.is_success and state_result.value.is_shutdown:
+                print("🛑 [Master] Kill switch detected! Skipping review/submission. Routing to Finalize.")
+                return "finalize"
+        except Exception:
+            pass # Failsafe
+
+        # 2. Standard routing
         subscription = state.get("subscription")
-        
         if subscription and subscription.account_type == ClientType.PREMIUM:
             print("⏸️ Premium User: Routing to manual review node.")
             return "human_review"
@@ -487,7 +551,7 @@ class MasterAgent(AgentServicePort):
         workflow.add_conditional_edges(
             "analyze", 
             self.route_review, 
-            ["human_review", "prepare_submit"]
+            ["human_review", "prepare_submit", "finalize"]
         )
         
         # 👤 PHASE 3B: Connect Human Review to the Launchpad
@@ -520,6 +584,9 @@ class MasterAgent(AgentServicePort):
     ) -> None:
         print(f"🤖 Master Agent waking up for user: {user.email}")
 
+        # 🚨 FORCE CLEAN SLATE ON BOOT
+        await self.reset_agent_state.execute(user.id)
+
         # 🚨 UPDATE: Added new state properties
         initial_state = JobApplicationState(
             user=user,
@@ -548,6 +615,7 @@ class MasterAgent(AgentServicePort):
         print(f"🚀 Registered {len(active_instances)} active workers for search {search.id}: {[type(w).__name__ for w in active_instances]}")
     
         # Set callback on all workers for this run
+        self._progress_callback = progress_callback
         self._wttj._progress_callback = progress_callback
         self._hw._progress_callback = progress_callback
         self._apec._progress_callback = progress_callback
@@ -556,6 +624,7 @@ class MasterAgent(AgentServicePort):
             await self._execute_with_progress(initial_state, search.id, progress_callback)
         finally:
             # Clear callbacks after run — prevents stale references
+            self._progress_callback = None
             self._wttj._progress_callback = None
             self._hw._progress_callback = None
             self._apec._progress_callback = None
@@ -590,107 +659,31 @@ class MasterAgent(AgentServicePort):
         elif "hellowork" in job_board:
             return self._hw
         return self._wttj
+    
+
 
     async def _execute_with_progress(
         self, 
         initial_state: JobApplicationState, 
-        search_id: UUID,
-        progress_callback: Optional[Callable]
+        search_id: UUID
+        # 🚨 Removed progress_callback param
     ):
-        
         if not self._checkpointer:
             self._checkpointer = await Config.get_checkpointer()
 
-
         app = self.get_graph()
-        print('streaming: graph created')
-
         config = {"configurable": {"thread_id": f"search_{search_id}"}}
-        print('streaming: config validated ')
 
         try: 
-
-
-            async for event in app.astream(initial_state, config, subgraphs=True):
-                if isinstance(event, tuple) and len(event) == 2:
-                    namespace, chunk = event
-                else:
-                    namespace = ("master",) # If no namespace, it's a Master node
-                    chunk = event
-                    
-                # 🚨 Pass namespace to the emitter!
-                print("Kicking off : emit progress")
-                await self._emit_progress(chunk, search_id, namespace, progress_callback)
+            # 🚨 Nodes emit on their own now, just let the graph run!
+            async for _ in app.astream(initial_state, config, subgraphs=True):
+                pass 
 
         except Exception:
             print("🚨 FATAL GRAPH ERROR:")
-            traceback.print_exc() # This will reveal the exact line causing the silent crash!
+            traceback.print_exc()
 
-    async def _emit_progress(
-    self,
-    chunk: dict,
-    search_id: UUID,
-    namespace: tuple,
-    callback: Optional[Callable]
-    ):
-        try:
-            if not chunk:
-                return
 
-            node_name = list(chunk.keys())[0]
-            if node_name == "__end__":
-                return
-
-            node_state = chunk[node_name]
-
-            stage_mapping = {
-                "start": "Initializing Browser",
-                "start_with_session": "Booting Secure Session",
-                "nav": "Navigating to Job Board",
-                "login": "Authenticating",
-                "search": "Searching for Jobs",
-                "scrape": "Extracting Job Data",
-                "analyze": "AI Generating Applications",
-                "review_gate": "Waiting for User Review",
-                "submit": "Submitting Applications",
-                "finalize": "Saving to Database",
-                "cleanup": "Cleaning Up"
-            }
-
-            source = namespace[0].replace("_worker", "") if namespace else "master"
-
-            if callback:
-                status_val = "in_progress"
-                error_val = None
-
-                if isinstance(node_state, dict):
-                    status_val = node_state.get("status", "in_progress")
-
-                    # 🚨 KEY FIX: Check if this node's state carries an error
-                    error_val = node_state.get("error")
-
-                    # If worker is routing to cleanup because of an error,
-                    # the error lives in state — surface it now
-                    if node_name == "cleanup" and not error_val:
-                        # Error was set in a previous node, already in state
-                        # LangGraph passes full state to cleanup so we can read it
-                        error_val = node_state.get("error")
-
-                await callback({
-                    "source": source.upper(),
-                    "stage": stage_mapping.get(node_name, node_name),
-                    "node": node_name,
-                    "status": "error" if error_val else status_val,
-                    "error": error_val,  # None if no error — frontend handles this
-                    "search_id": str(search_id)
-                })
-
-            print(f"✅ Streamed [{source.upper()}]: {stage_mapping.get(node_name, node_name)}")
-
-        except Exception:
-            print("🚨 FATAL EMIT ERROR:")
-            traceback.print_exc(file=sys.stdout)
-            sys.stdout.flush()
 
     async def resume_job_search(
         self,
@@ -700,6 +693,9 @@ class MasterAgent(AgentServicePort):
         progress_callback: Optional[Callable] = None
     ) -> None:
         print(f"🔄 Resuming job search {search.id} for user: {user.email}")
+
+        # 🚨 FORCE CLEAN SLATE ON BOOT
+        await self.reset_agent_state.execute(user.id)
         
         if not self._checkpointer:
             self._checkpointer = await Config.get_checkpointer()
@@ -707,21 +703,25 @@ class MasterAgent(AgentServicePort):
         app = self.get_graph()
         config = {"configurable": {"thread_id": f"search_{search.id}"}}
         
+
         # Register workers for the Submit phase
         active_instances = []
         for board, is_active in preferences.active_boards.items():
             if is_active:
-                active_instances.append(self._get_worker_for_board(board.lower()))
+                worker = self._get_worker_for_board(board.lower())
+                worker._progress_callback = progress_callback # 🚨 Assign callback to worker
+                active_instances.append(worker)
 
         self._active_workers[str(search.id)] = active_instances
+        self._progress_callback = progress_callback # 🚨 Assign callback to Master
         
         try:
-            async for event in app.astream(None, config, subgraphs=True):
-                if isinstance(event, tuple) and len(event) == 2:
-                    namespace, chunk = event
-                else:
-                    namespace = ("master",)
-                    chunk = event
-                await self._emit_progress(chunk, search.id, namespace, progress_callback)
+            # 🚨 Let LangGraph run freely
+            async for _ in app.astream(None, config, subgraphs=True):
+                pass
         finally:
+            # 🚨 Cleanup
+            self._progress_callback = None
+            for worker in active_instances:
+                worker._progress_callback = None
             self._active_workers.pop(str(search.id), None)

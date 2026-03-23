@@ -13,17 +13,17 @@ from auto_apply_app.application.service_ports.file_storage_port import FileStora
 from auto_apply_app.application.service_ports.token_provider_port import TokenProviderPort
 from auto_apply_app.application.service_ports.payment_port import PaymentPort
 from auto_apply_app.application.service_ports.encryption_port import EncryptionServicePort
-from auto_apply_app.interfaces.controllers.preference_controllers import PreferencesController
 
 # Presenters
 from auto_apply_app.interfaces.presenters.base_presenter import (
     AgentPresenter,
     UserPresenter,
     JobPresenter,
-    JobSearchPresenter, 
+    JobSearchPresenter,
     SubPresenter,
     PreferencesPresenter,
-    FreeSearchPresenter
+    FreeSearchPresenter,
+    AgentStatePresenter
 )
 
 # Use Cases
@@ -55,17 +55,20 @@ from auto_apply_app.application.use_cases.subscription_use_cases import (
     HandlePaymentWebhookUseCase,
     GetManagementPortalUseCase,
 )
-
-from auto_apply_app.application.use_cases.job_offer_use_cases import (    
+from auto_apply_app.application.use_cases.job_offer_use_cases import (
     GetApplicationAnalyticsUseCase,
     GetUserApplicationsUseCase,
     ToggleInterviewStatusUseCase,
     ToggleResponseStatusUseCase
 )
-
 from auto_apply_app.application.use_cases.preferences_use_cases import (
     GetUserPreferencesUseCase,
     UpdateUserPreferencesUseCase
+)
+from auto_apply_app.application.use_cases.agent_state_use_cases import (
+    GetAgentStateUseCase,
+    ShutdownAgentUseCase,
+    ResetAgentUseCase,
 )
 
 # Controllers
@@ -74,18 +77,20 @@ from auto_apply_app.interfaces.controllers.auth_controllers import AuthControlle
 from auto_apply_app.interfaces.controllers.subscription_controllers import SubscriptionController
 from auto_apply_app.interfaces.controllers.agent_controllers import AgentController
 from auto_apply_app.interfaces.controllers.job_offer_controllers import JobOfferController
-
-from auto_apply_app.infrastructures.agent.fake_agent.create_fake_agent import create_fake_agent
+from auto_apply_app.interfaces.controllers.preference_controllers import PreferencesController
+from auto_apply_app.interfaces.controllers.agent_state_controllers import AgentStateController
 from auto_apply_app.interfaces.controllers.free_search_controller import FreeSearchController
+from auto_apply_app.infrastructures.agent.fake_agent.create_fake_agent import create_fake_agent
 
 
 def create_application(
-    user_presenter: UserPresenter, 
+    user_presenter: UserPresenter,
     job_presenter: JobPresenter,
     sub_presenter: SubPresenter,
     agent_presenter: AgentPresenter,
     search_presenter: JobSearchPresenter,
     preferences_presenter: PreferencesPresenter,
+    agent_state_presenter: AgentStatePresenter,
     password_service: PasswordServicePort,
     token_provider: TokenProviderPort,
     file_storage_port: FileStoragePort,
@@ -93,15 +98,15 @@ def create_application(
     encryption_port: EncryptionServicePort,
     free_search_presenter: FreeSearchPresenter
 ) -> "Application":
-    
-    # Assembly line starts here - we now get a factory function for the UoW
-    token_repo, uow_factory = create_repositories()    
-    
+
+    token_repo, uow_factory = create_repositories()
+
     return Application(
         token_repo=token_repo,
-        uow_factory=uow_factory,  # 🚨 Pass the factory here
+        uow_factory=uow_factory,
         user_presenter=user_presenter,
         preference_presenter=preferences_presenter,
+        agent_state_presenter=agent_state_presenter,
         job_presenter=job_presenter,
         search_presenter=search_presenter,
         agent_presenter=agent_presenter,
@@ -114,19 +119,20 @@ def create_application(
         free_search_presenter=free_search_presenter
     )
 
+
 @dataclass
 class Application:
     # Repositories & UoW Factory
     token_repo: TokenBlacklistRepository
-    uow_factory: Callable[[], UnitOfWork]  # 🚨 Store the factory, not the instantiated UoW
-    
+    uow_factory: Callable[[], UnitOfWork]
+
     # Infrastructure Services (Ports)
     password_service: PasswordServicePort
     token_provider: TokenProviderPort
     file_storage_port: FileStoragePort
     payment_port: PaymentPort
     encryption_port: EncryptionServicePort
-    
+
     # Presenters
     user_presenter: UserPresenter
     job_presenter: JobPresenter
@@ -134,10 +140,11 @@ class Application:
     sub_presenter: SubPresenter
     agent_presenter: AgentPresenter
     preference_presenter: PreferencesPresenter
+    agent_state_presenter: AgentStatePresenter
     free_search_presenter: FreeSearchPresenter
 
     # =========================================================================
-    # 🚀 CONTROLLER FACTORIES (Generated fresh per-request for thread safety)
+    # CONTROLLER FACTORIES
     # =========================================================================
 
     @property
@@ -148,7 +155,7 @@ class Application:
             update_user_use_case=UpdateUserUseCase(uow),
             delete_user_use_case=DeleteUserUseCase(uow),
             upload_resume_use_case=UploadUserResumeUseCase(uow, self.file_storage_port),
-            presenter=self.user_presenter 
+            presenter=self.user_presenter
         )
 
     @property
@@ -170,13 +177,13 @@ class Application:
             create_checkout_use_case=CreateCheckoutSessionUseCase(uow, self.payment_port),
             handle_webhook_use_case=HandlePaymentWebhookUseCase(uow, self.payment_port),
             get_portal_use_case=GetManagementPortalUseCase(uow, self.payment_port),
-            presenter=self.sub_presenter 
+            presenter=self.sub_presenter
         )
 
     @property
     def agent_controller(self) -> AgentController:
         uow = self.uow_factory()
-        
+
         agent_service = create_agent(
             results_saver=SaveJobApplicationsUseCase(uow),
             consume_credits_use_case=ConsumeAiCreditsUseCase(uow),
@@ -205,7 +212,7 @@ class Application:
             get_user_applications_use_case=GetUserApplicationsUseCase(uow),
             toggle_interview_status_use_case=ToggleInterviewStatusUseCase(uow),
             toggle_response_status_use_case=ToggleResponseStatusUseCase(uow),
-            job_offer_presenter=self.job_presenter            
+            job_offer_presenter=self.job_presenter
         )
 
     @property
@@ -215,6 +222,16 @@ class Application:
             get_prefs_use_case=GetUserPreferencesUseCase(uow),
             update_prefs_use_case=UpdateUserPreferencesUseCase(uow, self.encryption_port),
             presenter=self.preference_presenter
+        )
+
+    @property
+    def agent_state_controller(self) -> AgentStateController:
+        uow = self.uow_factory()
+        return AgentStateController(
+            get_agent_state_use_case=GetAgentStateUseCase(uow),
+            shutdown_agent_use_case=ShutdownAgentUseCase(uow),
+            reset_agent_use_case=ResetAgentUseCase(uow),
+            presenter=self.agent_state_presenter
         )
 
     @property

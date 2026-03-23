@@ -19,6 +19,11 @@ from auto_apply_app.application.dtos.job_search_dtos import JobSearchResponse
 from auto_apply_app.interfaces.viewmodels.job_offer_vm import JobOfferViewModel, DashboardViewModel
 from auto_apply_app.interfaces.viewmodels.job_search_vm import JobSearchViewModel
 from auto_apply_app.interfaces.viewmodels.agent_vm import AgentViewModel
+from auto_apply_app.domain.entities.agent_state import AgentState
+from auto_apply_app.interfaces.viewmodels.agent_state_vm import (
+    AgentStateViewModel,
+    AgentStateMessageViewModel,
+)
 from auto_apply_app.interfaces.viewmodels.preferences_vm import PreferencesViewModel
 from auto_apply_app.interfaces.viewmodels.free_search_vm import FreeSearchResultViewModel
 
@@ -143,4 +148,19 @@ class FreeSearchPresenter():
         Returns:
             FreeSearchResultViewModel ready for JSON serialization
         """
+        pass
+    
+
+class AgentStatePresenter(ABC):
+
+    @abstractmethod
+    def present_state(self, agent_state: AgentState) -> AgentStateViewModel:
+        pass
+
+    @abstractmethod
+    def present_message(self, message: str, is_shutdown: bool) -> AgentStateMessageViewModel:
+        pass
+
+    @abstractmethod
+    def present_error(self, message: str, error_code: Optional[str] = None) -> ErrorViewModel:
         pass

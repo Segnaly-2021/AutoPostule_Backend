@@ -8,6 +8,8 @@ from auto_apply_app.infrastructures.persistence.database.repositories.job_search
 from auto_apply_app.infrastructures.persistence.database.repositories.subscription_repo_db import SubscriptionRepoDB
 from auto_apply_app.infrastructures.persistence.database.repositories.user_preferences_repo_db import UserPreferencesRepoDB
 from auto_apply_app.infrastructures.persistence.database.repositories.board_credentials_repo_db import BoardCredentialRepoDB
+from auto_apply_app.infrastructures.persistence.database.repositories.agent_state_repo_db import AgentStateRepoDB
+
 
 
 
@@ -26,6 +28,7 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         self.search_repo = JobSearchRepoDB(self.session)
         self.user_pref_repo = UserPreferencesRepoDB(self.session)
         self.board_cred_repo = BoardCredentialRepoDB(self.session)
+        self.agent_state_repo = AgentStateRepoDB(self.session)
         
         return self
 

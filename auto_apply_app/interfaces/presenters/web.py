@@ -15,8 +15,14 @@ from auto_apply_app.interfaces.presenters.base_presenter import (
   JobPresenter, 
   JobSearchPresenter,
   SubPresenter,
-  FreeSearchPresenter
+  FreeSearchPresenter,
+  AgentStatePresenter,
  
+)
+from auto_apply_app.domain.entities.agent_state import AgentState
+from auto_apply_app.interfaces.viewmodels.agent_state_vm import (
+    AgentStateViewModel,
+    AgentStateMessageViewModel,
 )
 from auto_apply_app.interfaces.viewmodels.user_vm import (
   UserViewModel, 
@@ -374,4 +380,27 @@ class WebFreeSearchPresenter(FreeSearchPresenter):
             boardsSearched=search_output.get("boards_searched", []),
             status=search_output.get("status", "error"),
             errorMessage=search_output.get("error_message", "")
+        )
+    
+
+
+
+
+class WebAgentStatePresenter(AgentStatePresenter):
+
+    def present_state(self, agent_state: AgentState) -> AgentStateViewModel:
+        return AgentStateViewModel(
+            isShutdown=agent_state.is_shutdown
+        )
+
+    def present_message(self, message: str, is_shutdown: bool) -> AgentStateMessageViewModel:
+        return AgentStateMessageViewModel(
+            message=message,
+            isShutdown=is_shutdown
+        )
+
+    def present_error(self, message: str, error_code: Optional[str] = None) -> ErrorViewModel:
+        return ErrorViewModel(
+            message=message,
+            code=error_code
         )

@@ -4,7 +4,7 @@
 from uuid import UUID
 from datetime import datetime, timedelta, UTC, timezone
 from typing import Set, List, Tuple, Dict
-from sqlalchemy import select, func, case
+from sqlalchemy import select, func, case, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auto_apply_app.domain.entities.job_offer import JobOffer
@@ -91,6 +91,17 @@ class JobOfferRepoDB(JobOfferRepository):
         offer_db = result.scalar_one_or_none()
         if offer_db:
             await self.session.delete(offer_db)
+
+    # Add this inside your JobOfferRepoDB class
+    async def delete_by_search_and_status(self, search_id: UUID, status: ApplicationStatus) -> int:
+        
+        stmt = (
+            delete(JobOfferDB)
+            .where(JobOfferDB.search_id == search_id)
+            .where(JobOfferDB.status == status)
+        )
+        result = await self.session.execute(stmt)
+        return result.rowcount
 
     async def get_total_job(self) -> int:
         result = await self.session.execute(select(func.count(JobOfferDB.id)))

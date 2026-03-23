@@ -11,6 +11,7 @@ from auto_apply_app.infrastructures.api.dependencies.auth_deps import CurrentUse
 from auto_apply_app.infrastructures.api.dependencies.container_dep import get_container
 from auto_apply_app.infrastructures.configuration.container import Application
 from auto_apply_app.interfaces.controllers.agent_controllers import AgentController
+from auto_apply_app.interfaces.controllers.agent_state_controllers import AgentStateController
 from auto_apply_app.infrastructures.api.schema.agent_schema import (
     StartAgentRequest, 
     ResumeAgentRequest,
@@ -26,6 +27,14 @@ def get_agent_controller(
 ) -> AgentController:
     """Extract AgentController from the application container."""
     return container.agent_controller
+
+def get_agent_state_controller(
+    container: Annotated[Application, Depends(get_container)]
+) -> AgentStateController:
+    return container.agent_state_controller
+
+
+AgentStateControllerDep = Annotated[AgentStateController, Depends(get_agent_state_controller)]
 
 
 AgentControllerDep = Annotated[AgentController, Depends(get_agent_controller)]
@@ -200,24 +209,19 @@ async def resume_job_search_agent_stream(
 # KILL AGENT ENDPOINT (Emergency Stop)
 # ============================================================================
 
+
 @router.delete(
-    "/{search_id}/kill",
-    response_model=AgentViewModel,
+    "/kill",
     status_code=status.HTTP_200_OK,
     summary="Kill running agent (emergency stop)",
     description="Immediately terminate a running job search and clean up resources"
 )
 async def kill_job_search_agent(
-    search_id: str,
     current_user_id: CurrentUserId,
-    controller: AgentControllerDep
+    controller: AgentStateControllerDep
 ):
-    result = await controller.handle_kill_agent(
-        user_id=current_user_id,
-        search_id=search_id
-    )
+    result = await controller.handle_shutdown(user_id=current_user_id)
     return handle_result(result)
-
 
 # ============================================================================
 # PREMIUM REVIEW ENDPOINTS
