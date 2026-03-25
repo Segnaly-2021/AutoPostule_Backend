@@ -65,7 +65,7 @@ class ApecWorker():
         # 1. Internal Error Check
         if state.get("error"):
             print(f"🛑 [APEC Worker] Circuit Breaker Tripped: {state['error']}")
-            return "cleanup"
+            return "error"
 
         # 2. External Kill Switch Check
         try:
@@ -74,7 +74,7 @@ class ApecWorker():
             
             if state_result.is_success and state_result.value.is_shutdown:
                 print("🛑 [APEC Worker] User Kill Switch Detected! Aborting gracefully...")
-                return "cleanup"
+                return "error"
         except Exception as e:
             print(f"⚠️ [APEC] Failed to check DB for agent state: {e}")
             pass # Failsafe: Continue if the DB check fails so we don't randomly crash
@@ -82,32 +82,35 @@ class ApecWorker():
         return "continue"
     
 
-    
-    async def _emit(self, stage: str, status: str = "in_progress", error: str = None):
-        """Emit progress to the frontend if a callback is registered."""
+    # --- HELPER: Unified Explicit Emit (Workers) ---
+    async def _emit(self, state: JobApplicationState, stage: str, status: str = "in_progress", error: str = None):
+        """Emit progress to the frontend matching the universal schema."""
         if not self._progress_callback:
             return
         try:
+            # Safely extract search_id from the state
+            search_id = str(state["job_search"].id) if "job_search" in state else ""
+            
             await self._progress_callback({
-                "source": self._source_name,
-                "stage": stage,
-                "status": status,
-                "error": error
+                "source": self._source_name.upper(), # e.g., "APEC"
+                "stage": stage,                      # e.g., "Extracting Job Data"
+                "node": self._source_name.lower(),   # 🚨 Using your class prop!
+                "status": "error" if error else status,
+                "error": error,
+                "search_id": search_id
             })
         except Exception:
             pass  # never let a progress emit crash a worker node
 
-    # --- HELPER: Fast Hash Generation ---
+    # In your Worker class
     def _generate_fast_hash(self, company_name: str, job_title: str, user_id: str) -> str:
-        """
-        Mimics the JobOffer._generate_fingerprint domain logic for memory-efficient deduplication.
-        Bypasses the need to instantiate a full JobOffer entity.
-        """
-        raw_string = f"""
-            {str(company_name).lower()}_{str(job_title).lower()}_
-            {JobBoard.APEC.name}_{str(user_id)}
-
-        """
+        # 🚨 MIRROR THE DOMAIN LOGIC EXACTLY
+        c = str(company_name).replace(" ", "").lower().strip()
+        t = str(job_title).replace(" ", "").lower().strip()
+        u = str(user_id).strip()
+        b = "apec" # Or self.board_name
+        
+        raw_string = f"{c}_{t}_{b}_{u}"
         return hashlib.md5(raw_string.encode()).hexdigest()
 
 
@@ -322,7 +325,7 @@ class ApecWorker():
 
    # --- NODE 1: Start Session ---
     async def start_session(self, state: JobApplicationState):
-        await self._emit("Initializing Browser")  # ← fires immediately
+        await self._emit(state, "Initializing Browser")  # ← fires immediately
 
         print(f"--- [APEC] Starting session for {state['user'].firstname} ---")
         preferences = state["preferences"]
@@ -330,15 +333,14 @@ class ApecWorker():
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless= not preferences.browser_headless,
+                headless= preferences.browser_headless,
                 args=['--disable-blink-features=AutomationControlled']
             )
             
             # 1. Inject Human Fingerprint
             real_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
             self.context = await self.browser.new_context(
-                user_agent=real_user_agent,
-                viewport={"width": 1920, "height": 1080}
+                user_agent=real_user_agent
             )
             
             # 2. Apply V2 Stealth
@@ -354,7 +356,7 @@ class ApecWorker():
 
     # --- NODE 1 Bis: Boot & Inject Session (Submit Track) ---
     async def start_session_with_auth(self, state: JobApplicationState):
-        await self._emit("Initializing Secure Browser") 
+        await self._emit(state, "Initializing Secure Browser") 
 
         """Used by the SUBMIT track to boot directly into an authenticated browser."""
         print("--- [APEC] Booting Browser (Session Injection) ---")
@@ -363,7 +365,7 @@ class ApecWorker():
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless= not state["preferences"].browser_headless,
+                headless=state["preferences"].browser_headless,
                 args=['--disable-blink-features=AutomationControlled']
             )
             
@@ -378,7 +380,6 @@ class ApecWorker():
                 self.context = await self.browser.new_context(
                     storage_state=session_path,
                     user_agent=real_user_agent,
-                    viewport={"width": 1920, "height": 1080},
                     device_scale_factor=1,
                     has_touch=False,
                     is_mobile=False
@@ -387,7 +388,6 @@ class ApecWorker():
                 print("⚠ No session found. Booting fresh context...")
                 self.context = await self.browser.new_context(
                     user_agent=real_user_agent,
-                    viewport={"width": 1920, "height": 1080}
                 )
 
             # 2. Apply V2 Stealth
@@ -397,7 +397,8 @@ class ApecWorker():
             self.page = await self.context.new_page()
             
             # Navigate to base URL to initialize the page object
-            await self.page.goto(self.base_url, wait_until="domcontentloaded")
+            await self.page.goto(self.base_url, wait_until="networkidle", timeout=60000)
+            await self._handle_cookies()
             
             return {}
             
@@ -408,15 +409,19 @@ class ApecWorker():
 
     # --- NODE 2: Navigation ---
     async def go_to_job_board(self, state: JobApplicationState):
-        await self._emit("Navigating to Job Board")
+        await self._emit(state, "Navigating to Job Board")
         print("--- [APEC] Navigating to Board ---")
         try:
-            await self.page.goto(self.base_url)
-            await self._handle_cookies()
-            # return {
-            #     "status": "on_homepage",
-            #     "current_url": self.base_url
-            # }
+            # 1. Wait until the network is actually quiet
+            await self.page.goto(self.base_url, wait_until="networkidle", timeout=60000)
+            
+            # 2. Handle Cookies (important for HelloWork to stop blocking the view)
+            await self._handle_cookies()  
+            
+            # 3. EXTRA SAFETY: Wait for a specific element that proves the page is ready
+            # e.g., the search bar or the logo
+            await self.page.wait_for_selector('a[aria-label="Mon espace"]', state="visible", timeout=30000)
+            
             return {}
         except Exception as e:
             print(f"Nav Error: {e}")
@@ -425,13 +430,13 @@ class ApecWorker():
         
     # --- NODE 3: Login ---
     async def request_login(self, state: JobApplicationState):
-        await self._emit("Authenticating")  # ← fires immediately
+        await self._emit(state, "Authenticating")  # ← fires immediately
         
         prefs = state["preferences"]
         creds = state.get("credentials")
 
         # 🚨 [NEW] Extract user ID for the session file
-        user_id = str(state["user"].id)
+        user_id = state["user"].id
 
         print("--- [APEC] Login Phase ---")
 
@@ -441,6 +446,12 @@ class ApecWorker():
                 login_plain = await self.encryption_service.decrypt(creds["apec"].login_encrypted)
                 pass_plain = await self.encryption_service.decrypt(creds["apec"].password_encrypted)
 
+                try:
+                    await self.page.wait_for_selector('a[aria-label="Mon espace"]', state="visible")
+                except Exception:
+                    print("Reloading the page because the landing page button is absent")
+                    await self.page.reload(wait_until="networkidle")
+                
                 await self.page.locator('a[aria-label="Mon espace"]').click()
 
                 count = 0
@@ -466,7 +477,7 @@ class ApecWorker():
                 print("✅ Auto-login successful")
 
                 # 🚨 [NEW] Save the session cookies!
-                await self._save_auth_state(user_id)
+                await self._save_auth_state(str(user_id))
 
                 #return {"is_logged_in": True, "status": "login_complete"}
                 return {}
@@ -499,7 +510,7 @@ class ApecWorker():
 
 
     async def search_jobs(self, state: JobApplicationState):
-        await self._emit("Searching for Jobs") 
+        await self._emit(state, "Searching for Jobs") 
         search_entity = state["job_search"]
         job_title = search_entity.job_title
         
@@ -539,9 +550,33 @@ class ApecWorker():
         # }
         return {}
 
+
+
+    async def nav_back(self, url: str):
+        # 6. Navigate back to search results
+        await self.page.goto(url, wait_until="networkidle")
+
+        # 🚨 CRITICAL: Instead of just handling cookies, wait for the actual results to be visible
+        try:
+            # Wait for the specific job card container to reappear
+            # This proves the "Bot Detection" or "Loading" overlay is gone.
+            results_selector = 'div[class="card card-offer mb-20 card--clickable card-offer--qualified"]'  
+            await self.page.wait_for_selector(results_selector, state="visible", timeout=10000)
+            
+            # Optional: A tiny human-like pause
+            await asyncio.sleep(3) 
+            
+            await self._handle_cookies()
+
+        except Exception:
+            print("⚠️ Search results didn't reappear after going back. Possible bot detection or slow network.")
+            # Fallback: Refresh the page entirely if the back button broke the state
+            await self.page.reload(wait_until="networkidle")
+            await self._handle_cookies()
+
     # --- NODE 5: Scrape Jobs (Integrated & Paginated) ---
     async def get_matched_jobs(self, state: JobApplicationState):
-        await self._emit("Extracting Job Data") 
+        await self._emit(state, "Extracting Job Data") 
         print("--- [APEC] Scraping Jobs ---")
 
         user_id = state["user"].id
@@ -617,7 +652,8 @@ class ApecWorker():
 
                     # 3. Click & Load Detail View (in the side panel or new view)
                     await card.click()
-                    await self.page.wait_for_timeout(1000)
+                    await self.page.wait_for_load_state("networkidle")
+                    await self.page.wait_for_timeout(10000)
 
                     # 🚨 REQUIREMENT 3: Scrape the Job Description
                     try:
@@ -634,7 +670,7 @@ class ApecWorker():
                         await self.page.wait_for_selector('a[class="btn btn-primary ml-0"]', state="visible", timeout=5000)
                     except Exception:                
                         print("     ❌ External or already applied! Back to search result:")                  
-                        await self.page.goto(result_url, wait_until="networkidle") 
+                        await self.nav_back(result_url) 
                         continue 
                     
                     apply_btn = self.page.locator('a[class="btn btn-primary ml-0"]')
@@ -648,17 +684,21 @@ class ApecWorker():
                             
                             full_offer_url = f"https://www.apec.fr{href}"
                             
-                            await self.page.goto(full_offer_url)
-                            await self.page.wait_for_load_state("networkidle")
-                            await self.page.wait_for_timeout(2000)
+                            await self.page.goto(full_offer_url, wait_until="networkidle")                        
+                            await self.page.wait_for_timeout(5000)
 
-                            await self.page.wait_for_selector('button[title="Postuler"]', state="visible")
+                            try:
+                                await self.page.wait_for_selector('button[title="Postuler"]', state="visible")
+                            except Exception:
+                                await self.nav_back(result_url)
+                                continue
+
                             postule_btn = self.page.locator('button[title="Postuler"]')
 
                             if await postule_btn.count() > 0:
                                 await postule_btn.click()
                                 await self.page.wait_for_load_state("networkidle")
-                                await self.page.wait_for_timeout(2000)
+                                await self.page.wait_for_timeout(5000)
 
                                 print("     ✅ Valid application form confirmed. Saving to batch.")   
 
@@ -680,7 +720,7 @@ class ApecWorker():
                                 print(f"     📦 Current batch size: {len(found_job_entities)}/{worker_job_limit}")
                     
                     # 5. Navigate back to the current page's search results
-                    await self.page.goto(result_url, wait_until="networkidle")
+                    await self.nav_back(result_url)
 
                 # --- END OF PAGE LOGIC ---
                 
@@ -877,7 +917,7 @@ class ApecWorker():
 
     # --- NODE 7: Submit & Save (APEC) ---
     async def submit_applications(self, state: JobApplicationState):
-        await self._emit("Submitting Applications")
+        await self._emit(state, "Submitting Applications")
         print("--- [APEC] Submitting Applications ---")        
         # 1. Get Inputs from State
         # 🚨 BUG FIX: Pull from processed_offers so we get the Gemini Cover Letters!
@@ -984,21 +1024,18 @@ class ApecWorker():
                 except Exception as e:
                      print(f"⚠ Could not fill additional data (optional): {e}")
 
-                # E. Human Verification
-                print("⏳ Sleeping 30s for manual verification...")
-                await asyncio.sleep(30) 
-
                 # F. Submit
                 submit_btn = self.page.locator('button[title="Envoyer ma candidature"]')
                 if await submit_btn.is_visible():
                     await submit_btn.click() 
-                    await self.page.wait_for_timeout(5000)
+                    await self.page.wait_for_timeout(45000)
 
                     try:
                         await self.page.wait_for_selector('div[class="notification-title"]', timeout=2000)
 
                     except Exception:
                         print(f"Submission of {offer.form_url} failed because of random input fields in the application form")
+                        i += 1
                         continue 
 
                     print("Application submitted")                    
@@ -1027,7 +1064,7 @@ class ApecWorker():
 
     # --- NODE 9: Cleanup ---
     async def cleanup(self, state: JobApplicationState):
-        await self._emit("Cleaning Up")
+        await self._emit(state, "Cleaning Up")
         print("--- [APEC] Cleanup ---")
         # Reuse force_cleanup logic but as a step
         await self.force_cleanup()

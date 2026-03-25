@@ -48,7 +48,7 @@ class JobOffer(Entity):
             raise ValueError("Only job offer with FOUND status you can apply for!")
         self.status = ApplicationStatus.IN_PROGRESS
 
-    # In auto_apply_app/domain/entities/job_offer.py
+    
 
     def update_response_status(self, has_response: bool) -> None:
         """Domain logic for tracking external responses"""
@@ -89,19 +89,16 @@ class JobOffer(Entity):
 
 
     def _generate_fingerprint(self) -> str:
-        """
-        Generates a deterministic unique ID for deduplication.
-        Domain Logic: Hashing specific fields ensures consistency.
-        """
-        # Normalize strings to avoid "Python Dev" != "python dev"
-        raw_string = f"""
-            {str(self.company_name).lower()}_{str(self.job_title).lower()}_
-            {self.job_board.name}_{str(self.user_id)}
+        # 🚨 Fix: company_name (not comapny)
+        company_name = self.company_name.replace(" ", "").lower().strip()
+        job_title = self.job_title.replace(" ", "").lower().strip()
+        user_id = str(self.user_id).strip()
+        job_board = str(self.job_board.name).strip().lower()
 
-        """
-        
-        # Create a consistent hash
+        raw_string = f"{company_name}_{job_title}_{job_board}_{user_id}"
         return hashlib.md5(raw_string.encode()).hexdigest()
+
+
 
     def set_job_posting_id(self) -> None:
         """Uses the fingerprint as the ID."""

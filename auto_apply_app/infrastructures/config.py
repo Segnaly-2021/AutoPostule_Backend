@@ -39,36 +39,57 @@ class Config:
     @classmethod
     def get_database_url(cls) -> str:
         """Get the database connection string."""
-        url = os.getenv("DATABASE_DIRECT_URL")
+        url = os.getenv("DATABASE_URL")
         if not url and cls.get_repository_type() == RepositoryType.DATABASE:
-            raise ValueError("DATABASE_DIRECT_URL is required when RepositoryType is DATABASE")
+            raise ValueError("DATABASE_URL is required when RepositoryType is DATABASE")
         return url
 
+
+
     @classmethod
-    async def get_checkpointer(cls): # 🚨 Changed to async def
+    async def get_checkpointer(cls):
         repo_type = cls.get_repository_type()
 
         if repo_type == RepositoryType.MEMORY:
             from langgraph.checkpoint.memory import AsyncMemorySaver
             return AsyncMemorySaver()
 
-        elif repo_type == RepositoryType.DATABASE:
+        elif repo_type == RepositoryType.DATABASE:           
+            
             db_url = cls.get_database_url().replace("+asyncpg", "")
             
             if cls._langgraph_db_pool is None:
-                # 🚨 Because this is now inside an async def, it will bind to the 
-                # running asyncio event loop perfectly!
                 cls._langgraph_db_pool = AsyncConnectionPool(
                     conninfo=db_url,
                     max_size=5,
                     num_workers=1,
+                    open=False, # 🚨 Fixes the "opening in constructor" DeprecationWarning
+                    # 🚨 Validates the connection is still alive before LangGraph uses it
+                    check=AsyncConnectionPool.check_connection,
                     kwargs={
                         "autocommit": True,
                         "prepare_threshold": None,
+                        # 🚨 TCP Keepalives: Tells the OS to ping Supabase every 60s 
+                        # so the firewall doesn't kill the "idle" connection during scraping.
+                        "keepalives": 1,
+                        "keepalives_idle": 60,
+                        "keepalives_interval": 10,
+                        "keepalives_count": 5,
                     }
                 )
+
+            # Ensure the pool is open
+            await cls._langgraph_db_pool.open()
+
+            # Create the saver
+            checkpointer = AsyncPostgresSaver(cls._langgraph_db_pool)
+
+            # 🚨 THE FIX for "Relation 'checkpoints' does not exist"
+            # This creates the tables automatically if they are missing.
+            print("🛠️ [Config] Ensuring LangGraph checkpoint tables exist in Supabase...")
+            await checkpointer.setup()
             
-            return AsyncPostgresSaver(cls._langgraph_db_pool)
+            return checkpointer
 
         raise ValueError(f"No checkpointer implementation for {repo_type}")
 

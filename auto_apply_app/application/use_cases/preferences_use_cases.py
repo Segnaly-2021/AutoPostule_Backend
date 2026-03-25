@@ -2,7 +2,6 @@
 from dataclasses import dataclass
 
 
-
 from auto_apply_app.application.service_ports.encryption_port import EncryptionServicePort
 from auto_apply_app.application.dtos.preferences_dtos import UpdateUserPreferencesRequest
 from auto_apply_app.domain.entities.user_preferences import UserPreferences

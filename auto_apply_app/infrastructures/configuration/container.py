@@ -59,7 +59,8 @@ from auto_apply_app.application.use_cases.job_offer_use_cases import (
     GetApplicationAnalyticsUseCase,
     GetUserApplicationsUseCase,
     ToggleInterviewStatusUseCase,
-    ToggleResponseStatusUseCase
+    ToggleResponseStatusUseCase,
+    CleanupUnsubmittedJobsUseCase
 )
 from auto_apply_app.application.use_cases.preferences_use_cases import (
     GetUserPreferencesUseCase,
@@ -190,6 +191,11 @@ class Application:
             get_ignored_hashes_use_case=GetIgnoredHashesUseCase(uow),
             file_storage=self.file_storage_port,
             encryption_service=self.encryption_port,
+            
+            # 🚨 INJECT NEW USE CASES HERE
+            get_agent_state_use_case=GetAgentStateUseCase(uow),
+            reset_agent_state_use_case=ResetAgentUseCase(uow),
+            cleanup_unsubmitted_use_case=CleanupUnsubmittedJobsUseCase(uow)
         )
 
         return AgentController(

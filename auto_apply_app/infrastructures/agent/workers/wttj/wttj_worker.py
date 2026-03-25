@@ -40,7 +40,7 @@ class WelcomeToTheJungleWorker:
         # Static Dependencies
         self.get_ignored_hashes = get_ignored_hashes       
         self.encryption_service = encryption_service
-        self.base_url = "https://www.apec.fr/"
+        self.base_url = "https://www.welcometothejungle.com/fr"
         self.file_storage = file_storage
         self.get_agent_state = get_agent_state # 🚨 SAVE IT HERE
         
@@ -89,15 +89,13 @@ class WelcomeToTheJungleWorker:
 
     # --- HELPER: Fast Hash Generation ---
     def _generate_fast_hash(self, company_name: str, job_title: str, user_id: str) -> str:
-        """
-        Mimics the JobOffer._generate_fingerprint domain logic for memory-efficient deduplication.
-        Bypasses the need to instantiate a full JobOffer entity.
-        """
-        raw_string = f"""
-            {str(company_name).lower()}_{str(job_title).lower()}_
-            {JobBoard.APEC.name}_{str(user_id)}
-
-        """
+        # 🚨 MIRROR THE DOMAIN LOGIC EXACTLY
+        c = str(company_name).replace(" ", "").lower().strip()
+        t = str(job_title).replace(" ", "").lower().strip()
+        u = str(user_id).strip()
+        b = "wttj" # Or self.board_name
+        
+        raw_string = f"{c}_{t}_{b}_{u}"
         return hashlib.md5(raw_string.encode()).hexdigest()
 
         
@@ -289,12 +287,20 @@ class WelcomeToTheJungleWorker:
         except Exception as e:
             print(f"⚠️ [WTTJ] Pagination error: {e}")
             return False
-    
+
+
     # --- HELPER: Apply Search Filters ---
     async def _apply_filters(self, contract_types: list[ContractType], min_salary: int):
         """
         Interacts with the filter modal to set contract types and salary minimums.
         """
+
+        try:
+            await self.page.wait_for_selector('button[id="jobs-search-filter-all"]', state="visible", timeout=15000)
+        except Exception:
+             await self.page.reload(wait_until="networkidle")
+
+
         try:
             # 1. Open the Filter Modal
             await self.page.locator('button[id="jobs-search-filter-all"]').click()
@@ -316,19 +322,19 @@ class WelcomeToTheJungleWorker:
                     print(f"  ⚠️  Could not select contract type '{str(contract.value)}': {e}")
             
             
-
-            # 3. Handle Salary (Radio Buttons)
-            # We map the integer input to the specific IDs provided in your HTML snippet
-            salary_id = f"jobs-search-search-all-modal-salary-{min_salary}+"
-            salary_radio = self.page.locator(f"div[id='{salary_id}']")
-            
-            if await salary_radio.count() > 0:
-                # We click the parent label or the radio itself to ensure interaction
-                #await self.page.locator('input[data-testid="include-unknown-checkbox"]').first.click()
-                await salary_radio.click(force=True)
-                print(f"  ✓ Selected Salary: ≥ {min_salary}€")
-            else:
-                print(f"  ⚠️ Salary option '{min_salary}+' not found in modal.")
+            if min_salary > 0:
+                # 3. Handle Salary (Radio Buttons)
+                # We map the integer input to the specific IDs provided in your HTML snippet
+                salary_id = f"jobs-search-search-all-modal-salary-{min_salary}+"
+                salary_radio = self.page.locator(f"div[id='{salary_id}']")
+                
+                if await salary_radio.count() > 0:
+                    # We click the parent label or the radio itself to ensure interaction
+                    #await self.page.locator('input[data-testid="include-unknown-checkbox"]').first.click()
+                    await salary_radio.click(force=True)
+                    print(f"  ✓ Selected Salary: ≥ {min_salary}€")
+                else:
+                    print(f"  ⚠️ Salary option '{min_salary}+' not found in modal.")
 
             # 4. Close the Modal
             # Using the specific title selector you requested
@@ -378,7 +384,7 @@ class WelcomeToTheJungleWorker:
         # 2. Initialize Browser
         self.playwright = await async_playwright().start()
         self.browser = await self.playwright.chromium.launch(
-            headless=preferences.browser_headless, 
+            headless= not preferences.browser_headless, 
             args=['--disable-blink-features=AutomationControlled']
         )
         
@@ -386,7 +392,6 @@ class WelcomeToTheJungleWorker:
         real_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
         self.context = await self.browser.new_context(
             user_agent=real_user_agent,
-            viewport={"width": 1920, "height": 1080}
         )
         
         # 4. Apply V2 Stealth
@@ -407,7 +412,7 @@ class WelcomeToTheJungleWorker:
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless=state["preferences"].browser_headless,
+                headless= not state["preferences"].browser_headless,
                 args=['--disable-blink-features=AutomationControlled']
             )
             
@@ -421,7 +426,6 @@ class WelcomeToTheJungleWorker:
                 self.context = await self.browser.new_context(
                     storage_state=session_path,
                     user_agent=real_user_agent,
-                    viewport={"width": 1920, "height": 1080},
                     device_scale_factor=1,
                     has_touch=False,
                     is_mobile=False
@@ -430,7 +434,6 @@ class WelcomeToTheJungleWorker:
                 print("⚠ No session found. Booting fresh context...")
                 self.context = await self.browser.new_context(
                     user_agent=real_user_agent,
-                    viewport={"width": 1920, "height": 1080}
                 )
 
             # 2. Apply V2 Stealth
@@ -454,21 +457,28 @@ class WelcomeToTheJungleWorker:
         await self._emit(state, "Navigating to Job Board")
         print("--- [WTTJ] Navigating ---")
         try:
-            await self.page.goto(self.base_url)
-            await self._handle_cookies()           
-
-        except Exception as e:
-            print(f"Nav Error: {e}")
+             # 1. Wait until the network is actually quiet
+            await self.page.goto(self.base_url, wait_until="networkidle", timeout=60000)
             
-        #return {"status": "on_homepage"}
-        return {}
+            # 2. Handle Cookies (important for HelloWork to stop blocking the view)
+            await self._handle_cookies()  
+            
+            # 3. EXTRA SAFETY: Wait for a specific element that proves the page is ready
+            # e.g., the search bar or the logo
+            await self.page.wait_for_selector('[data-testid="not-logged-visible-login-button"]', state="visible", timeout=30000)
+            
+            return {}        
+        except Exception as e:
+            print(f"🚨 Navigation Error: {e}")
+            return {"error": f"Navigation failed: {e}"}
+
+            
+        
     
 
     # --- NODE 3: Login (UPDATED FOR V2) ---
     async def request_login(self, state: JobApplicationState):
         await self._emit(state, "Authenticating")
-        if state.get("is_logged_in"):
-            return {"status": "already_logged_in"}
 
         prefs = state["preferences"]
         creds = state.get("credentials")
@@ -485,6 +495,8 @@ class WelcomeToTheJungleWorker:
                 await self.page.get_by_test_id("not-logged-visible-login-button").click()
                 await self.page.wait_for_selector('input[id="email_login"]', state="visible", timeout=5000)
 
+                await self.page.wait_for_timeout(3000)
+
                 login_plain = await self.encryption_service.decrypt(creds["wttj"].login_encrypted)
                 pass_plain = await self.encryption_service.decrypt(creds["wttj"].password_encrypted)
 
@@ -495,7 +507,9 @@ class WelcomeToTheJungleWorker:
                 if await submit_btn.count() == 0:
                      submit_btn = self.page.locator('button[type="submit"]')
 
-                await submit_btn.click()                
+                await submit_btn.click()  
+
+                await self.page.wait_for_timeout(30000)              
                 
                 # Verify Success
                 await self.page.wait_for_selector('button[data-testid="header-user-link-signout"]', state="attached", timeout=10000)
@@ -538,6 +552,7 @@ class WelcomeToTheJungleWorker:
     # --- NODE 4: Search (Interaction Based) ---
     async def search_jobs(self, state: JobApplicationState):
         await self._emit(state, "Searching for Jobs") 
+
         search_entity = state["job_search"]
         job_title = search_entity.job_title
         
@@ -549,6 +564,12 @@ class WelcomeToTheJungleWorker:
         
         try:
             # 1. Fill the job title (Using your EXACT original selector)
+            try:
+                await self.page.wait_for_selector('[data-testid="jobs-home-search-field-query"]')
+            except Exception:
+                await self.page.reload(wait_until="networkidle")
+
+
             await self.page.get_by_test_id("jobs-home-search-field-query").fill(job_title)
             
             # 2. APPLY FILTERS 
@@ -574,6 +595,31 @@ class WelcomeToTheJungleWorker:
             return {"error": f"Failed to execute search for '{job_title}' on Welcome to the Jungle."}
 
 
+    # Helper go_back:
+    async def nav_back(self, url: str):
+        # 6. Navigate back to search results
+        await self.page.goto(url, wait_until="networkidle")
+
+        # 🚨 CRITICAL: Instead of just handling cookies, wait for the actual results to be visible
+        try:
+            # Wait for the specific job card container to reappear
+            # This proves the "Bot Detection" or "Loading" overlay is gone.
+            results_selector = '[data-testid="search-results-list-item-wrapper"]' # Adjust if your selector is different
+            await self.page.wait_for_selector(results_selector, state="visible", timeout=10000)
+            
+            # Optional: A tiny human-like pause
+            await asyncio.sleep(3) 
+            
+            await self._handle_cookies()
+
+        except Exception:
+            print("⚠️ Search results didn't reappear after going back. Possible bot detection or slow network.")
+            # Fallback: Refresh the page entirely if the back button broke the state
+            await self.page.reload(wait_until="networkidle")
+            await asyncio.sleep(3) 
+            await self._handle_cookies()
+
+
     # --- NODE 5: Scrape Jobs (WTTJ Integrated & Paginated) ---
     async def get_matched_jobs(self, state: JobApplicationState):
         await self._emit(state, "Extracting Job Data")
@@ -588,6 +634,7 @@ class WelcomeToTheJungleWorker:
         
         # 🚨 V2 REQUIREMENT: Fetch Ignored Hashes
         hash_result = await self.get_ignored_hashes.execute(user_id=user_id, days=14)
+
         if not hash_result.is_success:
             print(f"⚠️ Warning: Could not fetch ignored hashes: {hash_result.error.message}")
             ignored_hashes = set()
@@ -616,6 +663,10 @@ class WelcomeToTheJungleWorker:
 
                 cards = self.page.get_by_test_id("search-results-list-item-wrapper")
                 count = await cards.count()
+
+                # 🚨 UPDATE: Save current page URL so we return to the CORRECT page after clicking a job
+                result_url = self.page.url 
+                
                 
                 for i in range(count):
                     # Hard stop if limit reached
@@ -633,7 +684,7 @@ class WelcomeToTheJungleWorker:
                         raw_company, raw_title, raw_location = await self.get_raw_job_data(card)
                         print(f"---[WTTJ WORKER] RAW DATA---\nCompany: {raw_company},\nTitle: {raw_title},\nLocation: {raw_location}")
                         if not raw_company or not raw_title:
-                            print("    ⚠️  Missing title or company, skipping card.")
+                            print("     ⚠️     Missing title or company, skipping card.")
                             continue
 
                         # 🚨 V2 REQUIREMENT: Hash Gate (Post-Click, Pre-Scrape)
@@ -644,8 +695,8 @@ class WelcomeToTheJungleWorker:
                         
                         # 2. Click to load details (WTTJ requires this for reliable data)
                         await card.click()
-                        await self.page.wait_for_load_state("domcontentloaded")
-                        await self.page.wait_for_timeout(1000)
+                        await self.page.wait_for_load_state("networkidle")
+                        await self.page.wait_for_timeout(5000)
                         
                         # 3. Extract Basic Data
                         current_url = self.page.url           
@@ -667,8 +718,7 @@ class WelcomeToTheJungleWorker:
                                 try:
                                     await self.page.wait_for_selector('a[data-testid="job_bottom-button-apply"] svg[alt="ExternalLink"]', timeout=3000)
                                     print(f"     ❌ External form detected (Ignoring): {current_url}")
-                                    await self.page.go_back(wait_until="domcontentloaded")
-                                    await self._handle_cookies()
+                                    await self.nav_back(result_url)                                    
                                     continue                                    
                         
                                 except Exception:
@@ -705,15 +755,15 @@ class WelcomeToTheJungleWorker:
                                 print(f"     📦 Current batch size: {len(found_job_entities)}/{worker_job_limit}")
 
                         # 6. Navigate back to search results
-                        await self.page.go_back(wait_until="domcontentloaded")
-                        await self._handle_cookies()
+                        await self.nav_back(result_url)
+                        
                         
                     except Exception as e:
                         print(f"     ⚠️ Error on card {i}: {e}")
                         # Attempt recovery
                         try:
-                            await self.page.go_back(wait_until="domcontentloaded")
-                            await self._handle_cookies()
+                            await self.nav_back(result_url)
+                            
                         except Exception:
                             pass
                         continue
@@ -966,17 +1016,13 @@ class WelcomeToTheJungleWorker:
                     # Playwright sometimes struggles with styled checkboxes, clicking the label is often safer
                     await self.page.locator('label[for="consent"]').click()
                 
-                # G. Human verification
-                print("⏳ Sleeping 30s for manual verification...")
-                await asyncio.sleep(30) 
-                
                 # H. Submit 
                 await self.page.wait_for_selector('[data-testid="apply-form-submit"]', state="attached")
                 submit_btn = self.page.locator('[data-testid="apply-form-submit"]')
                 
                 if await submit_btn.is_visible():
                     await submit_btn.click() 
-                    await self.page.wait_for_timeout(5000) # Wait for network confirmation
+                    await self.page.wait_for_timeout(45000) # Wait for network confirmation
 
                     try:
                         await self.page.wait_for_selector('svg[alt="Paperplane"]', timeout=2000)
@@ -1025,7 +1071,7 @@ class WelcomeToTheJungleWorker:
         # 1. Internal Error Check
         if state.get("error"):
             print(f"🛑 [APEC Worker] Circuit Breaker Tripped: {state['error']}")
-            return "cleanup"
+            return "error"
 
         # 2. External Kill Switch Check
         try:
@@ -1034,7 +1080,7 @@ class WelcomeToTheJungleWorker:
             
             if state_result.is_success and state_result.value.is_shutdown:
                 print("🛑 [APEC Worker] User Kill Switch Detected! Aborting gracefully...")
-                return "cleanup"
+                return "error"
         except Exception as e:
             print(f"⚠️ [APEC] Failed to check DB for agent state: {e}")
             pass # Failsafe: Continue if the DB check fails so we don't randomly crash

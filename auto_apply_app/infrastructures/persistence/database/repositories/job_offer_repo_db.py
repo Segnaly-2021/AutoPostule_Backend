@@ -119,6 +119,7 @@ class JobOfferRepoDB(JobOfferRepository):
             .where(JobOfferDB.user_id == user_id) 
             .where(JobOfferDB.application_date >= since_date)
             .where(JobOfferDB.job_posting_id.isnot(None))
+            .where(JobOfferDB.status == "SUBMITTED")
         )
         result = await self.session.execute(stmt)
         return set(result.scalars().all())

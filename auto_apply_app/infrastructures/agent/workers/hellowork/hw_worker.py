@@ -36,7 +36,7 @@ class HelloWorkWorker:
         # Static Dependencies
         self.get_ignored_hashes = get_ignored_hashes       
         self.encryption_service = encryption_service
-        self.base_url = "https://www.apec.fr/"
+        self.base_url = "https://www.hellowork.com/fr-fr/"
         self.file_storage = file_storage
         self.get_agent_state = get_agent_state 
 
@@ -92,12 +92,15 @@ class HelloWorkWorker:
             pass  # never let a progress emit crash a worker node
 
 
+    # In your Worker class
     def _generate_fast_hash(self, company_name: str, job_title: str, user_id: str) -> str:
-        """Memory-efficient deduplication using MD5 hash."""
-        raw_string = f"""
-            {str(company_name).lower()}_{str(job_title).lower()}_
-            {JobBoard.HELLOWORK.name}_{str(user_id)}
-        """
+        # 🚨 MIRROR THE DOMAIN LOGIC EXACTLY
+        c = str(company_name).replace(" ", "").lower().strip()
+        t = str(job_title).replace(" ", "").lower().strip()
+        u = str(user_id).strip()
+        b = "hellowork" # Or self.board_name
+        
+        raw_string = f"{c}_{t}_{b}_{u}"
         return hashlib.md5(raw_string.encode()).hexdigest()
 
     # ==========================================
@@ -260,8 +263,8 @@ class HelloWorkWorker:
         """
         # 1. Internal Error Check
         if state.get("error"):
-            print(f"🛑 [APEC Worker] Circuit Breaker Tripped: {state['error']}")
-            return "cleanup"
+            print(f"🛑 [HW Worker] Circuit Breaker Tripped: {state['error']}")
+            return "error"
 
         # 2. External Kill Switch Check
         try:
@@ -269,8 +272,8 @@ class HelloWorkWorker:
             state_result = await self.get_agent_state.execute(user_id)
             
             if state_result.is_success and state_result.value.is_shutdown:
-                print("🛑 [APEC Worker] User Kill Switch Detected! Aborting gracefully...")
-                return "cleanup"
+                print("🛑 [HW Worker] User Kill Switch Detected! Aborting gracefully...")
+                return "error"
         except Exception as e:
             print(f"⚠️ [APEC] Failed to check DB for agent state: {e}")
             pass # Failsafe: Continue if the DB check fails so we don't randomly crash
@@ -295,7 +298,7 @@ class HelloWorkWorker:
         preferences = state["preferences"]
         self.playwright = await async_playwright().start()
         self.browser = await self.playwright.chromium.launch(
-            headless= not preferences.browser_headless, 
+            headless= preferences.browser_headless, 
             args=['--disable-blink-features=AutomationControlled']
         )
         
@@ -303,7 +306,6 @@ class HelloWorkWorker:
         real_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
         self.context = await self.browser.new_context(
             user_agent=real_user_agent,
-            viewport={"width": 1920, "height": 1080}
         )
         stealth = Stealth()
         await stealth.apply_stealth_async(self.context)
@@ -319,7 +321,7 @@ class HelloWorkWorker:
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless=not state["preferences"].browser_headless, 
+                headless=state["preferences"].browser_headless, 
                 args=['--disable-blink-features=AutomationControlled']
             )
             
@@ -331,7 +333,7 @@ class HelloWorkWorker:
                 self.context = await self.browser.new_context(
                     storage_state=session_path,
                     user_agent=real_user_agent,
-                    viewport={"width": 1920, "height": 1080},
+                    #viewport={"width": 1920, "height": 1080},
                     device_scale_factor=1,
                     has_touch=False,
                     is_mobile=False
@@ -339,7 +341,7 @@ class HelloWorkWorker:
             else:
                 self.context = await self.browser.new_context(
                     user_agent=real_user_agent,
-                    viewport={"width": 1920, "height": 1080}
+                    #viewport={"width": 1920, "height": 1080}
                 )
 
             # 🚨 2. The NEW V2 Stealth Fix: Apply it to the entire context
@@ -348,7 +350,7 @@ class HelloWorkWorker:
 
             # 3. Create the page and navigate
             self.page = await self.context.new_page()
-            await self.page.goto(self.base_url, wait_until="domcontentloaded")
+            await self.page.goto(self.base_url, wait_until="networkidle", timeout=60000)
             await self._handle_cookies()
             
             return {}
@@ -356,15 +358,22 @@ class HelloWorkWorker:
             return {"error": f"Failed to initialize HelloWork browser: {e}"}
 
     async def go_to_job_board(self, state: JobApplicationState):
-        await self._emit(state,"Navigating to Job Board")
+        await self._emit(state, "Navigating to Job Board")
         print("--- [HW] Navigating to HelloWork ---")
         try:
-            await self.page.goto(self.base_url)
-            await self.page.wait_for_timeout(2000)
+            # 1. Wait until the network is actually quiet
+            await self.page.goto(self.base_url, wait_until="networkidle", timeout=60000)
+            
+            # 2. Handle Cookies (important for HelloWork to stop blocking the view)
             await self._handle_cookies()  
-            #return {"current_url": self.base_url, "status": "on_homepage"} 
+            
+            # 3. EXTRA SAFETY: Wait for a specific element that proves the page is ready
+            # e.g., the search bar or the logo
+            await self.page.wait_for_selector('[data-cy="headerAccountMenu"]', state="visible", timeout=30000)
+            
             return {}        
         except Exception as e:
+            print(f"🚨 Navigation Error: {e}")
             return {"error": f"Navigation failed: {e}"}
 
     async def request_login(self, state: JobApplicationState):
@@ -380,7 +389,9 @@ class HelloWorkWorker:
             try:
                 await self.page.locator('[data-cy="headerAccountMenu"]').click()
                 await self.page.locator('[data-cy="headerAccountLogIn"]').click()
-                await self.page.wait_for_selector('input[name="email2"]', state="visible", timeout=5000)
+
+
+                await self.page.wait_for_selector('input[name="email2"]', state="visible", timeout=30000)
 
                 login_plain = await self.encryption_service.decrypt(creds["hellowork"].login_encrypted)
                 pass_plain = await self.encryption_service.decrypt(creds["hellowork"].password_encrypted)
@@ -389,7 +400,7 @@ class HelloWorkWorker:
                 await self.page.locator('input[name="password2"]').fill(pass_plain)                
                 
                 await self.page.locator('button[type="button"][class="profile-button"]').click()
-                await self.page.wait_for_timeout(10000)
+                await self.page.wait_for_timeout(30000)
                 await self.page.wait_for_load_state("networkidle")
                 await self.page.goto("https://www.hellowork.com/fr-fr/")
 
@@ -421,6 +432,7 @@ class HelloWorkWorker:
         
     async def search_jobs(self, state: JobApplicationState):
         await self._emit(state,"Searching for Jobs") 
+
         search_entity = state["job_search"]
         job_title = search_entity.job_title
         contract_types = getattr(search_entity, 'contract_types', [])
@@ -434,7 +446,7 @@ class HelloWorkWorker:
                 await self.page.locator('input[id="l"]').fill(location)
             await self.page.keyboard.press("Enter")
             
-            await self.page.wait_for_timeout(1000)
+            await self.page.wait_for_timeout(3000)
             await self._handle_cookies()
 
             if contract_types or min_salary > 0:
@@ -449,7 +461,7 @@ class HelloWorkWorker:
 
     async def get_matched_jobs(self, state: JobApplicationState):
         await self._emit(state,"Extracting Job Data")
-        print("--- [HW] Scraping Jobs (V2 Paginated) ---")
+        print("--- [HW] Scraping Jobs  ---")
         user_id = state["user"].id
         search_id = state["job_search"].id
         found_job_entities = []
@@ -470,10 +482,14 @@ class HelloWorkWorker:
                 
                 cards_locator = self.page.locator('[data-id-storage-target="item"]')
                 try:
-                    await cards_locator.first.wait_for(timeout=5000)
+                    await cards_locator.first.wait_for(state='visible', timeout=30000)
                 except Exception:
                     if page_number == 1: 
+                        print(f"🕵️ [HW] No results found on Page 1 for {state.get('job_search').job_title}")
                         return {"error": "No jobs found for this search."}
+                    
+                    # If it's page 2, 3, etc., it just means we reached the end of the results
+                    print(f"🏁 [HW] No more cards found on page {page_number}. Ending scrape.")
                     break
                     
                 count = await cards_locator.count()
@@ -736,19 +752,38 @@ class HelloWorkWorker:
                     await self.page.wait_for_timeout(1000)
                     await self.page.locator('textarea[name="MotivationLetter"]').fill(offer.cover_letter)
 
-                print("⏳ Sleeping 30s for verification/CAPTCHA...")
-                await asyncio.sleep(30) 
+                
                 
                 submit_btn = self.page.locator('[data-cy="submitButton"]')
                 if await submit_btn.is_visible():
                     await submit_btn.click() 
-                    await self.page.wait_for_timeout(5000)
+                    await self.page.wait_for_timeout(45000)
                     try:
-                        await self.page.wait_for_selector('div[data-controller="removable intersect toggle "][data-intersect-name-value="notification"]', timeout=2000)
+                        # 1. Wait for the notification to appear
+                        notification = self.page.locator(
+                            '[data-intersect-name-value="notification"]'
+                        )
+                        
+                        await notification.wait_for(state="attached", timeout=3000)
+
+                        if await notification.count() > 0:
+                            # 2. Locate the use tag inside the SVG — fix quote nesting
+                            use_tag = notification.locator('svg use[href*="badges"]')
+
+                            if await use_tag.count() > 0:
+                                href_value = await use_tag.get_attribute("href")
+
+                                if href_value and "error" in href_value.lower():
+                                    print(f"❌ Submission of {offer.form_url} blocked by HelloWork error badge.")
+                                    i += 1
+                                    continue
+                                else: 
+                                    pass
+
 
                     except Exception:
-                        print(f"Submission of {offer.form_url} failed because of random input fields in the application form")
-                        continue 
+                        print(f"⚠️ No notification appeared for {offer.form_url} — assuming success.")
+                        i += 1
 
 
                     print("✅ Job application submitted")                    
@@ -756,6 +791,8 @@ class HelloWorkWorker:
                     successful_submissions.append(offer)
                 else:
                     print("❌ Submit button not visible.")
+
+                    
             except Exception as e:
                 print(f"❌ Submission failed for {offer.url}: {e}")
             i += 1

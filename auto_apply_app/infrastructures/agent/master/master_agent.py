@@ -134,11 +134,13 @@ class MasterAgent(AgentServicePort):
             pass
 
     # --- NODE 1: The Scrape Dispatcher ---
-    def dispatch_scrape(self, state: JobApplicationState):
+    async def dispatch_scrape(self, state: JobApplicationState):
         """
         Reads user preferences, calculates job limits per board, 
         and dynamically spins up ONLY the active workers.
         """
+        await self._emit(state, "Launching Search Workers")
+
         print("--- [Master] Dispatching Scrape Missions ---")
         
         # 1. Get Active Boards
@@ -424,16 +426,24 @@ class MasterAgent(AgentServicePort):
     # --- NODE 5: The Final Save ---
     async def finalize_batch(self, state: JobApplicationState):
         """Final cleanup and state synchronization."""
-
         await self._emit(state, "Saving Final Results")
-
         print("--- [Master] Finalizing Batch ---")
         
-        # 1. GRACEFUL EXIT RESET (From our previous Kill Switch feature)
         user_id = state["user"].id
+        
+        # 🚨 1. CHECK KILL SWITCH BEFORE RESETTING
+        is_killed = False
+        try:
+            state_result = await self.get_agent_state.execute(user_id)
+            if state_result.is_success and state_result.value.is_shutdown:
+                is_killed = True
+        except Exception:
+            pass
+
+        # 2. GRACEFUL EXIT RESET
         await self.reset_agent_state.execute(user_id)
         
-        # 2. Persist Successful Submissions
+        # 3. Persist Successful Submissions
         submitted_offers = state.get("submitted_offers", [])
         if submitted_offers:
             print(f"💾 Persisting {len(submitted_offers)} submitted applications...")
@@ -443,7 +453,7 @@ class MasterAgent(AgentServicePort):
         else:
              print("⚠️ No applications were successfully submitted.")
 
-        # 🚨 3. THE NEW CLEANUP PHASE
+        # 4. THE NEW CLEANUP PHASE
         search_id = state["job_search"].id
         print(f"🧹 Sweeping database for leftover APPROVED (failed) jobs for search {search_id}...")
         
@@ -455,7 +465,8 @@ class MasterAgent(AgentServicePort):
         else:
             print(f"⚠ Database cleanup failed: {cleanup_result.error.message}")
 
-        return {"status": "finished_successfully" if submitted_offers else "finished_with_errors"}
+        # 🚨 5. Return the exact status for the final router
+        return {"status": "killed" if is_killed else "finished_successfully"}
     
 
     
@@ -502,21 +513,47 @@ class MasterAgent(AgentServicePort):
         return "prepare_submit"
 
     # --- 2. THE PAUSE POINT (Dummy Node) ---
-    def human_review(self, state: JobApplicationState):
+    async def human_review(self, state: JobApplicationState):
         """
         Dummy node serving strictly as the LangGraph interruption point.
         Execution pauses BEFORE this node runs.
         """
+        await self._emit(state, "Waiting for User Review")
         print("👤 [Master] Manual review approved. Resuming workflow...")
         return  {"status": "human_review_complete"}
 
     # --- 3. THE HUB (Dummy Node) ---
-    def prepare_submit(self, state: JobApplicationState):
+    async def prepare_submit(self, state: JobApplicationState):
         """
         Unified launchpad for the Send() fan-out to workers.
         """
+        await self._emit(state, "Launching Submission Workers")
         print("🚀 [Master] Preparing to dispatch submission workers...")
         return {"status": "ready_for_submission"}
+
+
+
+    # --- TERMINAL NODE 1: Success Notification ---
+    async def completion_notification(self, state: JobApplicationState):
+        """Dummy node to notify the frontend to hit 100% and close the overlay."""
+        print("🎉 [Master] Emitting final completion signal.")
+        await self._emit(state, stage="Job Search Complete", status="finished")
+        return {"status": "finished"}
+
+    # --- TERMINAL NODE 2: Killed Notification ---
+    async def stop_agent_notification(self, state: JobApplicationState):
+        """Dummy node to notify the frontend that the 90s spinner can be safely cleared."""
+        print("🛑 [Master] Emitting agent killed signal.")
+        await self._emit(state, stage="Agent has been stopped", status="killed")
+        return {"status": "killed"}
+
+
+    def route_end(self, state: JobApplicationState):
+        """Routes from finalize to the correct terminal notification node."""
+        if state.get("status") == "killed":
+            return "stop_agent_notification"
+        return "completion_notification"
+
 
     def get_graph(self):
         """Builds the Hub-and-Spoke Master Orchestrator."""
@@ -529,9 +566,13 @@ class MasterAgent(AgentServicePort):
 
         # 2. Register the Hub (Master Nodes)
         workflow.add_node("analyze", self.analyze_and_generate)
-        workflow.add_node("human_review", self.human_review)       # 🚨 NEW: The Pause Node
-        workflow.add_node("prepare_submit", self.prepare_submit)   # 🚨 NEW: The Launchpad Node
+        workflow.add_node("human_review", self.human_review) 
+        workflow.add_node("prepare_submit", self.prepare_submit) 
         workflow.add_node("finalize", self.finalize_batch)
+        
+        # 🚨 Register New Terminal Nodes
+        workflow.add_node("completion_notification", self.completion_notification)
+        workflow.add_node("stop_agent_notification", self.stop_agent_notification)
         
         # --- THE WORKFLOW ROUTING ---
 
@@ -560,14 +601,22 @@ class MasterAgent(AgentServicePort):
         # 📤 PHASE 3C: Launchpad -> Submit Fan-Out
         workflow.add_conditional_edges(
             "prepare_submit", 
-            self.dispatch_submit, # Returns Send() objects for approved jobs
+            self.dispatch_submit, 
             ["apec_worker", "hellowork_worker", "wttj_worker"]
         )
 
-        # 🏁 PHASE 5: The End
-        workflow.add_edge("finalize", END)
+        # 🏁 PHASE 5: The End Routing
+        # Instead of going straight to END, we route to our notifications
+        workflow.add_conditional_edges(
+            "finalize",
+            self.route_end,
+            ["completion_notification", "stop_agent_notification"]
+        )
+        
+        # Both notifications safely terminate the graph
+        workflow.add_edge("completion_notification", END)
+        workflow.add_edge("stop_agent_notification", END)
 
-        # 🚨 Compile and set the interruption specifically on the dummy node!
         return workflow.compile(
             checkpointer=self._checkpointer,
             interrupt_before=["human_review"] 
@@ -621,7 +670,7 @@ class MasterAgent(AgentServicePort):
         self._apec._progress_callback = progress_callback
 
         try:
-            await self._execute_with_progress(initial_state, search.id, progress_callback)
+            await self._execute_with_progress(initial_state, search.id)
         finally:
             # Clear callbacks after run — prevents stale references
             self._progress_callback = None
