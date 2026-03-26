@@ -185,18 +185,15 @@ class JobOfferRepoDB(JobOfferRepository):
         pagination: dict,
         status: ApplicationStatus = ApplicationStatus.SUBMITTED
     ) -> Tuple[List[JobOffer], int, Dict]:
-        """
-        Paginated, filtered list of applications for the tracker page.
-        Returns (page_of_jobs, total_filtered_count, aggregations_dict).
-        """
-        # ── Base query: Optimized to query user_id directly ───────────────────
+        
+        # ── Base query ───────────────────
         base_stmt = (
             select(JobOfferDB)
             .where(JobOfferDB.user_id == UUID(user_id))
             .where(JobOfferDB.status == status)
         )
 
-        # ── Total unfiltered (before dynamic filters) ────────────────────────
+        # ── Total unfiltered ────────────────────────
         total_unfiltered_result = await self.session.execute(
             select(func.count(JobOfferDB.id))
             .where(JobOfferDB.user_id == UUID(user_id))
@@ -207,51 +204,38 @@ class JobOfferRepoDB(JobOfferRepository):
         # ── Dynamic filters ───────────────────────────────────────────────────
         if filters:
             if company := filters.get('company'):
-                base_stmt = base_stmt.where(
-                    JobOfferDB.company_name.ilike(f"%{company}%")
-                )
+                base_stmt = base_stmt.where(JobOfferDB.company_name.ilike(f"%{company}%"))
             if title := filters.get('title'):
-                base_stmt = base_stmt.where(
-                    JobOfferDB.job_title.ilike(f"%{title}%")
-                )
+                base_stmt = base_stmt.where(JobOfferDB.job_title.ilike(f"%{title}%"))
             if location := filters.get('location'):
-                base_stmt = base_stmt.where(
-                    JobOfferDB.location.ilike(f"%{location}%")
-                )
+                base_stmt = base_stmt.where(JobOfferDB.location.ilike(f"%{location}%"))
             if board := filters.get('board'):
-                base_stmt = base_stmt.where(
-                    JobOfferDB.job_board == board
-                )
+                base_stmt = base_stmt.where(JobOfferDB.job_board == board)
             if date_from := filters.get('date_from'):
-                base_stmt = base_stmt.where(
-                    func.date(JobOfferDB.application_date) >= date_from
-                )
+                base_stmt = base_stmt.where(func.date(JobOfferDB.application_date) >= date_from)
             if date_to := filters.get('date_to'):
-                base_stmt = base_stmt.where(
-                    func.date(JobOfferDB.application_date) <= date_to
-                )
+                base_stmt = base_stmt.where(func.date(JobOfferDB.application_date) <= date_to)
             if (has_resp := filters.get('has_response')) is not None:
                 base_stmt = base_stmt.where(JobOfferDB.has_response == has_resp)
             if (has_int := filters.get('has_interview')) is not None:
                 base_stmt = base_stmt.where(JobOfferDB.has_interview == has_int)
 
-        # ── Total after filters (for pagination metadata) ────────────────────
-        count_stmt = select(func.count()).select_from(base_stmt.subquery())
+        # 🚨 FIX 1: Use with_only_columns to avoid cross-join
+        count_stmt = base_stmt.with_only_columns(func.count(JobOfferDB.id)).order_by(None)
         total_filtered = (await self.session.execute(count_stmt)).scalar_one()
 
-        # ── Top 3 job titles from filtered results ───────────────────────────
+        # 🚨 FIX 2: Swap the SELECT clause safely for titles
         titles_stmt = (
-            select(JobOfferDB.job_title, func.count(JobOfferDB.id).label("cnt"))
-            .select_from(base_stmt.subquery())
+            base_stmt.with_only_columns(
+                JobOfferDB.job_title, 
+                func.count(JobOfferDB.id).label("cnt")
+            )
             .group_by(JobOfferDB.job_title)
             .order_by(func.count(JobOfferDB.id).desc())
             .limit(3)
         )
         titles_result = await self.session.execute(titles_stmt)
-        top_titles = [
-            {"name": row.job_title, "value": row.cnt}
-            for row in titles_result.all()
-        ]
+        top_titles = [{"name": row.job_title, "value": row.cnt} for row in titles_result.all()]
 
         aggregations = {
             "total_unfiltered": total_unfiltered,
@@ -274,6 +258,7 @@ class JobOfferRepoDB(JobOfferRepository):
 
         return offers, total_filtered, aggregations
 
+
     # =========================================================================
     # DASHBOARD: ANALYTICS
     # =========================================================================
@@ -284,10 +269,7 @@ class JobOfferRepoDB(JobOfferRepository):
         period: str,
         status: ApplicationStatus = ApplicationStatus.SUBMITTED
     ) -> dict:
-        """
-        Aggregated stats for the analytics page.
-        Returns totals, period counts, response/interview rates, and top locations.
-        """
+        
         now = datetime.now(timezone.utc)
 
         # ── Define period window ──────────────────────────────────────────────
@@ -300,55 +282,45 @@ class JobOfferRepoDB(JobOfferRepository):
         # ── Base: all submitted jobs for this user ────────────────────────────
         base_stmt = (
             select(JobOfferDB)
-            # ✅ OPTIMIZED: Removed join(JobSearchDB), querying user_id directly
             .where(JobOfferDB.user_id == UUID(user_id))
             .where(JobOfferDB.status == status)
         )
 
-        # ── Total applications (all time, no period filter) ───────────────────
-        total_result = await self.session.execute(
-            select(func.count(JobOfferDB.id)).select_from(base_stmt.subquery())
-        )
-        total_applications = total_result.scalar_one()
+        # 🚨 FIX 3: Count directly on the base statement
+        total_stmt = base_stmt.with_only_columns(func.count(JobOfferDB.id)).order_by(None)
+        total_applications = (await self.session.execute(total_stmt)).scalar_one()
 
         # ── Period-filtered base ──────────────────────────────────────────────
         period_stmt = base_stmt
         if start_date:
             period_stmt = period_stmt.where(JobOfferDB.application_date >= start_date)
 
-        # ── Period count + response/interview counts in one query ─────────────
-        agg_result = await self.session.execute(
-            select(
-                func.count(JobOfferDB.id).label("period_count"),
-                func.sum(
-                    case((JobOfferDB.has_response is True, 1), else_=0)
-                ).label("response_count"),
-                func.sum(
-                    case((JobOfferDB.has_interview is True, 1), else_=0)
-                ).label("interview_count"),
-            ).select_from(period_stmt.subquery())
-        )
+        # 🚨 FIX 4: Safely inject aggregates using == True (prevents 'is True' parse errors)
+        agg_stmt = period_stmt.with_only_columns(
+            func.count(JobOfferDB.id).label("period_count"),
+            func.sum(case((JobOfferDB.has_response == True, 1), else_=0)).label("response_count"),
+            func.sum(case((JobOfferDB.has_interview == True, 1), else_=0)).label("interview_count"),
+        ).order_by(None)
+        
+        agg_result = await self.session.execute(agg_stmt)
         agg_row = agg_result.one()
+        
         period_applications = agg_row.period_count or 0
         responses = agg_row.response_count or 0
         interviews = agg_row.interview_count or 0
 
-        # ── Top 7 locations from period results ───────────────────────────────
+        # 🚨 FIX 5: Prevent cross-join on locations
         locations_stmt = (
-            select(
+            period_stmt.with_only_columns(
                 JobOfferDB.location,
                 func.count(JobOfferDB.id).label("cnt")
             )
-            .select_from(period_stmt.subquery())
             .group_by(JobOfferDB.location)
             .order_by(func.count(JobOfferDB.id).desc())
             .limit(7)
         )
         locations_result = await self.session.execute(locations_stmt)
-        by_location = [
-            {"name": row.location, "count": row.cnt}
-            for row in locations_result.all()
-        ]
+        by_location = [{"name": row.location, "count": row.cnt} for row in locations_result.all()]
 
         return {
             "total_applications": total_applications,
