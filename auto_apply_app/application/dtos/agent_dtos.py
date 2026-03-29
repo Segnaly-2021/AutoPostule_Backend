@@ -114,3 +114,26 @@ class AgentResponse:
             status=status,
             message=message
         )
+    
+
+@dataclass(frozen=True)
+class GetJobsForReviewRequest:
+    user_id: str
+    search_id: str
+
+
+@dataclass(frozen=True)
+class UpdateCoverLetterRequest:
+    user_id: str
+    job_id: str
+    cover_letter: str 
+
+@dataclass(frozen=True)
+class DiscardJobRequest:
+    user_id: str
+    job_id: str
+
+@dataclass(frozen=True)
+class ApproveJobRequest:
+    user_id: str
+    job_id: str

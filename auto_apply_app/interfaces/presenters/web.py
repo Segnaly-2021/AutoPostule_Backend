@@ -41,7 +41,7 @@ from auto_apply_app.domain.entities.job_search import JobSearch
 from auto_apply_app.application.dtos.agent_dtos import AgentResponse
 from auto_apply_app.interfaces.viewmodels.job_search_vm import JobSearchViewModel
 from auto_apply_app.domain.value_objects import ApplicationStatus
-from auto_apply_app.interfaces.viewmodels.job_offer_vm import JobOfferViewModel, DashboardViewModel
+from auto_apply_app.interfaces.viewmodels.job_offer_vm import JobOfferViewModel, DashboardViewModel, JobReviewViewModel
 from auto_apply_app.interfaces.viewmodels.free_search_vm import (
     FreeSearchResultViewModel,
     JobSnippetViewModel
@@ -203,6 +203,24 @@ class WebJobPresenter(JobPresenter):
     def present_jobs(self, jobs: List[JobOfferResponse]) -> List[JobOfferViewModel]:
         """Batch conversion for multiple jobs."""
         return [self.present_job(job) for job in jobs]
+    
+
+    
+    def present_job_for_review(self, job) -> JobReviewViewModel:
+        """
+        Special presenter method for the Review Page.
+        Converts UUIDs and Enums to strings for FastAPI serialization.
+        """
+        return JobReviewViewModel(
+            id=str(job.id),
+            company_name=job.company_name,
+            job_title=job.job_title,
+            location=job.location,
+            cover_letter=job.cover_letter or "",
+            ranking=job.ranking or 5,
+            board=str(job.job_board.value),
+            status=str(job.status.value)
+        )
     
     def present_dashboard(self, data: Dict) -> DashboardViewModel:
         return DashboardViewModel(

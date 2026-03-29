@@ -54,11 +54,13 @@ class UserDB(Base):
 class AuthUserDB(Base):
     __tablename__ = "auth_users"
 
+    
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     user_id: Mapped[UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"),
-        primary_key=True
+        unique=True, 
+        index=True
     )
-    id: Mapped[UUID] = mapped_column(default=uuid4, nullable=True)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -80,10 +82,12 @@ class AuthUserDB(Base):
 class UserSubscriptionDB(Base):
     __tablename__ = "user_subscriptions"
 
-    id: Mapped[UUID] = mapped_column(default=uuid4, nullable=True)
+    # 🚨 FIX: id is PK, user_id is unique
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     user_id: Mapped[UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"),
-        primary_key=True
+        unique=True,
+        index=True
     )
     email: Mapped[str] = mapped_column(String(255), nullable=False)
     account_type: Mapped[ClientType] = mapped_column(
@@ -114,11 +118,13 @@ class UserPreferencesDB(Base):
     __tablename__ = "user_preferences"
 
     
+    # 🚨 FIX: id is PK, user_id is unique
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     user_id: Mapped[UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"),
-        primary_key=True
+        unique=True,
+        index=True
     )
-    id: Mapped[UUID] = mapped_column(default=uuid4, nullable=True)
     is_full_automation: Mapped[bool] = mapped_column(Boolean, default=False)
     ai_model: Mapped[str] = mapped_column(String(50), default="gemini")
     # Store active_boards dict as JSONB: {"hellowork": true, "wttj": false, ...}
@@ -162,7 +168,13 @@ class JobSearchDB(Base):
     __tablename__ = "job_searches"
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    
+    # 🚨 FIX: Added ondelete="CASCADE"
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), 
+        index=True
+    )
+    
     job_title: Mapped[str] = mapped_column(String(200))
     job_boards: Mapped[List[JobBoard]] = mapped_column(
         ARRAY(SQLEnum(JobBoard, native_enum=False)), 

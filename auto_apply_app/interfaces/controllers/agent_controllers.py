@@ -1,4 +1,3 @@
-# auto_apply_app/interfaces/controllers/agent_controller.py
 from dataclasses import dataclass
 from typing import List, Optional
 
@@ -15,12 +14,16 @@ from auto_apply_app.application.use_cases.agent_use_cases import (
     KillJobSearchUseCase,
     UpdateCoverLetterUseCase
 )
+# 🚨 Make sure all these are imported!
 from auto_apply_app.application.dtos.agent_dtos import (
     StartAgentRequest,
     ResumeAgentRequest,
-    KillAgentRequest
+    KillAgentRequest,
+    GetJobsForReviewRequest,
+    UpdateCoverLetterRequest,
+    ApproveJobRequest,
+    DiscardJobRequest
 )
-
 
 @dataclass
 class AgentController:
@@ -37,7 +40,7 @@ class AgentController:
     presenter: AgentPresenter
     job_presenter: JobPresenter
 
-    
+    # ---------- START AGENT ----------
     async def handle_start_agent(
         self,
         user_id: str,
@@ -49,9 +52,6 @@ class AgentController:
         resume_path: Optional[str] = None,
         progress_callback: Optional[callable] = None
     ) -> OperationResult:
-        """
-        Start a new job search agent workflow.
-        """
         try:
             request = StartAgentRequest(
                 user_id=user_id,
@@ -78,6 +78,7 @@ class AgentController:
             return self._present_validation_exception(e)
 
 
+    # ---------- RESUME AGENT ----------
     async def handle_resume_agent(
         self,
         user_id: str,
@@ -85,9 +86,6 @@ class AgentController:
         apply_all: bool = True,
         progress_callback: Optional[callable] = None
     ) -> OperationResult:
-        """
-        Resume a paused job search workflow (for Premium users).
-        """
         try:
             request = ResumeAgentRequest(
                 user_id=user_id,
@@ -109,14 +107,13 @@ class AgentController:
         except ValueError as e:
             return self._present_validation_exception(e)
 
+
+    # ---------- KILL AGENT ----------
     async def handle_kill_agent(
         self,
         user_id: str,
         search_id: str
     ) -> OperationResult:
-        """
-        Emergency stop: Kill a running job search.
-        """
         try:
             request = KillAgentRequest(
                 user_id=user_id,
@@ -135,89 +132,124 @@ class AgentController:
             return self._present_validation_exception(e)
         
 
+    # ---------- GET JOBS FOR REVIEW ----------
     async def handle_get_jobs_for_review(
         self, 
         user_id: str, 
         search_id: str
-    ) -> Result:
-        """Get all GENERATED jobs for a search."""
-        result = await self.get_jobs_for_review_use_case.execute(
-            user_id=user_id,
-            search_id=search_id
-        )
-        
-        if result.is_failure:
-            return result
-        
-        # Convert domain entities to ViewModels
-        jobs = result.value
-        job_vms = [self.job_presenter.present_job(job) for job in jobs]
-        
-        return Result.success(job_vms)
+    ) -> OperationResult:
+        """Get all GENERATED jobs for a search, including cover letters."""
+        try:
+            # 🚨 Create DTO
+            request = GetJobsForReviewRequest(
+                user_id=user_id,
+                search_id=search_id
+            )
+            
+            # 🚨 Pass DTO to use case
+            result = await self.get_jobs_for_review_use_case.execute(request)
+            
+            if result.is_success:
+                jobs = result.value
+                job_vms = [self.job_presenter.present_job_for_review(job) for job in jobs]
+                return OperationResult.succeed(value=job_vms)
+            
+            return self._present_error(result)
 
+        except ValueError as e:
+            return self._present_validation_exception(e)
+
+
+    # ---------- UPDATE COVER LETTER ----------
     async def handle_update_cover_letter(
         self, 
         user_id: str, 
         job_id: str, 
         cover_letter: str
-    ) -> Result:
+    ) -> OperationResult:
         """Update cover letter for a job."""
-        result = await self.update_cover_letter_use_case.execute(
-            user_id=user_id,
-            job_id=job_id,
-            cover_letter=cover_letter
-        )
-        
-        if result.is_failure:
-            return result
-        
-        return Result.success({
-            "message": "Cover letter updated successfully",
-            "job_id": job_id
-        })
+        try:
+            # 🚨 Create DTO
+            request = UpdateCoverLetterRequest(
+                user_id=user_id,
+                job_id=job_id,
+                cover_letter=cover_letter
+            )
+            
+            # 🚨 Pass DTO to use case
+            result = await self.update_cover_letter_use_case.execute(request)
+            
+            if result.is_success:
+                return OperationResult.succeed(value={
+                    "message": "Cover letter updated successfully",
+                    "job_id": job_id
+                })
+            
+            return self._present_error(result)
 
+        except ValueError as e:
+            return self._present_validation_exception(e)
+
+
+    # ---------- APPROVE JOB ----------
     async def handle_approve_job(
         self, 
         user_id: str, 
         job_id: str
-    ) -> Result:
+    ) -> OperationResult:
         """Approve a single job for submission."""
-        result = await self.approve_job_use_case.execute(
-            user_id=user_id,
-            job_id=job_id
-        )
-        
-        if result.is_failure:
-            return result
-        
-        return Result.success({
-            "message": "Job approved successfully",
-            "job_id": job_id,
-            "status": "APPROVED"
-        })
+        try:
+            # 🚨 Create DTO
+            request = ApproveJobRequest(
+                user_id=user_id,
+                job_id=job_id
+            )
+            
+            # 🚨 Pass DTO to use case
+            result = await self.approve_job_use_case.execute(request)
+            
+            if result.is_success:
+                return OperationResult.succeed(value={
+                    "message": "Job approved successfully",
+                    "job_id": job_id,
+                    "status": "APPROVED"
+                })
+            
+            return self._present_error(result)
 
+        except ValueError as e:
+            return self._present_validation_exception(e)
+
+
+    # ---------- DISCARD JOB ----------
     async def handle_discard_job(
         self, 
         user_id: str, 
         job_id: str
-    ) -> Result:
+    ) -> OperationResult:
         """Reject/discard a job."""
-        result = await self.discard_job_use_case.execute(
-            user_id=user_id,
-            job_id=job_id
-        )
-        
-        if result.is_failure:
-            return result
-        
-        return Result.success({
-            "message": "Job discarded successfully",
-            "job_id": job_id,
-            "status": "REJECTED"
-        })
-        
+        try:
+            # 🚨 Create DTO
+            request = DiscardJobRequest(
+                user_id=user_id,
+                job_id=job_id
+            )
+            
+            # 🚨 Pass DTO to use case
+            result = await self.discard_job_use_case.execute(request)
+            
+            if result.is_success:
+                return OperationResult.succeed(value={
+                    "message": "Job discarded successfully",
+                    "job_id": job_id,
+                    "status": "REJECTED"
+                })
+            
+            return self._present_error(result)
 
-
+        except ValueError as e:
+            return self._present_validation_exception(e)
+        
 
     # --- Private Helpers ---
     def _present_error(self, result: Result) -> OperationResult:

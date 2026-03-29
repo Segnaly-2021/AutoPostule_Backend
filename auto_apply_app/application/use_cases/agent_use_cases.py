@@ -1,16 +1,21 @@
 # auto_apply_app/application/use_cases/agent_use_cases.py
 from dataclasses import dataclass
 from uuid import UUID
+import traceback 
 from typing import Optional, Callable
 
 from auto_apply_app.application.common.result import Result, Error
 from auto_apply_app.application.repositories.unit_of_work import UnitOfWork
 from auto_apply_app.application.service_ports.agent_port import AgentServicePort
 from auto_apply_app.application.dtos.agent_dtos import (
-  StartAgentRequest, 
-  ResumeAgentRequest, 
-  KillAgentRequest,
-  AgentResponse
+    StartAgentRequest, 
+    ResumeAgentRequest, 
+    KillAgentRequest,
+    AgentResponse,
+    GetJobsForReviewRequest,
+    UpdateCoverLetterRequest,
+    ApproveJobRequest,
+    DiscardJobRequest
 )
 from auto_apply_app.domain.entities.job_search import JobSearch
 from auto_apply_app.domain.entities.job_offer import JobOffer
@@ -117,6 +122,7 @@ class StartJobSearchAgentUseCase:
 
         except Exception as e:
             return Result.failure(Error.system_error(str(e)))
+        
 
 
 @dataclass
@@ -133,38 +139,59 @@ class ResumeJobApplicationUseCase:
         progress_callback: Optional[Callable] = None
     ) -> Result:
         try:
-            async with self.uow as uow:
-                params = request.to_execution_params()
-                user_id = params["user_id"]
-                search_id = params["search_id"]
-                apply_all = params["apply_all"]
+            params = request.to_execution_params()
+            
+            # 🚨 FIX 1: Explicitly grab strings to cast safely
+            user_id = params["user_id"]
+            search_id= params["search_id"]
+            apply_all = params["apply_all"]
 
-                # 1. Validation
+            async with self.uow as uow:
+                # 🚨 FIX 2: Cast to UUID for the User Repo
                 user = await uow.user_repo.get(user_id)
                 if not user:
-                    return Result.failure(Error.not_found("User", str(user_id)))
+                    return Result.failure(Error.not_found("User", user_id))
                 
-                subscription = await uow.subscription_repo.get_by_user_id(user_id)
+                subscription = await uow.subscription_repo.get_by_user_id(str(user.id))
                 if not subscription:
-                    return Result.failure(Error.not_found("Subscription", str(user_id)))
+                    return Result.failure(Error.not_found("Subscription", user_id))
                 
-                search_mission = await uow.search_repo.get(str(search_id))
+                search_mission = await uow.search_repo.get(search_id)
                 if not search_mission:
-                    return Result.failure(Error.not_found("JobSearch", str(search_id)))
+                    return Result.failure(Error.not_found("JobSearch", search_id))
                 
                 # 2. Authorization: Verify ownership
-                if search_mission.user_id != user_id:
+                if str(search_mission.user_id).strip() != str(user.id).strip():
                     return Result.failure(Error.unauthorized("You do not own this job search"))
                 
-                # ✅ 3. Fetch User Preferences
-                preferences = await uow.user_pref_repo.get_by_user_id(user_id)
+                # 3. Fetch User Preferences
+                preferences = await uow.user_pref_repo.get_by_user_id(user.id)
                 if not preferences:
-                    preferences = UserPreferences(user_id=user_id)
-                
-                # 4. Load & Approve Drafts
+                    preferences = UserPreferences(user_id=user.id)
+
+                # 4. Fetch Credentials
+                job_boards = preferences.active_boards 
+                board_credentials = {} 
+                board_names = [b for b, v in job_boards.items() if v] 
+
+                if preferences.is_full_automation:
+                    for board_name in board_names:
+                        # 🚨 FIX 3: Use the validated user.id (UUID) here
+                        credential = await uow.board_cred_repo.get_by_user_and_board(user.id, board_name)
+                        
+                        if not credential or not credential.login_encrypted:
+                            return Result.failure(Error.validation_error(
+                                f"Full automation requires credentials for {board_name}. "
+                                "Please configure credentials in Settings."
+                            ))
+                        
+                        board_credentials[board_name] = credential
+
+                # 5. Load & Approve Drafts
                 if apply_all:
-                    drafts = await uow.job_repo.get_by_search(
-                        search_id, 
+                    # 🚨 FIX 4: Reverted to your exact repository method name!
+                    drafts = await uow.job_repo.get_by_search_and_status(
+                        str(search_id).strip(), 
                         status=ApplicationStatus.GENERATED
                     )
                     
@@ -175,20 +202,25 @@ class ResumeJobApplicationUseCase:
                         job.status = ApplicationStatus.APPROVED
                     
                     await uow.job_repo.save_all(drafts)
+                    approved_jobs = drafts  
                 else:
-                    approved_jobs = await uow.job_repo.get_by_search(
-                        search_id, 
+                    # 🚨 FIX 4: Reverted to your exact repository method name!
+                    approved_jobs = await uow.job_repo.get_by_search_and_status(
+                        str(search_id).strip(), 
                         status=ApplicationStatus.APPROVED
                     )
                     if not approved_jobs:
                         return Result.failure(Error.validation_error("No approved jobs found"))
 
-            # 5. Resume the Agent
+            # 6. Resume the Agent
+            print(f"✅ Use Case validation complete. Waking up Master Agent...")
             await self.agent_service.resume_job_search(
                 user=user,
                 search=search_mission,
                 subscription=subscription,
                 preferences=preferences,
+                approved_jobs=approved_jobs,
+                credentials=board_credentials,
                 progress_callback=progress_callback
             )
 
@@ -197,9 +229,11 @@ class ResumeJobApplicationUseCase:
                 status="resumed",
                 message="Job application workflow resumed"
             ))
+            
         except Exception as e:
+            # 🚨 FIX 5: EXPOSE THE SILENT KILLERS
+            print(f"🚨 FATAL ERROR IN RESUME USE CASE:\n{traceback.format_exc()}")
             return Result.failure(Error.system_error(str(e)))
-
 
 @dataclass
 class KillJobSearchUseCase:
@@ -325,29 +359,21 @@ class SaveJobApplicationsUseCase:
         
 
 
+
+    
 @dataclass
 class GetJobsForReviewUseCase:
     """
     Fetch all jobs in GENERATED status for Premium user review.
-    
-    Premium Flow:
-    1. Agent pauses after analyzing jobs
-    2. User calls this endpoint to see generated applications
-    3. User edits cover letters, approves/discards jobs
-    4. User calls /resume to submit approved jobs
     """
     uow: UnitOfWork
 
-    async def execute(self, user_id: str, search_id: str) -> Result:
-        """
-        Args:
-            user_id: UUID of authenticated user (from JWT)
-            search_id: UUID of job search
-        
-        Returns:
-            Result containing List[JobOffer] or Error
-        """
+    async def execute(self, request: GetJobsForReviewRequest) -> Result:
         try:
+            # 🚨 Extract from DTO (adjust depending on if you use .to_execution_params() or direct properties)
+            user_id = str(request.user_id)
+            search_id = str(request.search_id)
+
             async with self.uow as uow:
                 # 1. Verify search exists and belongs to user
                 search = await uow.search_repo.get(UUID(search_id.strip()))
@@ -374,37 +400,23 @@ class GetJobsForReviewUseCase:
                 
         except Exception as e:
             return Result.failure(Error.system_error(str(e)))
-        
 
 
+      
 @dataclass
 class UpdateCoverLetterUseCase:
     """
     Update the cover letter for a job application.
-    
-    Validation:
-    - User must own the job (via search ownership)
-    - Job must be in GENERATED status (cannot edit submitted jobs)
-    - Cover letter must be valid (not empty, within length limits)
     """
     uow: UnitOfWork
 
-    async def execute(
-        self, 
-        user_id: str, 
-        job_id: str, 
-        cover_letter: str
-    ) -> Result:
-        """
-        Args:
-            user_id: UUID of authenticated user
-            job_id: UUID of job to update
-            cover_letter: New cover letter text
-        
-        Returns:
-            Result with success message or Error
-        """
+    async def execute(self, request: UpdateCoverLetterRequest) -> Result:
         try:
+            # 🚨 Extract from DTO
+            user_id = str(request.user_id)
+            job_id = str(request.job_id)
+            cover_letter = request.cover_letter  # or request.text based on your DTO
+
             # 1. Validate cover letter
             if not cover_letter or not cover_letter.strip():
                 return Result.failure(
@@ -461,26 +473,20 @@ class UpdateCoverLetterUseCase:
 
 
 
+
 @dataclass
 class ApproveJobUseCase:
     """
     Mark a job application as APPROVED for submission.
-    
-    Premium users can selectively approve jobs one-by-one.
-    Approved jobs will be submitted when user calls /resume endpoint.
     """
     uow: UnitOfWork
 
-    async def execute(self, user_id: str, job_id: str) -> Result:
-        """
-        Args:
-            user_id: UUID of authenticated user
-            job_id: UUID of job to approve
-        
-        Returns:
-            Result with success message or Error
-        """
+    async def execute(self, request: ApproveJobRequest) -> Result:
         try:
+            # 🚨 Extract from DTO
+            user_id = str(request.user_id)
+            job_id = str(request.job_id)
+
             async with self.uow as uow:
                 # 1. Fetch job
                 job = await uow.job_repo.get(UUID(job_id.strip()))
@@ -524,65 +530,24 @@ class ApproveJobUseCase:
                 
         except Exception as e:
             return Result.failure(Error.system_error(str(e)))
-        
 
-@dataclass
-class ConsumeAiCreditsUseCase:
-    """
-    Called by the Agent immediately after generating cover letters.
-    Deducts AI credits from the user's subscription wallet.
-    """
-    uow: UnitOfWork
 
-    async def execute(self, user_id: UUID, amount: int) -> Result:
-        try:
-            async with self.uow as uow:
-                # 1. Fetch Subscription
-                subscription = await uow.subscription_repo.get_by_user_id(str(user_id))
-                
-                if not subscription:
-                    return Result.failure(Error.not_found("Subscription", str(user_id)))
-                
-                # 2. Consume Credits (Domain logic handles validation)
-                try:
-                    subscription.consume_credits(amount)
-                except ValueError as e:
-                    # Catch the domain error (e.g., "Insufficient AI credits")
-                    return Result.failure(Error.validation_error(str(e)))
-                
-                # 3. Save the updated balance
-                await uow.subscription_repo.save(subscription)
-                # Note: call await uow.commit() here if your UoW requires explicit commits!
-                await uow.commit()
-                
-                return Result.success(subscription.ai_credits_balance)
 
-        except Exception as e:
-            return Result.failure(Error.system_error(str(e)))
-        
+
 
 @dataclass
 class DiscardJobUseCase:
     """
     Mark a job application as REJECTED.
-    
-    Premium users can discard unwanted jobs from the review queue.
-    Discarded jobs will NOT be submitted when user calls /resume.
-    
-    Note: Job is not deleted, just marked as REJECTED for audit trail.
     """
     uow: UnitOfWork
 
-    async def execute(self, user_id: str, job_id: str) -> Result:
-        """
-        Args:
-            user_id: UUID of authenticated user
-            job_id: UUID of job to discard
-        
-        Returns:
-            Result with success message or Error
-        """
+    async def execute(self, request: DiscardJobRequest) -> Result:
         try:
+            # 🚨 Extract from DTO
+            user_id = str(request.user_id)
+            job_id = str(request.job_id)
+
             async with self.uow as uow:
                 # 1. Fetch job
                 job = await uow.job_repo.get(UUID(job_id.strip()))
@@ -626,3 +591,43 @@ class DiscardJobUseCase:
                 
         except Exception as e:
             return Result.failure(Error.system_error(str(e)))
+        
+
+
+
+
+@dataclass
+class ConsumeAiCreditsUseCase:
+    """
+    Called by the Agent immediately after generating cover letters.
+    Deducts AI credits from the user's subscription wallet.
+    """
+    uow: UnitOfWork
+
+    async def execute(self, user_id: UUID, amount: int) -> Result:
+        try:
+            async with self.uow as uow:
+                # 1. Fetch Subscription
+                subscription = await uow.subscription_repo.get_by_user_id(str(user_id))
+                
+                if not subscription:
+                    return Result.failure(Error.not_found("Subscription", str(user_id)))
+                
+                # 2. Consume Credits (Domain logic handles validation)
+                try:
+                    subscription.consume_credits(amount)
+                except ValueError as e:
+                    # Catch the domain error (e.g., "Insufficient AI credits")
+                    return Result.failure(Error.validation_error(str(e)))
+                
+                # 3. Save the updated balance
+                await uow.subscription_repo.save(subscription)
+                # Note: call await uow.commit() here if your UoW requires explicit commits!
+                await uow.commit()
+                
+                return Result.success(subscription.ai_credits_balance)
+
+        except Exception as e:
+            return Result.failure(Error.system_error(str(e)))
+        
+

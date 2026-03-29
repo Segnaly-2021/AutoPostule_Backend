@@ -106,16 +106,18 @@ class JobSearchRepoDB(JobSearchRepository):
 
     def _map_to_entity(self, search_db: JobSearchDB) -> JobSearch:
         matched_jobs = {
-            offer_db.id: self._map_offer_to_entity(offer_db)
+            str(offer_db.id): self._map_offer_to_entity(offer_db)
             for offer_db in search_db.job_offers
         }
         search = JobSearch(
             user_id=search_db.user_id,
             job_title=search_db.job_title,
-            job_boards=search_db.job_boards, # ✅ FIXED: plural
+            # 🚨 FIX 1: Wrap in list() to strip SQLAlchemy InstrumentedList!
+            job_boards=list(search_db.job_boards) if search_db.job_boards else [],
             _matched_jobs=matched_jobs,
             search_status=search_db.search_status,
-            contract_types=search_db.contract_types,
+            # 🚨 FIX 2: Wrap in list() to strip SQLAlchemy InstrumentedList!
+            contract_types=list(search_db.contract_types) if search_db.contract_types else [],
             min_salary=search_db.min_salary,
             location=search_db.location,
             updated_at=search_db.updated_at,
@@ -130,7 +132,7 @@ class JobSearchRepoDB(JobSearchRepository):
             url=offer_db.url,
             form_url=offer_db.form_url,
             search_id=offer_db.search_id,
-            user_id=offer_db.user_id, # ✅ ADDED: Missing user_id
+            user_id=offer_db.user_id, 
             company_name=offer_db.company_name,
             job_title=offer_db.job_title,
             location=offer_db.location,
@@ -146,7 +148,9 @@ class JobSearchRepoDB(JobSearchRepository):
         )
         offer.id = offer_db.id
         object.__setattr__(offer, '_job_posting_id', offer_db.job_posting_id)
-        return 
+        
+        # 🚨 FIX 3: Actually return the object!
+        return offer
     
 
     

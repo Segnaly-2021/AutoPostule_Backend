@@ -19,6 +19,7 @@ class AuthRepoDB(AuthRepository):
         both the initial creation and future updates (like password changes).
         """
         db_auth = AuthUserDB(
+            id=auth_user.id, # 🚨 FIX 1: Explicitly pass the ID so merge() knows to UPDATE!
             user_id=auth_user.user_id,
             email=auth_user.email,
             password_hash=auth_user.password_hash,
@@ -40,8 +41,11 @@ class AuthRepoDB(AuthRepository):
         return self._map_to_entity(db_auth) if db_auth else None
 
     async def get_by_id(self, user_id: UUID) -> Optional[AuthUser]:
-        # get() is a highly optimized way to find by Primary Key
-        db_auth = await self.session.get(AuthUserDB, user_id)
+        # 🚨 FIX 2: session.get() only works on Primary Keys. 
+        # Since user_id is now just a unique column, we MUST use select().
+        stmt = select(AuthUserDB).where(AuthUserDB.user_id == user_id)
+        result = await self.session.execute(stmt)
+        db_auth = result.scalar_one_or_none()
         
         return self._map_to_entity(db_auth) if db_auth else None
 
@@ -57,5 +61,6 @@ class AuthRepoDB(AuthRepository):
             updated_at=db_auth.updated_at,
             last_login=db_auth.last_login
         )
-        auth.id = db_auth.user_id
+        # 🚨 FIX 3: Map the real ID, not the user_id!
+        auth.id = db_auth.id 
         return auth

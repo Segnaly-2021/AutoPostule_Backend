@@ -17,7 +17,7 @@ from auto_apply_app.infrastructures.api.schema.agent_schema import (
     ResumeAgentRequest,
     AgentViewModel,
 )
-from auto_apply_app.interfaces.viewmodels.job_offer_vm import JobOfferViewModel
+from auto_apply_app.interfaces.viewmodels.job_offer_vm import JobReviewViewModel
 
 router = APIRouter()
 
@@ -229,7 +229,7 @@ async def kill_job_search_agent(
 
 @router.get(
     "/{search_id}/jobs",
-    response_model=List[JobOfferViewModel],
+    response_model=List[JobReviewViewModel],
     status_code=status.HTTP_200_OK,
     summary="Get jobs pending review (Premium)",
 )

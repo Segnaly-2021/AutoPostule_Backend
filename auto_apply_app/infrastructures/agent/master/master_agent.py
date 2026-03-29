@@ -4,9 +4,11 @@ import io # 🚨 Needed for RAM reading
 import json
 import asyncio
 import traceback
+import dataclasses
+from typing import Any
 from uuid import UUID
 import pdfplumber
-from typing import Callable, Optional, Dict, Any
+from typing import Callable, Optional, Dict
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import Send
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -14,6 +16,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
+
 
 
 from auto_apply_app.application.service_ports.agent_port import AgentServicePort
@@ -369,12 +372,15 @@ class MasterAgent(AgentServicePort):
         if not save_result.is_success:
             print(f"⚠ Error saving drafts: {save_result.error.message}")
 
+       # 🚨 NEW: Emit the pause signal here BEFORE LangGraph freezes!
+        if subscription and subscription.account_type.name == "PREMIUM":
+            await self._emit(state, stage="Waiting for User Review", status="paused")
+
         # Return to State
         return {
             "processed_offers": processed_offers
         }
     
-
 
     
 
@@ -384,16 +390,16 @@ class MasterAgent(AgentServicePort):
         """Groups approved jobs by board and launches workers in parallel for submission."""
         print("--- [Master] Dispatching Submit Missions ---")
 
+        # ... your existing setup/print code ...
         processed_offers = state.get("processed_offers", [])
-
-        # We only want to dispatch workers for jobs that are actually approved
-        approved_jobs = [job for job in processed_offers if job.status == ApplicationStatus.APPROVED]
-
+        
+        approved_jobs = [job for job in processed_offers if job and job.status == ApplicationStatus.APPROVED]
+                
         if not approved_jobs:
             print("⚠️ No approved jobs found in the queue. Ending graph.")
-            return [] # Returns empty list, safely ending the graph
+            return [] 
 
-        # Figure out which boards we actually need to spin up workers for
+       
         boards_needed = set(job.job_board for job in approved_jobs)
 
         sends = []
@@ -426,10 +432,12 @@ class MasterAgent(AgentServicePort):
     # --- NODE 5: The Final Save ---
     async def finalize_batch(self, state: JobApplicationState):
         """Final cleanup and state synchronization."""
+
         await self._emit(state, "Saving Final Results")
         print("--- [Master] Finalizing Batch ---")
         
         user_id = state["user"].id
+        
         
         # 🚨 1. CHECK KILL SWITCH BEFORE RESETTING
         is_killed = False
@@ -455,6 +463,7 @@ class MasterAgent(AgentServicePort):
 
         # 4. THE NEW CLEANUP PHASE
         search_id = state["job_search"].id
+        
         print(f"🧹 Sweeping database for leftover APPROVED (failed) jobs for search {search_id}...")
         
         cleanup_result = await self.cleanup_unsubmitted.execute(search_id)
@@ -518,9 +527,11 @@ class MasterAgent(AgentServicePort):
         Dummy node serving strictly as the LangGraph interruption point.
         Execution pauses BEFORE this node runs.
         """
-        await self._emit(state, "Waiting for User Review")
+        
         print("👤 [Master] Manual review approved. Resuming workflow...")
         return  {"status": "human_review_complete"}
+
+        
 
     # --- 3. THE HUB (Dummy Node) ---
     async def prepare_submit(self, state: JobApplicationState):
@@ -539,6 +550,8 @@ class MasterAgent(AgentServicePort):
         print("🎉 [Master] Emitting final completion signal.")
         await self._emit(state, stage="Job Search Complete", status="finished")
         return {"status": "finished"}
+
+
 
     # --- TERMINAL NODE 2: Killed Notification ---
     async def stop_agent_notification(self, state: JobApplicationState):
@@ -733,44 +746,93 @@ class MasterAgent(AgentServicePort):
             traceback.print_exc()
 
 
+    def _clone_domain_entity(self, obj: Any) -> Any:
+            """
+            Deep clones a dataclass, recursively annihilating all SQLAlchemy 
+            InstrumentedLists, InstrumentedDicts, and hidden states.
+            """
+            if obj is None:
+                return None
+            
+            # 🚨 WASH LISTS: Converts SQLAlchemy InstrumentedList to pure list
+            if isinstance(obj, list) or type(obj).__name__ == 'InstrumentedList':
+                return [self._clone_domain_entity(item) for item in obj]
+                
+            # 🚨 WASH DICTS: Converts SQLAlchemy InstrumentedDict to pure dict
+            if isinstance(obj, dict) or type(obj).__name__ == 'InstrumentedDict':
+                # 🚨 BUGFIX: Force all keys to strings (str(k)) so msgpack doesn't crash on UUID keys!
+                return {str(k): self._clone_domain_entity(v) for k, v in obj.items()}
+                
+            # 🚨 WASH DATACLASSES
+            if dataclasses.is_dataclass(obj):
+                cls = obj.__class__
+                # Create a completely blank shell to bypass ORM __init__ hooks
+                pure_obj = cls.__new__(cls)
+                
+                # Recursively wash ONLY the official dataclass fields
+                for f in dataclasses.fields(cls):
+                    # Safely get the value
+                    val = getattr(obj, f.name, None)
+                    # Wash the value and inject it into the pure shell
+                    setattr(pure_obj, f.name, self._clone_domain_entity(val))
+                    
+                return pure_obj
+                
+            # Return standard primitives (strings, ints, enums, UUIDs) untouched
+            return obj
+
 
     async def resume_job_search(
-        self,
-        user: User,
-        search: JobSearch,
-        preferences: UserPreferences, # Need this to know which boards to register
-        progress_callback: Optional[Callable] = None
-    ) -> None:
-        print(f"🔄 Resuming job search {search.id} for user: {user.email}")
+            self,
+            user: User,
+            search: JobSearch,
+            subscription: UserSubscription,     # 🚨 Passed from Use Case
+            preferences: UserPreferences,       # 🚨 Passed from Use Case
+            approved_jobs: list,                # 🚨 Passed from Use Case
+            credentials: Optional[Dict[str, BoardCredential]] = None, # 🚨 Passed from Use Case
+            progress_callback: Optional[Callable] = None
+        ) -> None:
+            print(f"🔄 Resuming job search {search.id} for user: {user.email}")
 
-        # 🚨 FORCE CLEAN SLATE ON BOOT
-        await self.reset_agent_state.execute(user.id)
-        
-        if not self._checkpointer:
-            self._checkpointer = await Config.get_checkpointer()
+            await self.reset_agent_state.execute(user.id)
+            
+            if not self._checkpointer:
+                self._checkpointer = await Config.get_checkpointer()
 
-        app = self.get_graph()
-        config = {"configurable": {"thread_id": f"search_{search.id}"}}
-        
+            app = self.get_graph()
+            config = {"configurable": {"thread_id": f"search_{search.id}"}}
 
-        # Register workers for the Submit phase
-        active_instances = []
-        for board, is_active in preferences.active_boards.items():
-            if is_active:
-                worker = self._get_worker_for_board(board.lower())
-                worker._progress_callback = progress_callback # 🚨 Assign callback to worker
-                active_instances.append(worker)
+            print("🔄 Stripping all entities to raw dictionaries for LangGraph...")
 
-        self._active_workers[str(search.id)] = active_instances
-        self._progress_callback = progress_callback # 🚨 Assign callback to Master
-        
-        try:
-            # 🚨 Let LangGraph run freely
-            async for _ in app.astream(None, config, subgraphs=True):
-                pass
-        finally:
-            # 🚨 Cleanup
-            self._progress_callback = None
-            for worker in active_instances:
-                worker._progress_callback = None
-            self._active_workers.pop(str(search.id), None)
+            # 🚨 INJECT PURE PRIMITIVES INTO STATE
+            await app.aupdate_state(
+                config, 
+                {
+                    "user": user,
+                    "job_search": search,
+                    "subscription": subscription,
+                    "preferences": preferences,
+                    "credentials": credentials,
+                    "processed_offers": approved_jobs
+                },
+                as_node="human_review" 
+            )
+
+            active_instances = []
+            for board, is_active in preferences.active_boards.items():
+                if is_active:
+                    worker = self._get_worker_for_board(board.lower())
+                    worker._progress_callback = progress_callback 
+                    active_instances.append(worker)
+
+            self._active_workers[str(search.id)] = active_instances
+            self._progress_callback = progress_callback 
+            
+            try:
+                async for _ in app.astream(None, config, subgraphs=True):
+                    pass
+            finally:
+                self._progress_callback = None
+                for worker in active_instances:
+                    worker._progress_callback = None
+                self._active_workers.pop(str(search.id), None)

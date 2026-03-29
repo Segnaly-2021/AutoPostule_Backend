@@ -279,7 +279,7 @@ class WelcomeToTheJungleWorker:
             print(f"➡️ [WTTJ] Moving to page {page_number + 1}...")
             
             await next_button.click()
-            await self.page.wait_for_load_state("domcontentloaded")
+            await self.page.wait_for_load_state("networkidle")
             await self.page.wait_for_timeout(2000)
             await self._handle_cookies()
             return True
@@ -384,7 +384,7 @@ class WelcomeToTheJungleWorker:
         # 2. Initialize Browser
         self.playwright = await async_playwright().start()
         self.browser = await self.playwright.chromium.launch(
-            headless= not preferences.browser_headless, 
+            headless= preferences.browser_headless, 
             args=['--disable-blink-features=AutomationControlled']
         )
         
@@ -443,7 +443,8 @@ class WelcomeToTheJungleWorker:
             self.page = await self.context.new_page()
             
             # WTTJ usually needs you to hit the base URL to hydrate the cookies properly
-            await self.page.goto(self.base_url, wait_until="domcontentloaded")
+            await self.page.goto(self.base_url, wait_until="networkidle")
+            await self.page.wait_for_timeout(10000)
             await self._handle_cookies()
             
             return {}
@@ -459,6 +460,8 @@ class WelcomeToTheJungleWorker:
         try:
              # 1. Wait until the network is actually quiet
             await self.page.goto(self.base_url, wait_until="networkidle", timeout=60000)
+
+            await self.page.wait_for_timeout(15000)
             
             # 2. Handle Cookies (important for HelloWork to stop blocking the view)
             await self._handle_cookies()  
@@ -491,7 +494,12 @@ class WelcomeToTheJungleWorker:
         # STRATEGY 1: Full Automation
         if prefs.is_full_automation and creds["wttj"]:
             print("🔐 Full Automation: Attempting auto-login...")
+
+
             try:
+                
+                await self.page.wait_for_timeout(30000)
+                
                 await self.page.get_by_test_id("not-logged-visible-login-button").click()
                 await self.page.wait_for_selector('input[id="email_login"]', state="visible", timeout=5000)
 
@@ -580,7 +588,7 @@ class WelcomeToTheJungleWorker:
             #await self.page.keyboard.press("Enter")
             
             # 4. Wait for results
-            await self.page.wait_for_timeout(3000)
+            await self.page.wait_for_timeout(5000)
             await self._handle_cookies()
             
             # return {
@@ -833,7 +841,7 @@ class WelcomeToTheJungleWorker:
             print(f"🤖 Analyzing: {offer.job_title}")
             try:
                 # A. Navigation & Scrape
-                await self.page.goto(offer.url, wait_until="domcontentloaded")
+                await self.page.goto(offer.url, wait_until="networkidle")
                 await self._handle_cookies()
                 
                 try:

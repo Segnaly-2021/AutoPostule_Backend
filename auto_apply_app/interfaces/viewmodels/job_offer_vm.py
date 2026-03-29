@@ -24,6 +24,18 @@ class JobOfferViewModel:
     appliedDate: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class JobReviewViewModel:
+    """ViewModel specifically for the Premium Review interface."""
+    id: str
+    company_name: str
+    job_title: str
+    location: Optional[str]
+    cover_letter: str
+    ranking: int
+    board: str
+    status: str
+
 
 @dataclass(frozen=True)
 class DashboardViewModel:

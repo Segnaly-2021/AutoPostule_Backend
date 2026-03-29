@@ -225,7 +225,7 @@ class HelloWorkWorker:
 
             print(f"➡️ [HW] Moving to page {page_number + 1}...")            
             await next_button.click()
-            await self.page.wait_for_load_state("domcontentloaded")
+            await self.page.wait_for_load_state("networkidle")
             await self.page.wait_for_timeout(3000)
             await self._handle_cookies()
             return True
@@ -333,7 +333,6 @@ class HelloWorkWorker:
                 self.context = await self.browser.new_context(
                     storage_state=session_path,
                     user_agent=real_user_agent,
-                    #viewport={"width": 1920, "height": 1080},
                     device_scale_factor=1,
                     has_touch=False,
                     is_mobile=False
@@ -341,7 +340,7 @@ class HelloWorkWorker:
             else:
                 self.context = await self.browser.new_context(
                     user_agent=real_user_agent,
-                    #viewport={"width": 1920, "height": 1080}
+                    
                 )
 
             # 🚨 2. The NEW V2 Stealth Fix: Apply it to the entire context
@@ -351,6 +350,7 @@ class HelloWorkWorker:
             # 3. Create the page and navigate
             self.page = await self.context.new_page()
             await self.page.goto(self.base_url, wait_until="networkidle", timeout=60000)
+            await self.page.wait_for_timeout(30000)
             await self._handle_cookies()
             
             return {}
@@ -363,6 +363,8 @@ class HelloWorkWorker:
         try:
             # 1. Wait until the network is actually quiet
             await self.page.goto(self.base_url, wait_until="networkidle", timeout=60000)
+
+            await self.page.wait_for_timeout(10000)
             
             # 2. Handle Cookies (important for HelloWork to stop blocking the view)
             await self._handle_cookies()  
@@ -387,6 +389,10 @@ class HelloWorkWorker:
         if prefs.is_full_automation and creds["hellowork"]:
             print("🔐 Full Automation: Attempting auto-login...")
             try:
+
+                await self.page.wait_for_timeout(30000)
+
+
                 await self.page.locator('[data-cy="headerAccountMenu"]').click()
                 await self.page.locator('[data-cy="headerAccountLogIn"]').click()
 
@@ -400,11 +406,11 @@ class HelloWorkWorker:
                 await self.page.locator('input[name="password2"]').fill(pass_plain)                
                 
                 await self.page.locator('button[type="button"][class="profile-button"]').click()
-                await self.page.wait_for_timeout(30000)
+                await self.page.wait_for_timeout(45000)
                 await self.page.wait_for_load_state("networkidle")
                 await self.page.goto("https://www.hellowork.com/fr-fr/")
 
-                
+                await self.page.wait_for_timeout(5000)
 
                 await self._save_auth_state(user_id) # 🚨 V2 SAVE SESSION
                 print("✅ Auto-login successful")                
@@ -441,6 +447,9 @@ class HelloWorkWorker:
 
         print(f"--- [HW] Searching for: {job_title} ---")
         try:
+
+            await self.page.wait_for_timeout(5000)
+
             await self.page.locator('input[id="k"]').fill(job_title)
             if location and location.strip() != "":
                 await self.page.locator('input[id="l"]').fill(location)
@@ -462,6 +471,8 @@ class HelloWorkWorker:
     async def get_matched_jobs(self, state: JobApplicationState):
         await self._emit(state,"Extracting Job Data")
         print("--- [HW] Scraping Jobs  ---")
+
+
         user_id = state["user"].id
         search_id = state["job_search"].id
         found_job_entities = []
@@ -511,7 +522,7 @@ class HelloWorkWorker:
                             continue
 
                         await card.click()
-                        await self.page.wait_for_load_state("domcontentloaded")
+                        await self.page.wait_for_load_state("networkidle")
                         await self.page.wait_for_timeout(1000)  
                         current_url = self.page.url      
                             
@@ -519,7 +530,7 @@ class HelloWorkWorker:
                         fast_hash = self._generate_fast_hash(raw_company, raw_title, str(user_id))
                         if fast_hash in ignored_hashes:
                             print(f"     ⏩ Skipping duplicate: {raw_title} at {raw_company}")
-                            await self.page.goto(search_url, wait_until="domcontentloaded")
+                            await self.page.goto(search_url, wait_until="networkidle")
                             continue
 
                         # Extract Description
@@ -555,13 +566,13 @@ class HelloWorkWorker:
                                 
                                 found_job_entities.append(offer)
                                 
-                        await self.page.goto(search_url, wait_until="domcontentloaded")
+                        await self.page.goto(search_url, wait_until="networkidle")
                         await self.page.wait_for_timeout(1000)
                         
                     except Exception as e:
                         print(f"⚠️ Error processing card {i} on page {page_number}: {e}")
                         try:
-                            await self.page.goto(search_url, wait_until="domcontentloaded")
+                            await self.page.goto(search_url, wait_until="networkidle")
                         except Exception: 
                             pass
                         continue
@@ -622,7 +633,7 @@ class HelloWorkWorker:
             print(f"🤖 Analyzing: {offer.job_title}")
             try:
                 # A. Navigation & Scrape
-                await self.page.goto(offer.url, wait_until="domcontentloaded")
+                await self.page.goto(offer.url, wait_until="networkidle")
                 #await self._handle_cookies()
                 
                 try:

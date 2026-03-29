@@ -3,6 +3,8 @@ import hashlib
 import json
 from typing import Optional
 from langgraph.graph import StateGraph, END
+# from uuid import UUID
+# from datetime import datetime
 from langchain_core.messages import SystemMessage, HumanMessage
 from playwright_stealth import Stealth
 from playwright.async_api import async_playwright, Page, Browser, BrowserContext, Playwright, Locator
@@ -361,11 +363,12 @@ class ApecWorker():
         """Used by the SUBMIT track to boot directly into an authenticated browser."""
         print("--- [APEC] Booting Browser (Session Injection) ---")
         user_id = str(state["user"].id)
+     
         
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless=state["preferences"].browser_headless,
+                headless= state["preferences"].browser_headless,
                 args=['--disable-blink-features=AutomationControlled']
             )
             
@@ -414,13 +417,15 @@ class ApecWorker():
         try:
             # 1. Wait until the network is actually quiet
             await self.page.goto(self.base_url, wait_until="networkidle", timeout=60000)
+
+            await self.page.wait_for_timeout(15000)
             
             # 2. Handle Cookies (important for HelloWork to stop blocking the view)
             await self._handle_cookies()  
             
             # 3. EXTRA SAFETY: Wait for a specific element that proves the page is ready
             # e.g., the search bar or the logo
-            await self.page.wait_for_selector('a[aria-label="Mon espace"]', state="visible", timeout=30000)
+            await self.page.wait_for_selector('li[id="header-monespace"]', state="visible", timeout=30000)
             
             return {}
         except Exception as e:
@@ -446,13 +451,17 @@ class ApecWorker():
                 login_plain = await self.encryption_service.decrypt(creds["apec"].login_encrypted)
                 pass_plain = await self.encryption_service.decrypt(creds["apec"].password_encrypted)
 
+                
+                await self.page.wait_for_timeout(30000)
                 try:
-                    await self.page.wait_for_selector('a[aria-label="Mon espace"]', state="visible")
+                    await self.page.wait_for_selector('li[id="header-monespace"]', state="visible")
                 except Exception:
                     print("Reloading the page because the landing page button is absent")
                     await self.page.reload(wait_until="networkidle")
                 
-                await self.page.locator('a[aria-label="Mon espace"]').click()
+                
+                await self.page.locator('li[id="header-monespace"]').click()
+                await self.page.wait_for_timeout(5000)
 
                 count = 0
 
@@ -460,20 +469,16 @@ class ApecWorker():
                     try:
                         await self.page.wait_for_selector('input[id="emailid"]', state="visible")
                         await self.page.locator('input[id="emailid"]').fill(login_plain)
-                        await self.page.locator('input[id="password"]').fill(pass_plain)                    
+                        await self.page.locator('input[id="password"]').fill(pass_plain) 
+                        await self.page.wait_for_timeout(5000)                   
                         await self.page.locator('button[type="submit"][value="Login"]').first.click()
                     except Exception as e:
                         count += 1
                         print(f"Login form error: {e}") 
                         continue
-                    break  
-
-                await self.page.wait_for_selector('[aria-label="menu"]', state="visible", timeout=10000)            
-
-                await self.page.locator('[aria-label="menu"]').click()
-                await self.page.locator('[href="/candidat.html"]').click()
-                        
-                await self.page.wait_for_load_state("networkidle")      
+                    break                
+                await self.page.wait_for_timeout(20000)      
+                await self.page.goto(f"{self.base_url}candidat.html", wait_until="networkidle")      
                 print("✅ Auto-login successful")
 
                 # 🚨 [NEW] Save the session cookies!
@@ -520,6 +525,7 @@ class ApecWorker():
 
         print("🔎 [APEC] Starting Search Process")       
         try:
+            await self.page.wait_for_timeout(10000)
             await self._handle_cookies()
             # Call the filter helper which handles job title + filters
             await self._apply_filters(job_title, contract_types, min_salary)    
@@ -584,7 +590,7 @@ class ApecWorker():
         found_job_entities = []
         
         # 🚨 NEW: Get the target limit calculated by the Master
-        worker_job_limit = state.get("worker_job_limit", 5) 
+        worker_job_limit = 2 or state.get("worker_job_limit", 5) 
         
         # 🚨 REQUIREMENT 2: Fetch Ignored Hashes
         hash_result = await self.get_ignored_hashes.execute(user_id=user_id, days=14)
@@ -918,25 +924,30 @@ class ApecWorker():
     # --- NODE 7: Submit & Save (APEC) ---
     async def submit_applications(self, state: JobApplicationState):
         await self._emit(state, "Submitting Applications")
-        print("--- [APEC] Submitting Applications ---")        
-        # 1. Get Inputs from State
-        # 🚨 BUG FIX: Pull from processed_offers so we get the Gemini Cover Letters!
-        jobs_to_submit = state.get("processed_offers", [])
-        user = state["user"] # The User Entity
+        print("--- [APEC] Submitting Applications ---")
 
-        if not jobs_to_submit:
-            print("No jobs in submission queue.")
-            # 🚨 CIRCUIT BREAKER: Empty queue
-            return {"error": "No analyzed jobs were found in the submission queue."}
+         # 1. Get Inputs from State's "Inbox"
+        jobs_to_process = state.get("processed_offers", [])
+        user = state["user"] 
+
+        # 🚨 V2 REQUIREMENT: Filter to make sure this worker ONLY applies to APEC jobs
+        # that have been explicitly APPROVED by the user (or auto-approved for basic).
+        apec_jobs = [job for job in jobs_to_process if job.job_board == JobBoard.APEC and job.status == ApplicationStatus.APPROVED]
+
+        if not apec_jobs:
+            print("No approved APEC jobs in submission queue.")
+            return {"status": "no_apec_jobs_to_submit"}
 
         successful_submissions = []
+
+        
         i = 0
-        for offer in jobs_to_submit:
-            print(f"📝 Applying to: {offer.job_title}: {i+1} out of {len(jobs_to_submit)}")
+        for offer in apec_jobs:
+            print(f"📝 Applying to: {offer.job_title}: {i+1} out of {len(apec_jobs)}")
             try:
                 # 🚨 V2 WAF BYPASS: Commit early, don't wait for networkidle
                 await self.page.goto(offer.form_url, wait_until='commit', timeout=60000)
-                await self.page.wait_for_timeout(2000)
+                await self.page.wait_for_timeout(5000)
 
                 # B. CV Upload (APEC Specific Logic)
                 # 🚨 Wait for the CV container to prove the form actually loaded past the WAF
@@ -1038,7 +1049,7 @@ class ApecWorker():
                         i += 1
                         continue 
 
-                    print("Application submitted")                    
+                    print(" ✅  Application submitted")                    
                     offer.status = ApplicationStatus.SUBMITTED
                     successful_submissions.append(offer)
                 else:

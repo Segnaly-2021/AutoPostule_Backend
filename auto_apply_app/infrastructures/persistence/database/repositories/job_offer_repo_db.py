@@ -32,6 +32,7 @@ class JobOfferRepoDB(JobOfferRepository):
             posting_id = None
 
         offer_db = JobOfferDB(
+            id=offer.id,
             url=offer.url,
             form_url=offer.form_url,
             search_id=offer.search_id,
@@ -298,8 +299,8 @@ class JobOfferRepoDB(JobOfferRepository):
         # 🚨 FIX 4: Safely inject aggregates using == True (prevents 'is True' parse errors)
         agg_stmt = period_stmt.with_only_columns(
             func.count(JobOfferDB.id).label("period_count"),
-            func.sum(case((JobOfferDB.has_response == True, 1), else_=0)).label("response_count"),
-            func.sum(case((JobOfferDB.has_interview == True, 1), else_=0)).label("interview_count"),
+            func.sum(case((JobOfferDB.has_response is True, 1), else_=0)).label("response_count"),
+            func.sum(case((JobOfferDB.has_interview is True, 1), else_=0)).label("interview_count"),
         ).order_by(None)
         
         agg_result = await self.session.execute(agg_stmt)

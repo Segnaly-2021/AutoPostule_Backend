@@ -22,15 +22,7 @@ class UserPreferencesRepoDB(UserPreferencesRepository): # ✅ Added inheritance
         pref_db = result.scalar_one_or_none()
         return self._map_to_entity(pref_db) if pref_db else None
 
-    async def save(self, preferences: UserPreferences) -> None:
-        pref_db = UserPreferencesDB(
-            user_id=preferences.user_id,
-            is_full_automation=preferences.is_full_automation,
-            active_boards=preferences.active_boards,
-            creativity_level=preferences.creativity_level,
-            ai_model=preferences.ai_model, # ✅ Added ai_model
-        )
-        await self.session.merge(pref_db)
+    
 
     # ✅ Added missing delete method
     async def delete(self, user_id: UUID) -> None:
@@ -39,13 +31,25 @@ class UserPreferencesRepoDB(UserPreferencesRepository): # ✅ Added inheritance
         )
         # Note: session.commit() is handled by your Unit of Work
 
+    async def save(self, preferences: UserPreferences) -> None:
+        pref_db = UserPreferencesDB(
+            id=preferences.id, # 🚨 FIX 1: Crucial for merge()
+            user_id=preferences.user_id,
+            is_full_automation=preferences.is_full_automation,
+            active_boards=preferences.active_boards,
+            creativity_level=preferences.creativity_level,
+            ai_model=preferences.ai_model, 
+        )
+        await self.session.merge(pref_db)
+
     def _map_to_entity(self, pref_db: UserPreferencesDB) -> UserPreferences:
         pref = UserPreferences(
             user_id=pref_db.user_id,
             is_full_automation=pref_db.is_full_automation,
-            active_boards=pref_db.active_boards,
+            # 🚨 FIX 3: Strip InstrumentedDict before it hits LangGraph!
+            active_boards=dict(pref_db.active_boards) if pref_db.active_boards else {},
             creativity_level=pref_db.creativity_level,
-            ai_model=pref_db.ai_model, # ✅ Added ai_model
+            ai_model=pref_db.ai_model, 
         )
 
         pref.id = pref_db.id
