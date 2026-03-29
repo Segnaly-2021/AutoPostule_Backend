@@ -87,7 +87,9 @@ class RegisterUserUseCase:
                     account_type=ClientType.BASIC, 
                     is_active=True,
                     ai_credits_balance=1500,
-                    current_period_end=datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=30) # 30-day trial for new users                 
+                    current_period_start=datetime.datetime.now(datetime.timezone.utc),
+                    next_billing_date=datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=7),
+                    current_period_end=datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=7), # 30-day trial for new users                 
                     
                 )
 
