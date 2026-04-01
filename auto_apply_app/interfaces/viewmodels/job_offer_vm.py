@@ -16,8 +16,8 @@ class JobOfferViewModel:
     interview: bool
     response: bool
 
-    cover_letter: Optional[str] = None # Just added
-    job_url: str                       # Just added
+    cover_letter: str # Just added
+    job_url: str      # Just added
 
 
     board: str  # "APEC", "HELLOWORK", "WTTJ"
