@@ -191,6 +191,8 @@ class WebJobPresenter(JobPresenter):
             id=job.id,
             company=job.company,
             title=job.title,
+            cover_letter=job.coverLetter, 
+            job_url=job.url,           
             location=job.location,
             interview=job.interview,
             response=job.response,     

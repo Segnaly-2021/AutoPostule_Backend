@@ -388,6 +388,11 @@ class HelloWorkWorker:
         
         if prefs.is_full_automation and creds["hellowork"]:
             print("🔐 Full Automation: Attempting auto-login...")
+
+            login_plain = None
+            pass_plain = None
+
+
             try:
 
                 await self.page.wait_for_timeout(30000)
@@ -418,6 +423,15 @@ class HelloWorkWorker:
                 return {}
             except Exception as e:
                 return {"error": f"Failed to log into HelloWork. Check credentials: {e}."}
+            
+            finally:
+                # 🚨 THE MOST CRITICAL PART OF THE FILE
+                # Since keep_first preserves the encrypted creds in the global state,
+                # we MUST aggressively murder the decrypted plaintext variables in local RAM.
+                if login_plain is not None:
+                    del login_plain
+                if pass_plain is not None:
+                    del pass_plain
 
         else:
             try:

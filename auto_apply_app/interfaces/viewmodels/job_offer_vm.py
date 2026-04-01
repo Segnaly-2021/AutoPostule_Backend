@@ -15,7 +15,11 @@ class JobOfferViewModel:
     location: Optional[str]
     interview: bool
     response: bool
-    
+
+    cover_letter: Optional[str] = None # Just added
+    job_url: str                       # Just added
+
+
     board: str  # "APEC", "HELLOWORK", "WTTJ"
     status: str  # "FOUND", "GENERATED", "APPROVED", "SUBMITTED", "REJECTED"
     

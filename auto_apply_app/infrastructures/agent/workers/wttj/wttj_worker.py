@@ -495,6 +495,8 @@ class WelcomeToTheJungleWorker:
         if prefs.is_full_automation and creds["wttj"]:
             print("🔐 Full Automation: Attempting auto-login...")
 
+            login_plain = None
+            pass_plain = None
 
             try:
                 
@@ -535,6 +537,16 @@ class WelcomeToTheJungleWorker:
                 print(f"❌ Auto-login failed: {e}")
                 # 🚨 RETURN ERROR DICT (Don't raise exception)
                 return {"error": "Failed to log into Welcome to the Jungle. Please check your credentials."}
+
+
+            finally:
+                # 🚨 THE MOST CRITICAL PART OF THE FILE
+                # Since keep_first preserves the encrypted creds in the global state,
+                # we MUST aggressively murder the decrypted plaintext variables in local RAM.
+                if login_plain is not None:
+                    del login_plain
+                if pass_plain is not None:
+                    del pass_plain
 
         # STRATEGY 2: Semi-Automation (Manual)
         else:

@@ -447,6 +447,10 @@ class ApecWorker():
 
         if prefs.is_full_automation and creds["apec"]:
             print("🔐 Full Automation: Attempting auto-login...")
+
+            login_plain = None
+            pass_plain = None
+
             try:
                 login_plain = await self.encryption_service.decrypt(creds["apec"].login_encrypted)
                 pass_plain = await self.encryption_service.decrypt(creds["apec"].password_encrypted)
@@ -492,6 +496,15 @@ class ApecWorker():
                 # 🚨 Return error instead of raising exception
                 return {"error": "Login failed. Please check your APEC credentials in your settings."}
 
+
+            finally:
+                # 🚨 THE MOST CRITICAL PART OF THE FILE
+                # Since keep_first preserves the encrypted creds in the global state,
+                # we MUST aggressively murder the decrypted plaintext variables in local RAM.
+                if login_plain is not None:
+                    del login_plain
+                if pass_plain is not None:
+                    del pass_plain
         else:
             print("👋 Semi-Automation: Requesting User Action")
             try:
