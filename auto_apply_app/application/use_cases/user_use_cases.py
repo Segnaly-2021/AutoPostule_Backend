@@ -62,6 +62,7 @@ class RegisterUserUseCase:
                     lastname=params["lastname"],
                     email=params["email"],
                     phone_number=None,
+                    address=None,
                     school_type=None,
                     graduation_year=None,
                     major=None,

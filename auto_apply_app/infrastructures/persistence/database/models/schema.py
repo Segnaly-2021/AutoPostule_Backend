@@ -20,6 +20,7 @@ class UserDB(Base):
     lastname: Mapped[str] = mapped_column(String(100))
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     is_active: Mapped[bool] = mapped_column(default=True)
+    address: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # New field
     resume_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     resume_file_name: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     phone_number: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)

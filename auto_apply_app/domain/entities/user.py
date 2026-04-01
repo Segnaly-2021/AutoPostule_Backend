@@ -9,6 +9,7 @@ class User(Entity):
   firstname: str
   lastname: str
   email: str 
+  address: Optional[str] = None
   resume_path: Optional[str] = None
   resume_file_name: Optional[str] = None
   current_position: Optional[str] = None  

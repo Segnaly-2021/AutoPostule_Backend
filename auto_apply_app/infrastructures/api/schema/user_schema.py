@@ -38,6 +38,7 @@ class UserUpdateSchema(BaseModel):
     resume_path: Optional[str] = None
     current_position: Optional[str] = None
     current_company: Optional[str] = None
+    address: Optional[str] = None
     phone_number: Optional[str] = None
     school_type: Optional[str] = None
     graduation_year: Optional[str] = None

@@ -230,6 +230,7 @@ async def update_my_profile(
         fname=data.firstname,
         lname=data.lastname,
         email=data.email,
+        address=data.address,
         resume_path=data.resume_path,
         current_position=data.current_position,
         current_company=data.current_company,

@@ -10,6 +10,7 @@ class UserViewModel:
     lastname: str
     email: str
     initials: str
+    address: Optional[str] = None
     phone_number: str = None
     resume_path: str = None
     resume_file_name: str = None  # 🚨 NEW: The human-readable name

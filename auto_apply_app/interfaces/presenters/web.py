@@ -68,6 +68,7 @@ class WebUserPresenter(UserPresenter):
             resume_path=user.res_resume_path if user.res_resume_path else None,   
             # 🚨 NEW: Map the human-readable name from the DTO
             resume_file_name=user.res_resume_file_name, 
+            address=user.res_address if user.res_address else None,
             current_position=user.res_current_position if user.res_current_position else None,
             current_company=user.res_current_company if user.res_current_company else None,
             school_type=user.res_school_type,

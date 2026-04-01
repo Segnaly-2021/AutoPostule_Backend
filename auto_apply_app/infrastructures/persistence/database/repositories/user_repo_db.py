@@ -90,6 +90,7 @@ class UserRepoDB(UserRepository):
             resume_path=user_db.resume_path,
             resume_file_name=user_db.resume_file_name, # <-- Added this!
             phone_number=user_db.phone_number,
+            address=user_db.address,
             current_position=user_db.current_position,
             current_company=user_db.current_company,
             school_type=user_db.school_type,
