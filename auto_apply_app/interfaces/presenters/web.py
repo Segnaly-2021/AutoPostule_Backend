@@ -41,7 +41,7 @@ from auto_apply_app.domain.entities.job_search import JobSearch
 from auto_apply_app.application.dtos.agent_dtos import AgentResponse
 from auto_apply_app.interfaces.viewmodels.job_search_vm import JobSearchViewModel
 from auto_apply_app.domain.value_objects import ApplicationStatus
-from auto_apply_app.interfaces.viewmodels.job_offer_vm import JobOfferViewModel, DashboardViewModel, JobReviewViewModel
+from auto_apply_app.interfaces.viewmodels.job_offer_vm import DailyStatsViewModel, JobOfferViewModel, DashboardViewModel, JobReviewViewModel
 from auto_apply_app.interfaces.viewmodels.free_search_vm import (
     FreeSearchResultViewModel,
     JobSnippetViewModel
