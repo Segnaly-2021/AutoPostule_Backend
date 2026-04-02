@@ -1,21 +1,23 @@
+# auto_apply_app/interfaces/controllers/job_offer_controller.py
+
 from dataclasses import dataclass
 from typing import Optional
 from datetime import date
 
 from auto_apply_app.interfaces.viewmodels.base import OperationResult
-#from auto_apply_app.interfaces.viewmodels.job_offer_vm import JobOfferViewModel
 from auto_apply_app.interfaces.presenters.base_presenter import JobPresenter
 from auto_apply_app.application.use_cases.job_offer_use_cases import (
-    
     GetApplicationAnalyticsUseCase,
     GetUserApplicationsUseCase,
     ToggleInterviewStatusUseCase,
-    ToggleResponseStatusUseCase
+    ToggleResponseStatusUseCase,
+    GetDailyStatsUseCase  # <-- NEW IMPORT
 )
 from auto_apply_app.application.dtos.job_offer_dtos import (
     GetUserApplicationsRequest,
     GetAnalyticsRequest,
     ToggleStatusRequest,
+    GetDailyStatsRequest  
 )
 
 
@@ -26,6 +28,7 @@ class JobOfferController:
     toggle_response_status_use_case: ToggleResponseStatusUseCase
     toggle_interview_status_use_case: ToggleInterviewStatusUseCase
     get_analytics_use_case: GetApplicationAnalyticsUseCase
+    get_daily_stats_use_case: GetDailyStatsUseCase  # <-- NEW DEPENDENCY
     job_offer_presenter: JobPresenter
 
     # ---------- SEARCH / LIST ----------
@@ -111,14 +114,27 @@ class JobOfferController:
         
 
 
+    # ---------- DAILY STATS ----------
+    async def handle_get_daily_stats(self, user_id: str) -> OperationResult:
+        try:
+            request_dto = GetDailyStatsRequest(user_id=str(user_id))        
+            result = await self.get_daily_stats_use_case.execute(request_dto)
+            
+            if result.is_success:
+                stats_vm = self.job_offer_presenter.present_daily_stats(result.value)
+                return OperationResult.succeed(value=stats_vm)
+                
+            return self._handle_error(result)
+            
+        except ValueError as e:
+            error_vm = self.job_offer_presenter.present_error(str(e), "VALIDATION_ERROR")
+            return OperationResult.fail(error_vm.message, error_vm.code)
+
     def _handle_error(self, result):
         error_vm = self.job_offer_presenter.present_error(
             result.error.message, 
             str(result.error.code.name)
         )
         return OperationResult.fail(error_vm.message, error_vm.code)
-    
-
-    
 
  

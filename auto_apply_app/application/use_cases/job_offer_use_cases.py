@@ -21,7 +21,8 @@ from auto_apply_app.application.dtos.job_offer_dtos import (
     JobOfferResponse,
     GetUserApplicationsRequest, 
     ToggleStatusRequest,
-    GetAnalyticsRequest
+    GetAnalyticsRequest,
+    GetDailyStatsRequest
 )
 
 
@@ -260,3 +261,25 @@ class DeleteJobOfferUseCase:
             return Result.failure(
                 Error.not_found("JobOffer", str(params["job_offer_id"]))
             )
+
+
+@dataclass
+class GetDailyStatsUseCase:
+    uow: UnitOfWork
+
+    async def execute(self, request: GetDailyStatsRequest) -> Result:
+        try:
+            async with self.uow:
+                params = request.to_execution_params()
+                
+                # Use the UoW to access the repository and fetch the count
+                count = await self.uow.job_repo.get_daily_application_count(
+                    user_id=params["user_id"]
+                )
+                
+                return Result.success({
+                    "count": count
+                })
+                
+        except Exception as e:
+            return Result.failure(Error.system_error(str(e)))

@@ -175,6 +175,24 @@ class JobOfferRepoDB(JobOfferRepository):
         offer_db.has_interview = has_interview
         return self._map_to_entity(offer_db)
 
+
+    async def get_daily_application_count(self, user_id: str) -> int:
+        """
+        Get the total number of applications submitted by the user today.
+        """
+        # Calculate midnight of the current day in UTC
+        today_midnight = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        stmt = (
+            select(func.count(JobOfferDB.id))
+            .where(JobOfferDB.user_id == UUID(user_id))
+            .where(JobOfferDB.status == ApplicationStatus.SUBMITTED)
+            .where(JobOfferDB.application_date >= today_midnight)
+        )
+        
+        result = await self.session.execute(stmt)
+        return result.scalar_one()
+
     # =========================================================================
     # DASHBOARD: TRACKER (paginated, filtered list)
     # =========================================================================

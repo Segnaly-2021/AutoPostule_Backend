@@ -225,6 +225,12 @@ class WebJobPresenter(JobPresenter):
             status=str(job.status.value)
         )
     
+    def present_daily_stats(self, data: dict) -> DailyStatsViewModel:
+        """Formats the raw daily stats dictionary into a ViewModel."""
+        return DailyStatsViewModel(
+            count=data.get("count", 0)
+        )
+    
     def present_dashboard(self, data: Dict) -> DashboardViewModel:
         return DashboardViewModel(
             applications=self.present_jobs(data.get("applications", [])),

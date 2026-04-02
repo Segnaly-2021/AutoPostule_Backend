@@ -57,7 +57,20 @@ async def get_user_applications(
     )
     return handle_result(result)
 
-
+@router.get(
+    "/daily",
+    summary="Get daily application stats",
+    description="Fetches application statistics for the current day for the user"
+)
+async def get_daily_applications(
+    current_user_id: CurrentUserId,
+    controller: JobControllerDep,
+):
+    # Simply pass the user_id to your dedicated daily stats controller method
+    result = await controller.handle_get_daily_stats(
+        user_id=current_user_id
+    )
+    return handle_result(result)
 
 
 @router.patch(

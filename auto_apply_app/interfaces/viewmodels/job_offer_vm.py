@@ -51,3 +51,8 @@ class DashboardViewModel:
     limit: int
     total_pages: int
     
+
+@dataclass(frozen=True)
+class DailyStatsViewModel:
+    """ViewModel for the daily application count stats."""
+    count: int

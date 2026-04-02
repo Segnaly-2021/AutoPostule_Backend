@@ -120,4 +120,15 @@ class JobOfferRepository(ABC):
         pass
 
 
-    
+    @abstractmethod
+    async def get_daily_application_count(self, user_id: str) -> int:
+        """
+        Get the total number of applications submitted by the user today.
+        
+        Args:
+            user_id: The unique identifier of the user.
+            
+        Returns:
+            int: The number of applications submitted today (from midnight to now).
+        """
+        pass

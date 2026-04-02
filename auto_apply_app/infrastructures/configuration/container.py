@@ -60,7 +60,8 @@ from auto_apply_app.application.use_cases.job_offer_use_cases import (
     GetUserApplicationsUseCase,
     ToggleInterviewStatusUseCase,
     ToggleResponseStatusUseCase,
-    CleanupUnsubmittedJobsUseCase
+    CleanupUnsubmittedJobsUseCase,
+    GetDailyStatsUseCase  # 🚨 NEW: Imported the daily stats use case
 )
 from auto_apply_app.application.use_cases.preferences_use_cases import (
     GetUserPreferencesUseCase,
@@ -192,7 +193,6 @@ class Application:
             file_storage=self.file_storage_port,
             encryption_service=self.encryption_port,
             
-            # 🚨 INJECT NEW USE CASES HERE
             get_agent_state_use_case=GetAgentStateUseCase(uow),
             reset_agent_state_use_case=ResetAgentUseCase(uow),
             cleanup_unsubmitted_use_case=CleanupUnsubmittedJobsUseCase(uow)
@@ -218,6 +218,7 @@ class Application:
             get_user_applications_use_case=GetUserApplicationsUseCase(uow),
             toggle_interview_status_use_case=ToggleInterviewStatusUseCase(uow),
             toggle_response_status_use_case=ToggleResponseStatusUseCase(uow),
+            get_daily_stats_use_case=GetDailyStatsUseCase(uow),  # 🚨 NEW: Injected into the controller
             job_offer_presenter=self.job_presenter
         )
 

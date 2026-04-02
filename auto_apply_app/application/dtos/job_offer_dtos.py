@@ -148,7 +148,12 @@ class GetAnalyticsRequest:
     user_id: str
     period: str
 
+@dataclass(frozen=True)
+class GetDailyStatsRequest:
+    user_id: str
 
+    def to_execution_params(self) -> dict:
+        return {"user_id": self.user_id}
 
 @dataclass(frozen=True)
 class JobOfferResponse:

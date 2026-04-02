@@ -322,6 +322,34 @@ class InMemoryJobOfferRepository(JobOfferRepository):
         self._jobs[uuid_id] = job
         return job
 
+    async def get_daily_application_count(self, user_id: str) -> int:
+        """
+        Get the total number of applications submitted by the user today.
+        """
+        # Calculate midnight of the current day in UTC
+        today_midnight = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        count = 0
+        for job in self._jobs.values():
+            # Ensure safe comparison of user_id
+            if str(job.user_id).strip() != user_id.strip():
+                continue
+                
+            # Only count submitted applications
+            if job.status != ApplicationStatus.SUBMITTED or not job.application_date:
+                continue
+                
+            # Safely handle naive vs aware datetimes
+            job_date = job.application_date
+            if job_date.tzinfo is None:
+                job_date = job_date.replace(tzinfo=timezone.utc)
+                
+            # Check if applied today
+            if job_date >= today_midnight:
+                count += 1
+                
+        return count
+
     async def get_analytics(
         self, 
         user_id: str, 
