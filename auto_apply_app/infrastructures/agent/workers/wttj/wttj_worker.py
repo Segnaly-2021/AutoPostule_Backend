@@ -650,7 +650,7 @@ class WelcomeToTheJungleWorker:
         found_job_entities = []
         
         # 🚨 V2 REQUIREMENT: Get the target limit from the Master
-        worker_job_limit = state.get("worker_job_limit", 5) 
+        worker_job_limit = 1 or state.get("worker_job_limit", 5) 
         
         # 🚨 V2 REQUIREMENT: Fetch Ignored Hashes
         hash_result = await self.get_ignored_hashes.execute(user_id=user_id, days=14)
@@ -678,7 +678,7 @@ class WelcomeToTheJungleWorker:
                 except Exception:
                     print(f"⚠️  No results found on page {page_number}.")
                     if page_number == 1:
-                        return {"error": "No job postings appeared for your search on Welcome to the Jungle."}
+                        return {"found_raw_offers": []}
                     break
 
                 cards = self.page.get_by_test_id("search-results-list-item-wrapper")
@@ -806,7 +806,7 @@ class WelcomeToTheJungleWorker:
         
         if not found_job_entities:
             print("⚠️ Scanned jobs, but none were valid internal applications.")
-            return {"error": "We couldn't find any new internal WTTJ jobs for your criteria today."}
+            return {"found_raw_offers": []}
 
         print(f"🎉 WTTJ Scraping Complete! Handing {len(found_job_entities)} jobs back to Master.")
         return {"found_raw_offers": found_job_entities}

@@ -603,7 +603,7 @@ class ApecWorker():
         found_job_entities = []
         
         # 🚨 NEW: Get the target limit calculated by the Master
-        worker_job_limit = 2 or state.get("worker_job_limit", 5) 
+        worker_job_limit = 1 or state.get("worker_job_limit", 5) 
         
         # 🚨 REQUIREMENT 2: Fetch Ignored Hashes
         hash_result = await self.get_ignored_hashes.execute(user_id=user_id, days=14)
@@ -633,9 +633,10 @@ class ApecWorker():
                     await cards.first.wait_for(state="visible", timeout=5000)
                 except Exception:
                     print(f"⚠️ No cards found on page {page_number}.")
-                    # If it's page 1, trip the circuit breaker. Otherwise, just end the search.
+                    # 🚨 UPDATE 1: Return an empty list instead of an error!
                     if page_number == 1:
-                        return {"error": "No job postings appeared on the results page. We'll try again on the next run."}
+                        print("📭 No job postings appeared on the results page.")
+                        return {"found_raw_offers": []}
                     break
 
                 count = await cards.count()
@@ -666,7 +667,7 @@ class ApecWorker():
                     fast_hash = self._generate_fast_hash(raw_company, raw_title, str(user_id))
                     
                     if fast_hash in ignored_hashes:
-                        print(f"     ⏩ Skipping duplicate: {raw_title} at {raw_company}")
+                        print(f"    ⏩ Skipping duplicate: {raw_title} at {raw_company}")
                         continue
 
                     # 3. Click & Load Detail View (in the side panel or new view)
@@ -688,7 +689,7 @@ class ApecWorker():
                     try:
                         await self.page.wait_for_selector('a[class="btn btn-primary ml-0"]', state="visible", timeout=5000)
                     except Exception:                
-                        print("     ❌ External or already applied! Back to search result:")                  
+                        print("    ❌ External or already applied! Back to search result:")                  
                         await self.nav_back(result_url) 
                         continue 
                     
@@ -699,7 +700,7 @@ class ApecWorker():
                         
                         # APEC Logic: "to=int" means internal application form
                         if href and "to=int" in href:
-                            print(f"     ✅ Internal offer found: {raw_title}")
+                            print(f"    ✅ Internal offer found: {raw_title}")
                             
                             full_offer_url = f"https://www.apec.fr{href}"
                             
@@ -719,7 +720,7 @@ class ApecWorker():
                                 await self.page.wait_for_load_state("networkidle")
                                 await self.page.wait_for_timeout(5000)
 
-                                print("     ✅ Valid application form confirmed. Saving to batch.")   
+                                print("    ✅ Valid application form confirmed. Saving to batch.")   
 
                                 # Create Domain Entity
                                 offer = JobOffer(
@@ -736,7 +737,7 @@ class ApecWorker():
                                 )                                
                                 
                                 found_job_entities.append(offer)
-                                print(f"     📦 Current batch size: {len(found_job_entities)}/{worker_job_limit}")
+                                print(f"    📦 Current batch size: {len(found_job_entities)}/{worker_job_limit}")
                     
                     # 5. Navigate back to the current page's search results
                     await self.nav_back(result_url)
@@ -756,10 +757,10 @@ class ApecWorker():
             print(f"Scraping Error: {e}")
             return {"error": "A critical error occurred while scanning the job listings. We have safely halted the process."}
 
-        # 🚨 FINAL CHECK
+        # 🚨 UPDATE 2: Return an empty array here instead of an error!
         if not found_job_entities:
             print("⚠️ Scanned jobs across pages, but none were valid for auto-application.")
-            return {"error": "We scanned the listings, but couldn't find any new jobs eligible for auto-application today."}
+            return {"found_raw_offers": []}
 
         print(f"🎉 APEC Scraping Complete! Handing {len(found_job_entities)} jobs back to the Master Orchestrator.")
         return {"found_raw_offers": found_job_entities}

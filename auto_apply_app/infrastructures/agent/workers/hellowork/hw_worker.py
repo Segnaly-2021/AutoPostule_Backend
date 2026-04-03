@@ -492,7 +492,7 @@ class HelloWorkWorker:
         found_job_entities = []
         
         # 🚨 V2 Setup
-        worker_job_limit = state.get("worker_job_limit", 5) 
+        worker_job_limit = 1 or state.get("worker_job_limit", 5) 
         hash_result = await self.get_ignored_hashes.execute(user_id=user_id, days=14)
         ignored_hashes = hash_result.value if hash_result.is_success else set()
         
@@ -511,7 +511,9 @@ class HelloWorkWorker:
                 except Exception:
                     if page_number == 1: 
                         print(f"🕵️ [HW] No results found on Page 1 for {state.get('job_search').job_title}")
-                        return {"error": "No jobs found for this search."}
+                        return {"found_raw_offers": []}
+
+                    break
                     
                     # If it's page 2, 3, etc., it just means we reached the end of the results
                     print(f"🏁 [HW] No more cards found on page {page_number}. Ending scrape.")
@@ -603,8 +605,9 @@ class HelloWorkWorker:
             return {"error": f"[HW] Fatal Scraping Error: {e}"}
 
         if not found_job_entities:
-            return {"error": "[HW] No new internal HelloWork jobs found for your criteria today."}
-            
+            print("⚠️ Scanned jobs across pages, but none were valid for auto-application.")
+            return {"found_raw_offers": []}
+        
         print(f"🎉 [HW] Scraping Complete! Handing {len(found_job_entities)} jobs back to Master.")
         return {"found_raw_offers": found_job_entities}
 
