@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from uuid import UUID
 import datetime
+import logging
+
 
 
 from auto_apply_app.application.dtos.operations import DeletionOutcome
@@ -39,6 +41,8 @@ from auto_apply_app.domain.entities.user_subscription import UserSubscription
 from auto_apply_app.application.repositories.token_blacklist import TokenBlacklistRepository
 from auto_apply_app.domain.value_objects import ClientType
 
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class RegisterUserUseCase:
@@ -114,6 +118,8 @@ class RegisterUserUseCase:
         except ValidationError as e:
             return Result.failure(Error.validation_error(str(e)))
         except Exception as e:
+            # 🚨 ADD THIS LINE to expose the real error in GCP logs!
+            logger.exception(f"CRITICAL: Failed to register user {request.auth_email}")
             return Result.failure(Error.system_error(str(e)))
 
 
@@ -158,6 +164,8 @@ class LoginUserUseCase:
             return Result.failure(Error.validation_error(str(e)))
             
         except Exception as e:
+            # 🚨 ADD THIS LINE to expose the real error in GCP logs!
+            logger.exception(f"CRITICAL: Failed to Loginuser {request.auth_email}")
             return Result.failure(Error.system_error(str(e)))
 
 
@@ -195,6 +203,8 @@ class RequestPasswordResetUseCase:
             return Result.success({"message": "If an account exists, a reset link has been sent."})
 
         except Exception as e:
+            # 🚨 ADD THIS LINE to expose the real error in GCP logs!
+            logger.exception(f"CRITICAL: Failed to reset password for user {request.email}")
             return Result.failure(Error.system_error(str(e)))
 
 
@@ -238,6 +248,8 @@ class ConfirmPasswordResetUseCase:
         except InvalidTokenException:
             return Result.failure(Error.unauthorized("Token is invalid or has expired."))
         except Exception as e:
+            # 🚨 ADD THIS LINE to expose the real error in GCP logs!
+            logger.exception(f"CRITICAL: Failed to confirm password reset for user {request.email}")
             return Result.failure(Error.system_error(str(e)))
 
 
