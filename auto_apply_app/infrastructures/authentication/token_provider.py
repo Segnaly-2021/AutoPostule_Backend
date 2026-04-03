@@ -4,28 +4,31 @@ from datetime import datetime, timedelta, timezone
 import jwt
 import os
 
-
-# Import your Port and the custom Exception
 from auto_apply_app.application.service_ports.token_provider_port import TokenProviderPort
 from auto_apply_app.domain.exceptions import InvalidTokenException
 
 class JwtTokenProvider(TokenProviderPort):
     def __init__(self):
-        # Best Practice: Never hardcode secrets. Read from Environment.
         self.secret = os.getenv("JWT_SECRET")
         self.algo = "HS256"
         self.token_lifespan_minutes = 240
 
-    def encode_token(self, user_id: UUID, claims: Optional[Dict[str, Any]] = None) -> str:
+    def encode_token(self, user_id: UUID, claims: Optional[Dict[str, Any]] = None, expires_delta: Optional[timedelta] = None) -> str:
+        # Determine the expiration time dynamically
+        if expires_delta:
+            expire = datetime.now(timezone.utc) + expires_delta
+        else:
+            expire = datetime.now(timezone.utc) + timedelta(minutes=self.token_lifespan_minutes)
+
         # 1. Prepare base payload
         payload = {
             "iat": datetime.now(timezone.utc),
-            "exp": datetime.now(timezone.utc) + timedelta(minutes=self.token_lifespan_minutes),
+            "exp": expire,
             "sub": str(user_id),  # CRITICAL: Convert UUID to string
             "jti": str(uuid4())
         }
 
-        # 2. Add extra claims (like email) if provided
+        # 2. Add extra claims (like email or purpose) if provided
         if claims:
             payload.update(claims)
 
@@ -37,17 +40,13 @@ class JwtTokenProvider(TokenProviderPort):
             payload = jwt.decode(
                 token,
                 key=self.secret,
-                algorithms=[self.algo] # PyJWT expects a list for algorithms
+                algorithms=[self.algo]
             )
             return payload
             
         except (jwt.ExpiredSignatureError, jwt.InvalidTokenError) as e:
-            # Wrap 3rd party library errors in our own Domain Exception
-            # DO NOT raise HTTPException here.
             raise InvalidTokenException(str(e))
         
-
-    # <--- CHANGE 3: Implement the new helper methods
     def get_token_id(self, token: str) -> str:
         payload = self.decode_token(token)
         return payload.get("jti")
@@ -59,7 +58,6 @@ class JwtTokenProvider(TokenProviderPort):
         if not exp_timestamp:
             return 0
 
-        # Calculate remaining seconds
         expiration_time = datetime.fromtimestamp(exp_timestamp, tz=timezone.utc)
         now = datetime.now(timezone.utc)
         remaining = int((expiration_time - now).total_seconds())

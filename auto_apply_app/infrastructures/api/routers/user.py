@@ -8,11 +8,15 @@ from auto_apply_app.interfaces.controllers.user_controllers import UserControlle
 from auto_apply_app.interfaces.viewmodels.user_vm import UserViewModel, LoginViewModel, UploadResumeViewModel 
 from auto_apply_app.infrastructures.api.dependencies.container_dep import get_container
 from auto_apply_app.infrastructures.api.dependencies.auth_deps import CurrentUserId, CurrentToken
+
+# 🚨 NEW: Added ForgotPasswordRequestSchema and ResetPasswordConfirmSchema to imports
 from auto_apply_app.infrastructures.api.schema.user_schema import (
     ChangePasswordSchema,
     LoginSchema,
     RegisterSchema,
-    UserUpdateSchema
+    UserUpdateSchema,
+    ForgotPasswordRequestSchema,  
+    ResetPasswordConfirmSchema    
 )
 
 router = APIRouter()
@@ -34,14 +38,17 @@ UserControllerDep = Annotated[UserController, Depends(get_user_controller)]
 AuthControllerDep = Annotated[AuthController, Depends(get_auth_controller)]
 
 
-# 2. Updated Routes
+# ============================================================================
+# AUTHENTICATION ROUTES
+# ============================================================================
+
 @router.post(
         "/register", 
         response_model=UserViewModel, 
         status_code=status.HTTP_201_CREATED
 )
 async def register(
-    data: RegisterSchema,  # FastAPI automatically parses the JSON body
+    data: RegisterSchema,  
     auth_controller: AuthControllerDep
 ):
     result = await auth_controller.handle_register(
@@ -51,7 +58,6 @@ async def register(
         lastname=data.lastname
     )
     return handle_result(result)
-
 
 
 @router.post(
@@ -67,18 +73,6 @@ async def login(
 ):
     """
     Authenticate user and return JWT access token.
-    
-    - **email**: User's email address
-    - **password**: User's password
-    
-    Returns:
-    - **access_token**: JWT token for authentication
-    - **token_type**: Always "bearer"
-    
-    Use the access_token in subsequent requests:
-    ```
-    Authorization: Bearer <access_token>
-    ```
     """
     result = await auth_controller.handle_login(
         email=data.email,
@@ -87,6 +81,45 @@ async def login(
     return handle_result(result)
 
 
+# 🚨 NEW: Forgot Password Route
+@router.post(
+    "/forgot-password",
+    status_code=status.HTTP_200_OK,
+    summary="Request password reset",
+    description="Sends a password reset email if the account exists"
+)
+async def forgot_password(
+    data: ForgotPasswordRequestSchema,
+    auth_controller: AuthControllerDep
+):
+    """
+    Initiates the password reset flow. 
+    Sends an email with a short-lived token to the user.
+    """
+    result = await auth_controller.handle_forgot_password(email=data.email)
+    return handle_result(result)
+
+
+# 🚨 NEW: Reset Password Route
+@router.post(
+    "/reset-password",
+    status_code=status.HTTP_200_OK,
+    summary="Reset password",
+    description="Sets a new password using the token received via email"
+)
+async def reset_password(
+    data: ResetPasswordConfirmSchema,
+    auth_controller: AuthControllerDep
+):
+    """
+    Completes the password reset flow.
+    Requires the valid token extracted from the email link and a new secure password.
+    """
+    result = await auth_controller.handle_reset_password(
+        token=data.token,
+        new_password=data.new_password
+    )
+    return handle_result(result)
 
 
 @router.post(
@@ -97,28 +130,18 @@ async def login(
 )
 async def change_password(
     data: ChangePasswordSchema,
-    current_user_id: CurrentUserId,  # ✅ Validates token
+    current_user_id: CurrentUserId,  
     auth_controller: AuthControllerDep
 ):
     """
     Change the authenticated user's password.
-    
-    Requires valid JWT token in Authorization header.
-    
-    - **old_password**: Current password for verification
-    - **new_password**: New password (minimum 8 characters)
-    
-    **Security Note**: The user_id is extracted from the token, not the request body,
-    preventing users from changing other users' passwords.
     """
-    # ✅ SECURITY: Use user_id from token, ignore data.user_id
     result = await auth_controller.handle_change_password(
-        user_id=current_user_id,  # From token, not request body
+        user_id=current_user_id,  
         old_password=data.old_password,
         new_password=data.new_password
     )
     return handle_result(result)
-
 
 
 @router.post(
@@ -128,23 +151,20 @@ async def change_password(
     description="Invalidate the current JWT token by adding it to blacklist"
 )
 async def logout(
-    token: CurrentToken,  # ✅ Gets the raw token string
+    token: CurrentToken,  
     auth_controller: AuthControllerDep
 ):
     """
     Logout the authenticated user.
-    
-    Requires valid JWT token in Authorization header.
-    The token will be blacklisted and cannot be used again until expiration.
-    
-    **Security Note**: This extracts the token from the Authorization header
-    automatically, so the user cannot logout someone else's session.
     """
     result = await auth_controller.handle_logout(token=token)
     handle_result(result)
     return None
 
 
+# ============================================================================
+# USER PROFILE ROUTES
+# ============================================================================
 
 @router.get(
     "/get/me",
@@ -156,23 +176,14 @@ async def get_my_profile(
     current_user_id: CurrentUserId,
     user_controller: UserControllerDep
 ):
-    """
-    Get the authenticated user's own profile.
-    
-    Requires valid JWT token in Authorization header.
-    The user_id is automatically extracted from the token.
-    
-    Returns complete user profile information.
-    """
     result = await user_controller.handle_get(current_user_id)
     return handle_result(result)
-
 
 
 @router.post(
     "/update/me/resume",
     status_code=status.HTTP_200_OK,
-    response_model=UploadResumeViewModel, # Optional: strictly document the response
+    response_model=UploadResumeViewModel, 
     summary="Upload user resume",
     description="Uploads a PDF resume to Cloud Storage and updates the user profile with the human-readable filename."
 )
@@ -181,21 +192,14 @@ async def upload_my_resume(
     user_controller: UserControllerDep,
     resume_file: UploadFile = File(...)
 ):
-    """
-    Expects a multipart/form-data request with a 'resume_file' field containing a PDF.
-    """
-    # 1. Read the file completely into the server's RAM (No temp files on disk!)
     file_bytes = await resume_file.read()
     
-    # 2. Pass the raw bytes and metadata to the controller
     result = await user_controller.handle_upload_resume(
         user_id=current_user_id,
         file_bytes=file_bytes,
         content_type=resume_file.content_type,
         filename=resume_file.filename
     )
-    
-    # 3. Use your standard result handler to return the ViewModel or Error
     return handle_result(result)
 
 
@@ -210,21 +214,6 @@ async def update_my_profile(
     current_user_id: CurrentUserId,
     user_controller: UserControllerDep
 ):
-    """
-    Update the authenticated user's own profile.
-    
-    Requires valid JWT token in Authorization header.
-    Only provided fields will be updated (partial update).
-    
-    Updatable fields:
-    - **firstname**: First name (1-50 characters)
-    - **lastname**: Last name (1-50 characters)
-    - **email**: Email address (must be unique)
-    - **resume_dir**: Resume directory path
-    - **phone_number**: Contact phone number
-    
-    Returns the updated user profile.
-    """
     result = await user_controller.handle_update(
         user_id=current_user_id,  
         fname=data.firstname,
@@ -253,15 +242,5 @@ async def delete_my_account(
     current_user_id: CurrentUserId,
     user_controller: UserControllerDep
 ):
-    """
-    Permanently delete the authenticated user's account.
-    
-    Requires valid JWT token in Authorization header.
-    
-    **Warning**: This action cannot be undone.
-    All user data and associated resources will be permanently deleted.
-    """
     result = await user_controller.handle_delete(current_user_id)
     return handle_result(result)
-    
-

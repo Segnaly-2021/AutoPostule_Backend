@@ -8,12 +8,16 @@ from auto_apply_app.application.use_cases.user_use_cases import (
     RegisterUserUseCase,
     LoginUserUseCase,
     LogoutUseCase,
-    ChangePasswordUseCase
+    ChangePasswordUseCase,
+    RequestPasswordResetUseCase,    # ✅ Added
+    ConfirmPasswordResetUseCase     # ✅ Added
 )
 from auto_apply_app.application.dtos.auth_user_dtos import (
     RegisterUserRequest,
     LoginRequest,
-    ChangePasswordRequest
+    ChangePasswordRequest,
+    ForgotPasswordRequest,          # ✅ Added
+    ResetPasswordRequest            # ✅ Added
 )
 
 @dataclass
@@ -22,6 +26,8 @@ class AuthController:
     login_use_case: LoginUserUseCase
     logout_use_case: LogoutUseCase
     change_password_use_case: ChangePasswordUseCase
+    request_password_reset_use_case: RequestPasswordResetUseCase  # ✅ Added
+    confirm_password_reset_use_case: ConfirmPasswordResetUseCase  # ✅ Added
     presenter: UserPresenter
 
     async def handle_register(
@@ -84,10 +90,42 @@ class AuthController:
             result = await self.change_password_use_case.execute(request)
 
             if result.is_success:
-                return OperationResult.succeed(value={"message": result.value})
+                # If use case returns a string, wrap it. If it returns dict, use result.value directly.
+                val = {"message": result.value} if isinstance(result.value, str) else result.value
+                return OperationResult.succeed(value=val)
             
             return self._present_error(result)
 
+        except ValueError as e:
+            return self._present_validation_exception(e)
+
+    # --- NEW: Forgot Password Flow ---
+    
+    async def handle_forgot_password(self, email: EmailStr) -> OperationResult:
+        try:
+            request = ForgotPasswordRequest(email=email)
+            result = await self.request_password_reset_use_case.execute(request)
+            
+            if result.is_success:
+                # result.value is already a dictionary: {"message": "..."}
+                return OperationResult.succeed(value=result.value)
+                
+            return self._present_error(result)
+            
+        except ValueError as e:
+            return self._present_validation_exception(e)
+
+    async def handle_reset_password(self, token: str, new_password: str) -> OperationResult:
+        try:
+            request = ResetPasswordRequest(token=token, new_password=new_password)
+            result = await self.confirm_password_reset_use_case.execute(request)
+            
+            if result.is_success:
+                # result.value is already a dictionary: {"message": "..."}
+                return OperationResult.succeed(value=result.value)
+                
+            return self._present_error(result)
+            
         except ValueError as e:
             return self._present_validation_exception(e)
 

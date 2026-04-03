@@ -14,6 +14,7 @@ from auto_apply_app.infrastructures.resume_storage.gcs_storage_adapter import GC
 from auto_apply_app.infrastructures.authentication.token_provider import JwtTokenProvider
 from auto_apply_app.infrastructures.payment.stripe_payment import StripePaymentAdapter
 from auto_apply_app.infrastructures.board_credentials_encryption.encryption import EncryptionService
+from auto_apply_app.infrastructures.emailing_service.resend_email_service import ResendEmailService # 🚨 NEW
 
 # Import presenters
 from auto_apply_app.interfaces.presenters.web import (
@@ -73,6 +74,7 @@ async def lifespan(app: FastAPI):
         file_storage_port=GCSFileStorageAdapter(),
         payment_port=StripePaymentAdapter(),
         sub_presenter=WebSubPresenter(),
+        email_service_port=ResendEmailService(),  # 🚨 NEW
         free_search_presenter=WebFreeSearchPresenter()
     )
     
@@ -93,9 +95,6 @@ async def lifespan(app: FastAPI):
         logger.info("PostgreSQL connection pool closed successfully.")
         
     logger.info("Application shutdown complete")
-
-
-
 
 
 def create_fastapi_app() -> FastAPI:
@@ -161,5 +160,3 @@ def create_fastapi_app() -> FastAPI:
     )
     
     return app
-
-

@@ -113,3 +113,13 @@ class LogoutRequest:
         return {"token": self.token}
     
 
+@dataclass(frozen=True)
+class ForgotPasswordRequest:
+    email: str
+
+@dataclass(frozen=True)
+class ResetPasswordRequest:
+    token: str
+    new_password: str
+    
+

@@ -13,6 +13,7 @@ from auto_apply_app.application.service_ports.file_storage_port import FileStora
 from auto_apply_app.application.service_ports.token_provider_port import TokenProviderPort
 from auto_apply_app.application.service_ports.payment_port import PaymentPort
 from auto_apply_app.application.service_ports.encryption_port import EncryptionServicePort
+from auto_apply_app.application.service_ports.email_service_port import EmailServicePort # 🚨 NEW
 
 # Presenters
 from auto_apply_app.interfaces.presenters.base_presenter import (
@@ -35,7 +36,9 @@ from auto_apply_app.application.use_cases.user_use_cases import (
     LogoutUseCase,
     GetUserUseCase,
     ChangePasswordUseCase,
-    UploadUserResumeUseCase
+    UploadUserResumeUseCase,
+    RequestPasswordResetUseCase,  # 🚨 NEW
+    ConfirmPasswordResetUseCase   # 🚨 NEW
 )
 from auto_apply_app.application.use_cases.agent_use_cases import (
     ApproveJobUseCase,
@@ -84,7 +87,6 @@ from auto_apply_app.interfaces.controllers.agent_state_controllers import AgentS
 from auto_apply_app.interfaces.controllers.free_search_controller import FreeSearchController
 from auto_apply_app.infrastructures.agent.fake_agent.create_fake_agent import create_fake_agent
 
-
 def create_application(
     user_presenter: UserPresenter,
     job_presenter: JobPresenter,
@@ -98,6 +100,7 @@ def create_application(
     file_storage_port: FileStoragePort,
     payment_port: PaymentPort,
     encryption_port: EncryptionServicePort,
+    email_service_port: EmailServicePort,  # 🚨 NEW
     free_search_presenter: FreeSearchPresenter
 ) -> "Application":
 
@@ -118,6 +121,7 @@ def create_application(
         file_storage_port=file_storage_port,
         payment_port=payment_port,
         encryption_port=encryption_port,
+        email_service_port=email_service_port,  # 🚨 NEW
         free_search_presenter=free_search_presenter
     )
 
@@ -134,6 +138,7 @@ class Application:
     file_storage_port: FileStoragePort
     payment_port: PaymentPort
     encryption_port: EncryptionServicePort
+    email_service_port: EmailServicePort  # 🚨 NEW
 
     # Presenters
     user_presenter: UserPresenter
@@ -168,6 +173,18 @@ class Application:
             login_use_case=LoginUserUseCase(self.password_service, self.token_provider, uow),
             logout_use_case=LogoutUseCase(self.token_provider, self.token_repo),
             change_password_use_case=ChangePasswordUseCase(self.password_service, uow),
+            
+            # 🚨 NEW: Inject the two new Use Cases into the AuthController
+            request_password_reset_use_case=RequestPasswordResetUseCase(
+                uow=uow,
+                token_provider=self.token_provider,
+                email_service=self.email_service_port
+            ),
+            confirm_password_reset_use_case=ConfirmPasswordResetUseCase(
+                uow=uow,
+                token_provider=self.token_provider,
+                password_service=self.password_service
+            ),
             presenter=self.user_presenter
         )
 

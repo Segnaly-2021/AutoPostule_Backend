@@ -69,4 +69,7 @@ jobs:
             GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}
             GCP_RESUME_BUCKET=${{ secrets.GCP_RESUME_BUCKET }}
             REDIS_URL=${{ secrets.REDIS_URL }}
+            RESEND_API_KEY=${{ secrets.RESEND_API_KEY }}
+            FrONTEND_URL=${{ secrets.FRONTEND_URL }}
+            EMAIL_FROM=${{ secrets.EMAIL_FROM }}
             

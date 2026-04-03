@@ -7,6 +7,7 @@ pydantic==2.12.5
 email-validator==2.3.0
 pydantic-settings==2.12.0
 websockets==15.0.1
+httpx==0.28.1
 
 # --- Database & Migrations ---
 SQLAlchemy==2.0.48
@@ -44,4 +45,4 @@ google-cloud-storage==3.9.0
 
 
 
-#### Supabase password: 7I3L0CbbwMU75oI8
+

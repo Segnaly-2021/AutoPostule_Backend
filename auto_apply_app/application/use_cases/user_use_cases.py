@@ -21,9 +21,12 @@ from auto_apply_app.application.dtos.auth_user_dtos import (
   RegisterUserRequest, 
   LoginResponse, 
   ChangePasswordRequest,
+  ForgotPasswordRequest, 
+  ResetPasswordRequest
 )
 
 
+from auto_apply_app.application.service_ports.email_service_port import EmailServicePort
 from auto_apply_app.application.repositories.unit_of_work import UnitOfWork
 from auto_apply_app.application.service_ports.password_service_port import PasswordServicePort
 from auto_apply_app.application.service_ports.file_storage_port import FileStoragePort
@@ -156,8 +159,86 @@ class LoginUserUseCase:
             
         except Exception as e:
             return Result.failure(Error.system_error(str(e)))
-        
 
+
+
+@dataclass
+class RequestPasswordResetUseCase:
+    uow: UnitOfWork
+    token_provider: TokenProviderPort
+    email_service: EmailServicePort
+
+    async def execute(self, request: ForgotPasswordRequest) -> Result:
+        try:
+            async with self.uow:
+                # 1. Find the user
+                auth_user = await self.uow.auth_repo.get_by_email(request.email)
+                
+                # SECURITY NOTE: Do not reveal if the email exists to prevent enumeration.
+                if not auth_user:
+                    return Result.success({"message": "If an account exists, a reset link has been sent."})
+
+                # 2. Generate a 15-minute reset token
+                reset_token = self.token_provider.encode_token(
+                    user_id=auth_user.user_id,
+                    claims={"email": auth_user.email, "purpose": "password_reset"},
+                    expires_delta=datetime.timedelta(minutes=15)
+                )
+
+                # 3. Send the email
+                await self.email_service.send_password_reset_email(
+                    to_email=auth_user.email, 
+                    reset_token=reset_token
+                )
+
+            # Return a dictionary instead of a raw string
+            return Result.success({"message": "If an account exists, a reset link has been sent."})
+
+        except Exception as e:
+            return Result.failure(Error.system_error(str(e)))
+
+
+@dataclass
+class ConfirmPasswordResetUseCase:
+    uow: UnitOfWork
+    token_provider: TokenProviderPort
+    password_service: PasswordServicePort
+
+    async def execute(self, request: ResetPasswordRequest) -> Result:
+        try:
+            # 1. Validate Token
+            payload = self.token_provider.decode_token(request.token)
+            
+            # Security check: Ensure this is a reset token
+            if payload.get("purpose") != "password_reset":
+                return Result.failure(Error.unauthorized("Invalid token type."))
+                
+            user_id = payload.get("sub")
+            if not user_id:
+                return Result.failure(Error.unauthorized("Invalid token payload."))
+
+            async with self.uow as uow:
+                # 2. Fetch User
+                auth_user = await uow.auth_repo.get_by_id(UUID(user_id))
+                if not auth_user:
+                    return Result.failure(Error.not_found("User", str(user_id)))
+
+                # 3. Hash New Password
+                new_hashed_password = self.password_service.get_password_hash(request.new_password)
+
+                # 4. Update Domain Entity
+                auth_user.change_password(new_hashed_password)
+
+                # 5. Persist
+                await uow.auth_repo.save(auth_user)
+
+            # Return a dictionary instead of a raw string
+            return Result.success({"message": "Password reset successfully."})
+
+        except InvalidTokenException:
+            return Result.failure(Error.unauthorized("Token is invalid or has expired."))
+        except Exception as e:
+            return Result.failure(Error.system_error(str(e)))
 
 
 @dataclass
