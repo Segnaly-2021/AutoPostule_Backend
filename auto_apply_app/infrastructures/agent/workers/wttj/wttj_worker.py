@@ -446,8 +446,40 @@ class WelcomeToTheJungleWorker:
             await self.page.goto(self.base_url, wait_until="networkidle")
             await self.page.wait_for_timeout(10000)
             await self._handle_cookies()
+
+            # WTTJ Search Again: This is a dummy section to avoid bot detection.
+            search_entity = state["job_search"]
+            job_title = search_entity.job_title
             
-            return {}
+            # Extract filter preferences from state
+            contract_types = getattr(search_entity, 'contract_types', [])
+            min_salary = getattr(search_entity, 'min_salary', 0)
+
+            print(f"--- [WTTJ] Dummy Searching for: {job_title} ---")
+            
+            try:
+                # 1. Fill the job title (Using your EXACT original selector)
+                try:
+                    await self.page.wait_for_selector('[data-testid="jobs-home-search-field-query"]')
+                except Exception:
+                    await self.page.reload(wait_until="networkidle")
+
+
+                await self.page.get_by_test_id("jobs-home-search-field-query").fill(job_title)
+                
+                # 2. APPLY FILTERS 
+                if contract_types or min_salary > 0:
+                    await self._apply_filters(contract_types, min_salary)
+
+                # 3. Finalize search (Uncommented!)
+                #await self.page.keyboard.press("Enter")
+                
+                # 4. Wait for results
+                await self.page.wait_for_timeout(5000)
+
+                return {}
+            except Exception as e:
+                print(f"⚠️ Initial search failed during session boot: {e}")
             
         except Exception as e:
             print(f"Browser Auth Initialization Error: {e}")
@@ -980,7 +1012,7 @@ class WelcomeToTheJungleWorker:
         successful_submissions = []
         i = 0
         for offer in wttj_jobs:
-            print(f"📝 Applying to: {offer.job_title} ({i+1}/{len(wttj_jobs)})")
+            print(f"📝 [WTTJ] Applying to: {offer.job_title} ({i+1}/{len(wttj_jobs)})")
             try:
                 # 🚨 V2 WAF BYPASS: Commit early, don't wait for DOM to hang on JS challenges
                 await self.page.goto(offer.url, wait_until="commit", timeout=60000)
@@ -992,11 +1024,11 @@ class WelcomeToTheJungleWorker:
                 apply_btn = self.page.locator('[data-testid="job_bottom-button-apply"]').first
                 
                 if await apply_btn.count() == 0:
-                    print(f"❌ Apply button not found for {offer.url}")
+                    print(f"❌ [WTTJ] Apply button not found for {offer.url}")
                     continue
                     
                 await apply_btn.click()
-                await self.page.wait_for_timeout(1000)
+                await self.page.wait_for_timeout(2000)
                 await self._handle_cookies()
                 
                 # C. Fill Form
@@ -1051,15 +1083,15 @@ class WelcomeToTheJungleWorker:
                         print(f"Submission of {offer.form_url} failed because of random input fields in the application form")
                         continue 
 
-                    print(f"✅ Application submitted for {offer.job_title}")                    
+                    print(f"✅ [WTTJ] Application submitted for {offer.job_title}")                    
                     # Update domain entity state
                     offer.status = ApplicationStatus.SUBMITTED
                     successful_submissions.append(offer)
                 else:
-                    print(f"❌ Submit button not visible for {offer.job_title}.")
+                    print(f"❌ [WTTJ] Submit button not visible for {offer.job_title}.")
 
             except Exception as e:
-                print(f"❌ Submission failed for {offer.url}: {e}")
+                print(f"❌ [WTTJ] Submission failed for {offer.url}: {e}")
             
             i += 1 
 
@@ -1067,7 +1099,7 @@ class WelcomeToTheJungleWorker:
             return {"error": "All WTTJ application attempts failed. Forms may have changed."}
 
         # 🚨 V2 REQUIREMENT: Return to Master's "Outbox"
-        print(f"✅ Successfully submitted {len(successful_submissions)} WTTJ applications. Handing back to Master...")
+        print(f"✅ [WTTJ] Successfully submitted {len(successful_submissions)} applications. Handing back to Master...")
         
         return {
             "submitted_offers": successful_submissions
@@ -1076,7 +1108,7 @@ class WelcomeToTheJungleWorker:
     # --- NODE 8: Cleanup ---
     async def cleanup(self, state: JobApplicationState):
         await self._emit(state, "Cleaning Up")
-        print("--- [APEC] Cleanup ---")
+        print("--- [WTTJ] Cleanup ---")
         # Reuse force_cleanup logic but as a step
         await self.force_cleanup()
         return {}

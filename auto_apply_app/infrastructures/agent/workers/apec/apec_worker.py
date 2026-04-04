@@ -402,8 +402,34 @@ class ApecWorker():
             # Navigate to base URL to initialize the page object
             await self.page.goto(self.base_url, wait_until="networkidle", timeout=60000)
             await self._handle_cookies()
+
+            ### DUMMY SEARCH TO ESTABLISH SESSION CONTEXT (Important for APEC)
+            search_entity = state["job_search"]
+            job_title = search_entity.job_title
             
-            return {}
+            # Get preferences from entity
+            contract_types = getattr(search_entity, 'contract_types', [])
+            min_salary = getattr(search_entity, 'min_salary', 0)
+
+            print("🔎 [APEC] Dummy Starting Search Process")       
+            try:
+                # Call the filter helper which handles job title + filters
+                await self._apply_filters(job_title, contract_types, min_salary)    
+
+                # Verify if results appeared
+                try:
+                    card_selector = 'div[class="card card-offer mb-20 card--clickable card-offer--qualified"]'
+                    # 🚨 Keeping your exact selector and timeout
+                    await self.page.wait_for_selector(card_selector, timeout=5000)
+                    print("✅ Search results loaded successfully.")
+                except Exception:
+                    print("⚠️ No results found after applying filters.")
+                    # 🚨 CIRCUIT BREAKER: Logical end (No results)
+
+                return {} 
+            except Exception as e:
+                print(f"Search Error: {e}")            
+                # 🚨 CIRCUIT BREAKER: Infrastructure/UI failure
             
         except Exception as e:
             print(f"Browser Auth Initialization Error: {e}")

@@ -352,10 +352,37 @@ class HelloWorkWorker:
             await self.page.goto(self.base_url, wait_until="networkidle", timeout=60000)
             await self.page.wait_for_timeout(30000)
             await self._handle_cookies()
+
+            # 4. Dummy Search to Establish Session Context (Important for HelloWork)
+            search_entity = state["job_search"]
+            job_title = search_entity.job_title
+            contract_types = getattr(search_entity, 'contract_types', [])
+            min_salary = getattr(search_entity, 'min_salary', 0)
+            location = getattr(search_entity, 'location', "")
+
+            print(f"--- [HW] Dummy Searching for: {job_title} ---")
+            try:
+                await self.page.locator('input[id="k"]').fill(job_title)
+                if location and location.strip() != "":
+                    await self.page.locator('input[id="l"]').fill(location)
+                await self.page.keyboard.press("Enter")
+                
+                await self.page.wait_for_timeout(3000)
+                await self._handle_cookies()
+
+                if contract_types or min_salary > 0:
+                    await self._apply_filters(contract_types, min_salary)
+                    
+                await self.page.wait_for_timeout(2000)
+                return {}
+            except Exception as e:
+                print(f"🚨 Session Initialization Error: {e}")
+                
             
-            return {}
         except Exception as e:
             return {"error": f"Failed to initialize HelloWork browser: {e}"}
+
+
 
     async def go_to_job_board(self, state: JobApplicationState):
         await self._emit(state, "Navigating to Job Board")
