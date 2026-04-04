@@ -702,7 +702,7 @@ class WelcomeToTheJungleWorker:
 
 
                         raw_company, raw_title, raw_location = await self.get_raw_job_data(card)
-                        print(f"---[WTTJ WORKER] RAW DATA---\nCompany: {raw_company},\nTitle: {raw_title},\nLocation: {raw_location}")
+                        print(f"---[WTTJ WORKER] RAW DATA---\n[WTTJ Company]: {raw_company},\n[WTTJ Title]: {raw_title},\n[WTTJ Location]: {raw_location}")
                         if not raw_company or not raw_title:
                             print("     ⚠️     Missing title or company, skipping card.")
                             continue

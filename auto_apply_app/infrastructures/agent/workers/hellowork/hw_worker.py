@@ -531,8 +531,12 @@ class HelloWorkWorker:
                         card = cards.nth(i)
                         
                         
-                        raw_company, raw_title, raw_location  = await self.get_raw_job_data(card) 
-                        
+                        raw_company, raw_title, raw_location  = await self.get_raw_job_data(card)
+                        print("---[HW JOB DATA]---\n")
+                        print(f"[HW Company]: {raw_company}\n")
+                        print(f"[HW Title]: {raw_title}\n")
+                        print(f"[HW Location]: {raw_location}")
+
                         if not raw_title or not raw_company:
                             print("    ⚠️ Missing title or company, skipping card.")
                             continue

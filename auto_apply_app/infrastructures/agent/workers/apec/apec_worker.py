@@ -658,7 +658,7 @@ class ApecWorker():
 
                     # 2. Extract Metadata (Before Click - Safer/Faster)                            
                     raw_company, raw_title, raw_location  = await self.get_raw_job_data(card)
-                    print(f"---[APEC WORKER] RAW DATA---\nCompany: {raw_company},\nTitle: {raw_title},\nLocation: {raw_location}")
+                    print(f"---[APEC WORKER] RAW DATA---\n[APEC Company]: {raw_company},\n[APEC Title]: {raw_title},\n[APEC Location]: {raw_location}")
                     if not raw_company or not raw_title:
                         print("    ⚠️ Missing title or company, skipping card.")
                         continue
