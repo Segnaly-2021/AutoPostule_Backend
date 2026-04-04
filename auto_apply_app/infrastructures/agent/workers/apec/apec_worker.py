@@ -629,7 +629,7 @@ class ApecWorker():
         found_job_entities = []
         
         # 🚨 NEW: Get the target limit calculated by the Master
-        worker_job_limit = 1 or state.get("worker_job_limit", 5) 
+        worker_job_limit = state.get("worker_job_limit", 5) 
         
         # 🚨 REQUIREMENT 2: Fetch Ignored Hashes
         hash_result = await self.get_ignored_hashes.execute(user_id=user_id, days=14)

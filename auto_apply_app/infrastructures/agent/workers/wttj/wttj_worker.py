@@ -525,7 +525,7 @@ class WelcomeToTheJungleWorker:
         
         # STRATEGY 1: Full Automation
         if prefs.is_full_automation and creds["wttj"]:
-            print("🔐 Full Automation: Attempting auto-login...")
+            print("🔐 [WTTJ] Full Automation: Attempting auto-login...")
 
             login_plain = None
             pass_plain = None
@@ -557,7 +557,7 @@ class WelcomeToTheJungleWorker:
                 await self.page.wait_for_selector('button[data-testid="header-user-link-signout"]', state="attached", timeout=10000)
                 await self.page.get_by_test_id("menu-jobs").click(timeout=5000)
 
-                print("✅ Auto-login successful")
+                print("✅ [WTTJ] Auto-login successful")
                 
                 # 🚨 SAVE SESSION COOKIES
                 await self._save_auth_state(user_id)
@@ -566,7 +566,7 @@ class WelcomeToTheJungleWorker:
                 return {}
 
             except Exception as e:
-                print(f"❌ Auto-login failed: {e}")
+                print(f"❌ [WTTJ] Auto-login failed: {e}")
                 # 🚨 RETURN ERROR DICT (Don't raise exception)
                 return {"error": "Failed to log into Welcome to the Jungle. Please check your credentials."}
 
@@ -682,7 +682,7 @@ class WelcomeToTheJungleWorker:
         found_job_entities = []
         
         # 🚨 V2 REQUIREMENT: Get the target limit from the Master
-        worker_job_limit = 1 or state.get("worker_job_limit", 5) 
+        worker_job_limit = state.get("worker_job_limit", 5) 
         
         # 🚨 V2 REQUIREMENT: Fetch Ignored Hashes
         hash_result = await self.get_ignored_hashes.execute(user_id=user_id, days=14)
