@@ -36,7 +36,7 @@ class ApecWorker():
                  get_ignored_hashes: GetIgnoredHashesUseCase,
                  encryption_service: EncryptionServicePort,
                  file_storage: FileStoragePort,
-                 get_agent_state: GetAgentStateUseCase 
+                 get_agent_state: GetAgentStateUseCase
                 ):
         
         # Static Dependencies
@@ -46,6 +46,7 @@ class ApecWorker():
         self.file_storage = file_storage
         self.get_agent_state = get_agent_state 
         
+
         # Runtime State (Lazy Initialization)
         self.playwright: Optional[Playwright] = None
         self.browser: Optional[Browser] = None
@@ -629,7 +630,7 @@ class ApecWorker():
         found_job_entities = []
         
         # 🚨 NEW: Get the target limit calculated by the Master
-        worker_job_limit = state.get("worker_job_limit", 5) 
+        worker_job_limit = 1 or state.get("worker_job_limit", 5) 
         
         # 🚨 REQUIREMENT 2: Fetch Ignored Hashes
         hash_result = await self.get_ignored_hashes.execute(user_id=user_id, days=14)
@@ -966,9 +967,12 @@ class ApecWorker():
         await self._emit(state, "Submitting Applications")
         print("--- [APEC] Submitting Applications ---")
 
-         # 1. Get Inputs from State's "Inbox"
+        # 1. Get Inputs from State's "Inbox"
         jobs_to_process = state.get("processed_offers", [])
         user = state["user"] 
+
+        # 🚨 SCHEMA FIX: Read the exact limit assigned by the Master Orchestrator
+        assigned_submit_limit = state.get("worker_job_limit", 5) 
 
         # 🚨 V2 REQUIREMENT: Filter to make sure this worker ONLY applies to APEC jobs
         # that have been explicitly APPROVED by the user (or auto-approved for basic).
@@ -980,9 +984,16 @@ class ApecWorker():
 
         successful_submissions = []
 
-        
         i = 0
         for offer in apec_jobs:
+            # ==========================================
+            # 🚨 THE FIX: HARD STOP
+            # ==========================================
+            if len(successful_submissions) >= assigned_submit_limit:
+                print(f"🛑 [APEC] Reached assigned submission limit ({assigned_submit_limit}). Halting further submissions.")
+                break
+            # ==========================================
+
             print(f"📝 Applying to: {offer.job_title}: {i+1} out of {len(apec_jobs)}")
             try:
                 # 🚨 V2 WAF BYPASS: Commit early, don't wait for networkidle
@@ -1013,7 +1024,7 @@ class ApecWorker():
                         "mimeType": "application/pdf",
                         "buffer": resume_bytes
                     })
-                   
+                    
                     try:
                         await self.page.locator('input[formcontrolname="isCvSave"]').uncheck()
                     except Exception:
@@ -1105,7 +1116,7 @@ class ApecWorker():
         if not successful_submissions:
             return {"error": "All application attempts failed. The job board may have updated its application form structure."}
 
-        # 🚨 [CHANGED] NO MORE DB SAVING HERE.
+        # 🚨 NO MORE DB SAVING HERE.
         # We simply return the updated list to the Master Agent!
         print(f"✅ Successfully submitted {len(successful_submissions)} applications. Handing back to Orchestrator...")
 

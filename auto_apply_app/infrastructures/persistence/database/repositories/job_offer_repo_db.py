@@ -39,6 +39,7 @@ class JobOfferRepoDB(JobOfferRepository):
             user_id=offer.user_id,  # ✅ FIXED: Added missing user_id
             company_name=offer.company_name,
             job_title=offer.job_title,
+            clean_title=offer.clean_title,  # Added for better FE charts
             location=offer.location,
             job_board=offer.job_board,
             job_posting_id=posting_id,
@@ -243,18 +244,23 @@ class JobOfferRepoDB(JobOfferRepository):
         count_stmt = base_stmt.with_only_columns(func.count(JobOfferDB.id)).order_by(None)
         total_filtered = (await self.session.execute(count_stmt)).scalar_one()
 
-        # 🚨 FIX 2: Swap the SELECT clause safely for titles
+        # 🚨 FIX 2: Swap the SELECT clause safely for titles using COALESCE
+        # This tells the DB to use clean_title, but fallback to job_title if null
+        aggregated_title_col = func.coalesce(JobOfferDB.clean_title, JobOfferDB.job_title).label("aggregated_title")
+
         titles_stmt = (
             base_stmt.with_only_columns(
-                JobOfferDB.job_title, 
+                aggregated_title_col, 
                 func.count(JobOfferDB.id).label("cnt")
             )
-            .group_by(JobOfferDB.job_title)
+            .group_by(func.coalesce(JobOfferDB.clean_title, JobOfferDB.job_title)) # Group by the same logic
             .order_by(func.count(JobOfferDB.id).desc())
-            .limit(3)
+            .limit(3) # Increase this if you want more slices in your pie chart!
         )
         titles_result = await self.session.execute(titles_stmt)
-        top_titles = [{"name": row.job_title, "value": row.cnt} for row in titles_result.all()]
+        
+        # Map the new aliased column 'aggregated_title' to the dictionary
+        top_titles = [{"name": row.aggregated_title, "value": row.cnt} for row in titles_result.all()]
 
         aggregations = {
             "total_unfiltered": total_unfiltered,
@@ -361,6 +367,7 @@ class JobOfferRepoDB(JobOfferRepository):
             user_id=offer_db.user_id, # ✅ FIXED: Added missing user_id
             company_name=offer_db.company_name,
             job_title=offer_db.job_title,
+            clean_title=offer_db.clean_title,  # Added for better FE charts
             location=offer_db.location,
             job_board=offer_db.job_board,
             cover_letter=offer_db.cover_letter,

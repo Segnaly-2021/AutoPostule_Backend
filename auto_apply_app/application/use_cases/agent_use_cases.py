@@ -1,5 +1,6 @@
 # auto_apply_app/application/use_cases/agent_use_cases.py
 from dataclasses import dataclass
+from datetime import datetime, timezone, timedelta
 from uuid import UUID
 import traceback 
 from typing import Optional, Callable
@@ -213,7 +214,7 @@ class ResumeJobApplicationUseCase:
                         return Result.failure(Error.validation_error("No approved jobs found"))
 
             # 6. Resume the Agent
-            print(f"✅ Use Case validation complete. Waking up Master Agent...")
+            print("✅ Use Case validation complete. Waking up Master Agent...")
             await self.agent_service.resume_job_search(
                 user=user,
                 search=search_mission,
@@ -331,7 +332,6 @@ class ProcessAgentResultsUseCase:
         except Exception as e:
             return Result.failure(Error.system_error(str(e)))
 
-
 @dataclass
 class SaveJobApplicationsUseCase:
     """
@@ -346,11 +346,22 @@ class SaveJobApplicationsUseCase:
                 return Result.success("No jobs to save")
 
             count = 0
-            for offer in offers:                
-                async with self.uow as uow:
+            
+            # 🚨 FIX 1: Open the transaction ONCE for the entire batch
+            async with self.uow as uow:
+                for offer in offers:                
+                    
+                    # 🚨 FIX 2: Only set the dates if they don't exist yet!
+                    # This prevents overwriting the original date during future status updates.
+                    if not offer.application_date:
+                        offer.application_date = datetime.now(timezone.utc)
+                        offer.followup_date = offer.application_date + timedelta(days=7) 
+                        
                     await uow.job_repo.save(offer)                
                     count += 1
                     
+            # uow context manager automatically commits the batch here!
+                
             print(f"Saving Use Case: Saved {count} job applications.")
             return Result.success(f"Successfully saved {count} applications")
 

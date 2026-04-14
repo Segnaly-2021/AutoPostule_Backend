@@ -217,6 +217,7 @@ class JobOfferDB(Base):
     form_url: Mapped[str] = mapped_column(String(500))
     company_name: Mapped[str] = mapped_column(String(200), index=True)
     job_title: Mapped[str] = mapped_column(String(200))
+    clean_title: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)  # New field for cleaned job title
     location: Mapped[str] = mapped_column(String(200))
     job_board: Mapped[JobBoard] = mapped_column(SQLEnum(JobBoard, native_enum=False))
     job_posting_id: Mapped[Optional[str]] = mapped_column(String(100), index=True, nullable=True)
@@ -225,7 +226,7 @@ class JobOfferDB(Base):
     job_desc: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     application_date: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(UTC)
+        nullable=True
     )
     followup_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[ApplicationStatus] = mapped_column(

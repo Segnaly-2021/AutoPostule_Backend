@@ -168,6 +168,7 @@ class JobOfferResponse:
     jobDesc: Optional[str]
     company: Optional[str]
     title: Optional[str]
+    clean_title: Optional[str]
     location: Optional[str]
     searchId: Optional[str]
     userId: Optional[str]
@@ -188,6 +189,7 @@ class JobOfferResponse:
             ranking=job_offer.ranking,
             coverLetter=job_offer.cover_letter,
             jobDesc=job_offer.job_desc,
+            clean_title=job_offer.clean_title,
             title=job_offer.job_title,
             location=job_offer.location,
             searchId=job_offer.search_id,

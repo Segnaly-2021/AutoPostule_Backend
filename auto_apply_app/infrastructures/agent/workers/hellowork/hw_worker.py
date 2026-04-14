@@ -519,7 +519,7 @@ class HelloWorkWorker:
         found_job_entities = []
         
         # 🚨 V2 Setup
-        worker_job_limit = state.get("worker_job_limit", 5) 
+        worker_job_limit = 1 or state.get("worker_job_limit", 5) 
         hash_result = await self.get_ignored_hashes.execute(user_id=user_id, days=14)
         ignored_hashes = hash_result.value if hash_result.is_success else set()
         
@@ -771,6 +771,9 @@ class HelloWorkWorker:
         jobs_to_submit = state.get("processed_offers", [])
         user = state["user"]
 
+        # 🚨 SCHEMA FIX: Read the exact limit assigned by the Master Orchestrator
+        assigned_submit_limit = state.get("worker_job_limit", 5) 
+
         # 🚨 V2 FILTER
         hw_jobs = [job for job in jobs_to_submit if job.job_board == JobBoard.HELLOWORK and job.status == ApplicationStatus.APPROVED]
 
@@ -780,6 +783,14 @@ class HelloWorkWorker:
         successful_submissions = []
         i = 0
         for offer in hw_jobs:
+            # ==========================================
+            # 🚨 THE FIX: HARD STOP
+            # ==========================================
+            if len(successful_submissions) >= assigned_submit_limit:
+                print(f"🛑 [HW] Reached assigned submission limit ({assigned_submit_limit}). Halting further submissions.")
+                break
+            # ==========================================
+
             print(f"📝 Applying to: {offer.job_title} ({i+1}/{len(hw_jobs)})")
             try:
                 await self.page.goto(offer.form_url, wait_until="commit", timeout=60000)

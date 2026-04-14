@@ -682,7 +682,7 @@ class WelcomeToTheJungleWorker:
         found_job_entities = []
         
         # 🚨 V2 REQUIREMENT: Get the target limit from the Master
-        worker_job_limit = state.get("worker_job_limit", 5) 
+        worker_job_limit = 1 or state.get("worker_job_limit", 5) 
         
         # 🚨 V2 REQUIREMENT: Fetch Ignored Hashes
         hash_result = await self.get_ignored_hashes.execute(user_id=user_id, days=14)
@@ -1001,6 +1001,9 @@ class WelcomeToTheJungleWorker:
         jobs_to_process = state.get("processed_offers", [])
         user = state["user"] 
 
+        # 🚨 SCHEMA FIX: Read the exact limit assigned by the Master Orchestrator
+        assigned_submit_limit = state.get("worker_job_limit", 5) 
+
         # 🚨 V2 REQUIREMENT: Filter to make sure this worker ONLY applies to WTTJ jobs
         # that have been explicitly APPROVED by the user (or auto-approved for basic).
         wttj_jobs = [job for job in jobs_to_process if job.job_board == JobBoard.WTTJ and job.status == ApplicationStatus.APPROVED]
@@ -1012,6 +1015,14 @@ class WelcomeToTheJungleWorker:
         successful_submissions = []
         i = 0
         for offer in wttj_jobs:
+            # ==========================================
+            # 🚨 THE FIX: HARD STOP
+            # ==========================================
+            if len(successful_submissions) >= assigned_submit_limit:
+                print(f"🛑 [WTTJ] Reached assigned submission limit ({assigned_submit_limit}). Halting further submissions.")
+                break
+            # ==========================================
+
             print(f"📝 [WTTJ] Applying to: {offer.job_title} ({i+1}/{len(wttj_jobs)})")
             try:
                 # 🚨 V2 WAF BYPASS: Commit early, don't wait for DOM to hang on JS challenges
@@ -1104,6 +1115,7 @@ class WelcomeToTheJungleWorker:
         return {
             "submitted_offers": successful_submissions
         }
+    
 
     # --- NODE 8: Cleanup ---
     async def cleanup(self, state: JobApplicationState):

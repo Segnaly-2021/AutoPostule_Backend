@@ -12,6 +12,7 @@ class JobOfferViewModel:
     id: str  
     company: str
     title: str
+    clean_title: Optional[str]  # Added for FE charts
     location: Optional[str]
     interview: bool
     response: bool
