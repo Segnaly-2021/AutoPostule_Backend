@@ -212,6 +212,7 @@ class Application:
             
             get_agent_state_use_case=GetAgentStateUseCase(uow),
             reset_agent_state_use_case=ResetAgentUseCase(uow),
+            get_daily_stats_use_case=GetDailyStatsUseCase(uow),
             cleanup_unsubmitted_use_case=CleanupUnsubmittedJobsUseCase(uow)
         )
 
