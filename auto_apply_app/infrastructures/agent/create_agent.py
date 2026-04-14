@@ -13,7 +13,7 @@ from auto_apply_app.application.use_cases.agent_use_cases import (
     ConsumeAiCreditsUseCase,
     GetIgnoredHashesUseCase
 )
-from auto_apply_app.application.use_cases.job_offer_use_cases import CleanupUnsubmittedJobsUseCase
+from auto_apply_app.application.use_cases.job_offer_use_cases import CleanupUnsubmittedJobsUseCase, GetDailyStatsUseCase
 from auto_apply_app.application.use_cases.agent_state_use_cases import GetAgentStateUseCase, ResetAgentUseCase
 
 # Ports
@@ -35,7 +35,8 @@ def create_agent(
     get_ignored_hashes_use_case: GetIgnoredHashesUseCase,
     get_agent_state_use_case: GetAgentStateUseCase,                # 🚨 NEW
     reset_agent_state_use_case: ResetAgentUseCase,                 # 🚨 NEW
-    cleanup_unsubmitted_use_case: CleanupUnsubmittedJobsUseCase    # 🚨 NEW
+    cleanup_unsubmitted_use_case: CleanupUnsubmittedJobsUseCase,    # 🚨 NEW
+    get_daily_stats_use_case: GetDailyStatsUseCase                 # 🚨 NEW
 ) -> MasterAgent:
     """
     Factory function to create the MasterAgent Singleton.
@@ -82,5 +83,6 @@ def create_agent(
         save_applications_use_case=results_saver,
         cleanup_unsubmitted_use_case=cleanup_unsubmitted_use_case, # 🚨 Wired!
         get_agent_state=get_agent_state_use_case,                  # 🚨 Wired!
-        reset_agent_state=reset_agent_state_use_case               # 🚨 Wired!
+        reset_agent_state=reset_agent_state_use_case,               # 🚨 Wired!
+        get_daily_stats=get_daily_stats_use_case                   # 🚨 Wired!
     )
