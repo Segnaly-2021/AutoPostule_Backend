@@ -54,7 +54,7 @@ class MasterAgent(AgentServicePort):
             - Tone: Formal, sharp, zero familiarity.
             - Length: No strict limit — write as long as the content demands, but never pad. Every sentence must earn its place.
             - Content: Tailored precisely to the job. No invented details.
-            - Opening: Always start by briefly introducing the candidate — their name, current title, school, or most relevant credential for the position.
+            - Opening: Always start by briefly introducing the candidate in a sentence — their name, current title, school, or most relevant credential for the position.
 
             A GOOD COVER LETTER LOOKS LIKE THIS:
             "Madame, Monsieur, diplômé d'un Master en Management de Projet et actuellement en poste en tant que Chef de Projet Senior, je me permets de vous adresser ma candidature pour le poste proposé.
@@ -144,7 +144,7 @@ class MasterAgent(AgentServicePort):
             - Tone: Formal, sharp, zero familiarity.
             - Length: Concise and impactful. Never write a long cover letter — recruiters do not read them.
             - Content: Tailored precisely to the job. No invented details.
-            - Opening: Always start by briefly introducing the candidate — their name, current title, school, or most relevant credential for the position.
+            - Opening: Always start by briefly introducing the candidate in a sentence — their name, current title, school, or most relevant credential for the position.
 
             AN EXAMPLE OF A COVER LETTER LOOKS LIKE THIS:
             "Madame, Monsieur, diplômé d'un Master en Management de Projet et actuellement en poste en tant que Chef de Projet Senior, je me permets de vous adresser ma candidature pour le poste proposé.
