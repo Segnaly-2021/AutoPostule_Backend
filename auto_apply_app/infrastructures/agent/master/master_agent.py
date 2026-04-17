@@ -54,16 +54,38 @@ class MasterAgent(AgentServicePort):
             - Tone: Formal, sharp, zero familiarity.
             - Length: No strict limit — write as long as the content demands, but never pad. Every sentence must earn its place.
             - Content: Tailored precisely to the job. No invented details.
-            - Opening: Always start by briefly introducing the candidate in a sentence — their name, current title, school, or most relevant credential for the position.
+
+            COVER LETTER STRUCTURE — MANDATORY:
+            The cover letter MUST follow this exact paragraph structure, with each paragraph separated by a blank line (\n\n):
+
+            Paragraph 1 — Salutation:
+            Always open with "Madame, Monsieur," on its own line.
+
+            Paragraph 2 — Introduction:
+            Introduce the candidate (name, current title, school or most relevant credential) and state the purpose: applying for the position.
+
+            Paragraph 3 — Experience & Value:
+            Detail relevant experience, skills, and how they match the job requirements. Explain what the candidate brings to the table. This is the core of the letter — be specific and tailored.
+
+            Paragraph 4 — Unique Angle (optional):
+            If the candidate has something unique AND relevant to the position (a project, achievement, perspective), mention it here. Skip this paragraph entirely if nothing genuinely stands out.
+
+            Paragraph 5 — Closing:
+            Express availability for an interview and close with professional regards (e.g. "Je serais ravi(e) d'échanger avec vous...").
+
+            NEVER merge paragraphs. NEVER write a wall of text. Each paragraph must be clearly separated.
 
             A GOOD COVER LETTER LOOKS LIKE THIS:
-            "Madame, Monsieur, diplômé d'un Master en Management de Projet et actuellement en poste en tant que Chef de Projet Senior, je me permets de vous adresser ma candidature pour le poste proposé.
-            Votre offre a retenu toute mon attention tant elle correspond à mon parcours et à mes ambitions professionnelles.
-            Ayant développé une expérience solide en gestion de projet, coordination d'équipes et pilotage opérationnel, je suis convaincu de pouvoir répondre avec efficacité aux enjeux stratégiques du poste.
-            Rigoureux, adaptable et résolument orienté résultats, je m'attache à produire un travail de qualité tout en respectant les délais et les priorités fixées.
+            "Madame, Monsieur,
+
+            Diplômé d'un Master en Management de Projet et actuellement en poste en tant que Chef de Projet Senior, je me permets de vous adresser ma candidature pour le poste proposé.
+
+            Ayant développé une expérience solide en gestion de projet, coordination d'équipes et pilotage opérationnel, je suis convaincu de pouvoir répondre avec efficacité aux enjeux stratégiques du poste. Rigoureux, adaptable et résolument orienté résultats, je m'attache à produire un travail de qualité tout en respectant les délais et les priorités fixées.
+
             Très à l'aise dans des environnements exigeants et en constante évolution, je sais fédérer les parties prenantes autour d'objectifs communs et conduire des projets complexes de bout en bout.
+
             Je serais ravi d'échanger avec vous lors d'un entretien afin de vous exposer plus en détail ma motivation et la valeur que je pourrais apporter à vos équipes."
-            ← Professional, personal, and as long as it needs to be — not a word more. YOUR GOAL IS TO WRITE A BETTER AND WELL-STRUCTURED COVER LETTER.
+            ← Professional, structured, and as long as it needs to be — not a word more. YOUR GOAL IS TO WRITE A BETTER AND WELL-STRUCTURED COVER LETTER.
 
             2. Assign a ranking from 1 to 10 reflecting how well the resume matches the job.
             - Based strictly on skills, experience, and requirements — nothing else.
@@ -81,7 +103,7 @@ class MasterAgent(AgentServicePort):
             - Do NOT wrap the JSON in ```json or ``` markers.
 
             {
-            "cover_letter": "Madame, Monsieur, ...",
+            "cover_letter": "Madame, Monsieur,\n\n[paragraph 2]\n\n[paragraph 3]\n\n[paragraph 4 if relevant]\n\n[paragraph 5]",
             "ranking": 7,
             "clean_title": "Chef de Projet"
             }
@@ -142,17 +164,38 @@ class MasterAgent(AgentServicePort):
             YOUR ONLY TASK:
             1. Write a highly professional and extremely adaptive cover letter in French.
             - Tone: Formal, sharp, zero familiarity.
-            - Length: Concise and impactful. Never write a long cover letter — recruiters do not read them.
+            - Length: Concise and impactful. Never pad — recruiters do not read long letters.
             - Content: Tailored precisely to the job. No invented details.
-            - Opening: Always start by briefly introducing the candidate in a sentence — their name, current title, school, or most relevant credential for the position.
 
-            AN EXAMPLE OF A COVER LETTER LOOKS LIKE THIS:
-            "Madame, Monsieur, diplômé d'un Master en Management de Projet et actuellement en poste en tant que Chef de Projet Senior, je me permets de vous adresser ma candidature pour le poste proposé.
-            Votre offre a retenu toute mon attention tant elle correspond à mon parcours et à mes ambitions professionnelles.
-            Ayant développé une expérience solide en gestion de projet, coordination d'équipes et pilotage opérationnel, je suis convaincu de pouvoir répondre avec efficacité aux enjeux stratégiques du poste.
-            Rigoureux, adaptable et résolument orienté résultats, je m'attache à produire un travail de qualité tout en respectant les délais et les priorités fixées.
+            COVER LETTER STRUCTURE — MANDATORY:
+            The cover letter MUST follow this exact paragraph structure, with each paragraph separated by a blank line (\n\n):
+
+            Paragraph 1 — Salutation:
+            Always open with "Madame, Monsieur," on its own line.
+
+            Paragraph 2 — Introduction:
+            Introduce the candidate (name, current title, school or most relevant credential) and state the purpose: applying for the position.
+
+            Paragraph 3 — Experience & Value:
+            Detail relevant experience, skills, and how they match the job requirements. Explain what the candidate brings to the table. Keep it sharp and specific.
+
+            Paragraph 4 — Unique Angle (optional):
+            If the candidate has something unique AND relevant to the position, mention it here. Skip entirely if nothing genuinely stands out.
+
+            Paragraph 5 — Closing:
+            Express availability for an interview and close with professional regards.
+
+            NEVER merge paragraphs. NEVER write a wall of text. Each paragraph must be clearly separated.
+
+            AN EXAMPLE OF A GOOD COVER LETTER LOOKS LIKE THIS:
+            "Madame, Monsieur,
+
+            Diplômé d'un Master en Management de Projet et actuellement en poste en tant que Chef de Projet Senior, je me permets de vous adresser ma candidature pour le poste proposé.
+
+            Ayant développé une expérience solide en gestion de projet, coordination d'équipes et pilotage opérationnel, je suis convaincu de pouvoir répondre avec efficacité aux enjeux stratégiques du poste. Rigoureux, adaptable et résolument orienté résultats, je m'attache à produire un travail de qualité tout en respectant les délais et les priorités fixées.
+
             Je serais ravi d'échanger avec vous lors d'un entretien afin de vous exposer plus en détail ma motivation et la valeur que je pourrais apporter à vos équipes."
-            ← Sharp, professional, respectful of the recruiter's time. YOUR GOAL IS TO WRITE A BETTER AND WELL-STRUCTURED COVER LETTER.
+            ← Sharp, structured, respectful of the recruiter's time. YOUR GOAL IS TO WRITE A BETTER AND WELL-STRUCTURED COVER LETTER.
 
             2. Assign a ranking from 1 to 10 reflecting how well the resume matches the job.
             - Based strictly on skills, experience, and requirements — nothing else.
@@ -170,7 +213,7 @@ class MasterAgent(AgentServicePort):
             - Do NOT wrap the JSON in ```json or ``` markers.
 
             {
-            "cover_letter": "Madame, Monsieur, ...",
+            "cover_letter": "Madame, Monsieur,\n\n[paragraph 2]\n\n[paragraph 3]\n\n[paragraph 4 if relevant]\n\n[paragraph 5]",
             "ranking": 7,
             "clean_title": "Chef de Projet"
             }

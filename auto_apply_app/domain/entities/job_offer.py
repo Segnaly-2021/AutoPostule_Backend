@@ -22,7 +22,7 @@ class JobOffer(Entity):
     ranking: Optional[int] = field(default=None)    
     job_desc: Optional[str] = field(default=None)
     cover_letter: Optional[str] = field(default=None)  
-    clean_title: Optional[str] = field(default=None) # [NEW] Cleaned title for FE charts
+    clean_title: Optional[str] = field(default=None) 
     _job_posting_id : Optional[str] = field(default=None, init=False) 
     application_date: Optional[datetime] = field(default=None)
     has_interview: bool = field(default=False)
@@ -50,7 +50,7 @@ class JobOffer(Entity):
         if self.location:
             # Matches an optional space, a hyphen, an optional space, 
             # and 1 or more digits right at the end of the string ($)
-            cleaned = re.sub(r'\s*-\s*\d+$', '', self.location)
+            cleaned = re.sub(r'\s*(-\s*)?\d+\w*$', '', self.location)
             
             # Update the property and strip any accidental leftover whitespace
             self.location = cleaned.strip()
