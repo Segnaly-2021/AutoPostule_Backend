@@ -191,7 +191,7 @@ class WebJobPresenter(JobPresenter):
         return JobOfferViewModel(
             id=job.id,
             company=job.company,
-            title=job.title,
+            title=job.clean_title if job.clean_title else job.title,  # Use clean_title if available for better FE charts
             cover_letter=job.coverLetter, 
             job_url=job.url,           
             location=job.location,
@@ -218,9 +218,10 @@ class WebJobPresenter(JobPresenter):
             id=str(job.id),
             company_name=job.company_name,
             job_title=job.job_title,
+            url=job.url,
             location=job.location,
             cover_letter=job.cover_letter or "",
-            ranking=job.ranking or 5,
+            ranking=int(job.ranking)*10 or 50,
             board=str(job.job_board.value),
             status=str(job.status.value)
         )

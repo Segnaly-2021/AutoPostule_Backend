@@ -37,6 +37,7 @@ class JobReviewViewModel:
     location: Optional[str]
     cover_letter: str
     ranking: int
+    url: str
     board: str
     status: str
 
