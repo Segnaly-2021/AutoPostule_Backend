@@ -298,7 +298,7 @@ class HelloWorkWorker:
         preferences = state["preferences"]
         self.playwright = await async_playwright().start()
         self.browser = await self.playwright.chromium.launch(
-            headless= preferences.browser_headless, 
+            headless= not preferences.browser_headless, 
             args=['--disable-blink-features=AutomationControlled']
         )
         
@@ -321,7 +321,7 @@ class HelloWorkWorker:
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless=state["preferences"].browser_headless, 
+                headless= not state["preferences"].browser_headless, 
                 args=['--disable-blink-features=AutomationControlled']
             )
             
@@ -559,10 +559,10 @@ class HelloWorkWorker:
                         
                         
                         raw_company, raw_title, raw_location  = await self.get_raw_job_data(card)
-                        print("---[HW JOB DATA]---\n")
-                        print(f"[HW Company]: {raw_company}\n")
-                        print(f"[HW Title]: {raw_title}\n")
-                        print(f"[HW Location]: {raw_location}")
+                        print(f"---[HW JOB DATA - user: {user_id}]---")
+                        print(f"[HW - {user_id} - Company]: {raw_company}")
+                        print(f"[HW - {user_id} - Title]: {raw_title}")
+                        print(f"[HW - {user_id} - Location]: {raw_location}")
 
                         if not raw_title or not raw_company:
                             print("    ⚠️ Missing title or company, skipping card.")
@@ -582,15 +582,15 @@ class HelloWorkWorker:
 
                         # Extract Description
                         try:
-                            desc_el = self.page.locator('div[class="tw-layout-grid"]').first                            
+                            desc_el = self.page.locator('div[id="content"]')                          
                             if await desc_el.count() == 0: 
-                                 desc_el = self.page.locator('div[id="offer-panel"]')
+                                 desc_el = self.page.locator('div[data-id-storage-local-storage-key-param="visited-offers"]')
                             job_desc = await desc_el.inner_text()
                         except Exception:
                             job_desc = ""
 
                         # Apply Button Check
-                        moving_to_form_btn = self.page.locator('a[data-cy="applyButton"]').first
+                        moving_to_form_btn = self.page.locator('a[data-cy="applyButtonHeader"]').first
                         if await moving_to_form_btn.count() > 0:
                             await moving_to_form_btn.click()
                             try:                                
@@ -795,7 +795,7 @@ class HelloWorkWorker:
             try:
                 await self.page.goto(offer.form_url, wait_until="commit", timeout=60000)
 
-                moving_to_form_btn = self.page.locator('a[data-cy="applyButton"]').first
+                moving_to_form_btn = self.page.locator('a[data-cy="applyButtonHeader"]')
                 if await moving_to_form_btn.count() > 0:
                     await moving_to_form_btn.click()
 
