@@ -443,7 +443,7 @@ class WelcomeToTheJungleWorker:
             self.page = await self.context.new_page()
             
             # WTTJ usually needs you to hit the base URL to hydrate the cookies properly
-            await self.page.goto(self.base_url, wait_until="networkidle")
+            await self.page.goto(self.base_url, wait_until="networkidle", timeout=120000)
             await self.page.wait_for_timeout(10000)
             await self._handle_cookies()
 
@@ -491,7 +491,7 @@ class WelcomeToTheJungleWorker:
         print("--- [WTTJ] Navigating ---")
         try:
              # 1. Wait until the network is actually quiet
-            await self.page.goto(self.base_url, wait_until="networkidle", timeout=60000)
+            await self.page.goto(self.base_url, wait_until="networkidle", timeout=90000)
 
             await self.page.wait_for_timeout(15000)
             
@@ -628,11 +628,13 @@ class WelcomeToTheJungleWorker:
             if contract_types or min_salary > 0:
                 await self._apply_filters(contract_types, min_salary)
 
-            # 3. Finalize search (Uncommented!)
-            #await self.page.keyboard.press("Enter")
+            # 3. wait for network to be idle after applying filters (important for WTTJ to avoid bot detection)
+            await self.page.wait_for_load_state("networkidle")
+           
             
             # 4. Wait for results
-            await self.page.wait_for_timeout(5000)
+            results_selector = 'li[data-testid="search-results-list-item-wrapper"]' # Adjust if your selector is different
+            await self.page.wait_for_selector(results_selector, state="attached", timeout=60000)
             await self._handle_cookies()
             
             # return {
@@ -649,27 +651,36 @@ class WelcomeToTheJungleWorker:
 
     # Helper go_back:
     async def nav_back(self, url: str):
-        # 6. Navigate back to search results
-        await self.page.goto(url, wait_until="networkidle")
 
-        # 🚨 CRITICAL: Instead of just handling cookies, wait for the actual results to be visible
-        try:
-            # Wait for the specific job card container to reappear
-            # This proves the "Bot Detection" or "Loading" overlay is gone.
-            results_selector = '[data-testid="search-results-list-item-wrapper"]' # Adjust if your selector is different
-            await self.page.wait_for_selector(results_selector, state="visible", timeout=10000)
-            
-            # Optional: A tiny human-like pause
-            await asyncio.sleep(3) 
-            
+        if await self.page.locator('a[title="Retourner aux résultats"]').count() > 0:
+            await self.page.locator('a[title="Retourner aux résultats"]').click()
+            await self.page.wait_for_load_state("networkidle")
+            await self.page.wait_for_timeout(5000)
             await self._handle_cookies()
+        
+        else:
+            # 6. Navigate back to search results
+            await self.page.goto(url, wait_until="networkidle")
+            await self.page.wait_for_timeout(5000)
 
-        except Exception:
-            print("⚠️ Search results didn't reappear after going back. Possible bot detection or slow network.")
-            # Fallback: Refresh the page entirely if the back button broke the state
-            await self.page.reload(wait_until="networkidle")
-            await asyncio.sleep(3) 
-            await self._handle_cookies()
+            # 🚨 CRITICAL: Instead of just handling cookies, wait for the actual results to be visible
+            try:
+                # Wait for the specific job card container to reappear
+                # This proves the "Bot Detection" or "Loading" overlay is gone.
+                results_selector = '[data-testid="search-results-list-item-wrapper"]' # Adjust if your selector is different
+                await self.page.wait_for_selector(results_selector, state="visible", timeout=30000)
+                
+                # Optional: A tiny human-like pause
+                await self.page.wait_for_timeout(3000) 
+                
+                await self._handle_cookies()
+
+            except Exception:
+                print("⚠️ Search results didn't reappear after going back. Possible bot detection or slow network.")
+                # Fallback: Refresh the page entirely if the back button broke the state
+                await self.page.reload(wait_until="networkidle")
+                await self.page.wait_for_timeout(5000) 
+                await self._handle_cookies()
 
 
     # --- NODE 5: Scrape Jobs (WTTJ Integrated & Paginated) ---
@@ -685,7 +696,7 @@ class WelcomeToTheJungleWorker:
         worker_job_limit = 1 or state.get("worker_job_limit", 5) 
         
         # 🚨 V2 REQUIREMENT: Fetch Ignored Hashes
-        hash_result = await self.get_ignored_hashes.execute(user_id=user_id, days=14)
+        hash_result = await self.get_ignored_hashes.execute(user_id=user_id, days=30)
 
         if not hash_result.is_success:
             print(f"⚠️ Warning: Could not fetch ignored hashes: {hash_result.error.message}")
@@ -1084,6 +1095,7 @@ class WelcomeToTheJungleWorker:
                 submit_btn = self.page.locator('[data-testid="apply-form-submit"]')
                 
                 if await submit_btn.is_visible():
+                    await self.page.wait_for_timeout(30000) 
                     await submit_btn.click() 
                     await self.page.wait_for_timeout(45000) # Wait for network confirmation
 
@@ -1134,7 +1146,7 @@ class WelcomeToTheJungleWorker:
         """
         # 1. Internal Error Check
         if state.get("error"):
-            print(f"🛑 [APEC Worker] Circuit Breaker Tripped: {state['error']}")
+            print(f"🛑 [WTTJ - {str(state['user'].id)} - Worker] Circuit Breaker Tripped: {state['error']}")
             return "error"
 
         # 2. External Kill Switch Check
@@ -1143,10 +1155,10 @@ class WelcomeToTheJungleWorker:
             state_result = await self.get_agent_state.execute(user_id)
             
             if state_result.is_success and state_result.value.is_shutdown:
-                print("🛑 [APEC Worker] User Kill Switch Detected! Aborting gracefully...")
+                print(f"🛑 [WTTJ - {str(user_id)} - Worker] User Kill Switch Detected! Aborting gracefully...")
                 return "error"
         except Exception as e:
-            print(f"⚠️ [APEC] Failed to check DB for agent state: {e}")
+            print(f"⚠️ [WTTJ - {str(state['user'].id)} - Worker] Failed to check DB for agent state: {e}")
             pass # Failsafe: Continue if the DB check fails so we don't randomly crash
 
         return "continue"

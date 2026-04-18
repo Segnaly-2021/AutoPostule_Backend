@@ -401,7 +401,8 @@ class ApecWorker():
             self.page = await self.context.new_page()
             
             # Navigate to base URL to initialize the page object
-            await self.page.goto(self.base_url, wait_until="networkidle", timeout=60000)
+            await self.page.goto(self.base_url, wait_until="networkidle", timeout=90000)
+            await self.page.wait_for_timeout(20000)
             await self._handle_cookies()
 
             ### DUMMY SEARCH TO ESTABLISH SESSION CONTEXT (Important for APEC)
@@ -415,6 +416,7 @@ class ApecWorker():
             print("🔎 [APEC] Dummy Starting Search Process")       
             try:
                 # Call the filter helper which handles job title + filters
+                await self.page.wait_for_timeout(30000)
                 await self._apply_filters(job_title, contract_types, min_salary)    
 
                 # Verify if results appeared
@@ -509,7 +511,7 @@ class ApecWorker():
                         continue
                     break                
                 await self.page.wait_for_timeout(20000)      
-                await self.page.goto(f"{self.base_url}candidat.html", wait_until="networkidle")      
+                await self.page.goto(f"{self.base_url}candidat.html", wait_until="networkidle", timeout=90000)      
                 print("✅ Auto-login successful")
 
                 # 🚨 [NEW] Save the session cookies!
@@ -997,7 +999,7 @@ class ApecWorker():
             print(f"📝 Applying to: {offer.job_title}: {i+1} out of {len(apec_jobs)}")
             try:
                 # 🚨 V2 WAF BYPASS: Commit early, don't wait for networkidle
-                await self.page.goto(offer.form_url, wait_until='commit', timeout=60000)
+                await self.page.goto(offer.form_url, wait_until='commit', timeout=90000)
                 await self.page.wait_for_timeout(5000)
 
                 # B. CV Upload (APEC Specific Logic)
@@ -1019,7 +1021,7 @@ class ApecWorker():
                     human_name = user.resume_file_name or f"{user.firstname}_{user.lastname}_CV.pdf"
 
                     # 🚨 Playwright uploads securely from RAM! No temp files!
-                    await self.page.locator('input[type="file"]').set_input_files({
+                    await self.page.locator('input[type="file"]').first.set_input_files({
                         "name": human_name,
                         "mimeType": "application/pdf",
                         "buffer": resume_bytes
@@ -1032,21 +1034,19 @@ class ApecWorker():
 
                 # C. Cover Letter
                 try:
-                    await self.page.wait_for_selector('a[aria-controls="collapseThree"]', state="visible")
-                    anchor = self.page.locator('a[aria-controls="collapseThree"]').first
-                    anchor_label = self.page.locator('div[id="headingThree"]').first
+                    await self.page.wait_for_selector('label:has-text("Saisir directement ma lettre de motivation")', state="visible")
                     
-                    await anchor_label.click()
-                    await self.page.wait_for_timeout(5000)
-                    
-                    val = await anchor.get_attribute('aria-expanded')
-                    if val != 'true':
-                        print("⚠ Accordion didn't open, clicking again...")
-                        await anchor_label.click()
+                    # Click the radio input directly, not the label
+                    radio_buttons = self.page.locator('input[formcontrolname="choixLm"]')
+                    await radio_buttons.last.click()  # second radio = "Saisir directement"
 
-                    await self.page.locator('#collapseThree').wait_for(state="visible")
+                    await self.page.wait_for_timeout(3000)
+
                     if offer.cover_letter:
-                        await self.page.locator('#comment').fill(offer.cover_letter)
+                        await self.page.locator('textarea[formcontrolname="lmTexteSaisie"]').fill(offer.cover_letter)
+                        # Trigger Angular's change detection
+                        await self.page.locator('textarea[formcontrolname="lmTexteSaisie"]').dispatch_event('input')
+
                 except Exception as e:
                     print(f"⚠ Could not fill cover letter: {e}")
 
