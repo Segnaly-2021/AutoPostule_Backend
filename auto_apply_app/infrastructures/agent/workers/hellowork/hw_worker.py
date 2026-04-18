@@ -298,7 +298,7 @@ class HelloWorkWorker:
         preferences = state["preferences"]
         self.playwright = await async_playwright().start()
         self.browser = await self.playwright.chromium.launch(
-            headless= not preferences.browser_headless, 
+            headless= preferences.browser_headless, 
             args=['--disable-blink-features=AutomationControlled']
         )
         
@@ -321,7 +321,7 @@ class HelloWorkWorker:
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless= not state["preferences"].browser_headless, 
+                headless= state["preferences"].browser_headless, 
                 args=['--disable-blink-features=AutomationControlled']
             )
             
