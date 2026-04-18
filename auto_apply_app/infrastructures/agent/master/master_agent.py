@@ -73,6 +73,9 @@ class MasterAgent(AgentServicePort):
             Paragraph 5 — Closing:
             Express availability for an interview and close with professional regards (e.g. "Je serais ravi(e) d'échanger avec vous...").
 
+            Paragraph 6 — Closing with candidate's name: 
+            Always end with the "Cordialement," followed by the candidate's full name on its own line.
+            
             NEVER merge paragraphs. NEVER write a wall of text. Each paragraph must be clearly separated.
 
             A GOOD COVER LETTER LOOKS LIKE THIS:
@@ -141,6 +144,10 @@ class MasterAgent(AgentServicePort):
             Paragraph 5 — Closing:
             Express availability for an interview and close with professional regards (e.g. "Je serais ravi(e) d'échanger avec vous...").
 
+            Paragraph 6 — Closing with candidate's name: 
+            Always end with the "Cordialement," followed by the candidate's full name on its own line.
+            
+
             NEVER merge paragraphs. NEVER write a wall of text. Each paragraph must be clearly separated.
 
             A GOOD COVER LETTER LOOKS LIKE THIS:
@@ -208,6 +215,10 @@ class MasterAgent(AgentServicePort):
 
             Paragraph 5 — Closing:
             Express availability for an interview and close with professional regards.
+
+            Paragraph 6 — Closing with candidate's name: 
+            Always end with the "Cordialement," followed by the candidate's full name on its own line.
+            
 
             NEVER merge paragraphs. NEVER write a wall of text. Each paragraph must be clearly separated.
 
