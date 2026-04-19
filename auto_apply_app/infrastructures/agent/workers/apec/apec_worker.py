@@ -266,6 +266,7 @@ class ApecWorker():
         print(f"--- [APEC] Applying Advanced Filters for: {job_title} ---")
         try:
             # 1. Click on "Recherche avancée"
+            await self.page.wait_for_selector('a[id="advancedSearch"]', state="visible", timeout=60000)
             await self.page.locator('a[id="advancedSearch"]').click()
             await self.page.wait_for_selector('input[id="keywords"]', state="visible")
 
