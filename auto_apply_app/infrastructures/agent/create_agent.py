@@ -21,11 +21,7 @@ from auto_apply_app.application.service_ports.encryption_port import EncryptionS
 from auto_apply_app.application.service_ports.file_storage_port import FileStoragePort  
 
 
-api_keys = {
-    "gemini": os.getenv("GEMINI_API_KEY"),
-    "openai": os.getenv("OPENAI_API_KEY"),
-    "anthropic": os.getenv("ANTHROPIC_API_KEY"),
-}
+
 
 def create_agent(
     results_saver: SaveJobApplicationsUseCase,
@@ -48,6 +44,12 @@ def create_agent(
     
     print("[Agent Factory] Initializing Worker Infrastructure...")
 
+    api_keys = {
+        "gemini": os.getenv("GEMINI_API_KEY"),
+        "openai": os.getenv("OPENAI_API_KEY"),
+        "anthropic": os.getenv("ANTHROPIC_API_KEY"),
+    }
+
     # 1. Instantiate Apec Worker
     apec_worker = ApecWorker(
        get_ignored_hashes=get_ignored_hashes_use_case,
@@ -69,6 +71,7 @@ def create_agent(
         get_ignored_hashes=get_ignored_hashes_use_case,
         encryption_service=encryption_service,
         file_storage=file_storage,
+        api_keys=api_keys,
         get_agent_state=get_agent_state_use_case # 🚨 Wired!
     )
     
