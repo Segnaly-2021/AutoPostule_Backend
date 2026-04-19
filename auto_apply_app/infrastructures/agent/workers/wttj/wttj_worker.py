@@ -560,7 +560,7 @@ class WelcomeToTheJungleWorker:
                 
                 # Verify Success
                 await self.page.wait_for_selector('button[data-testid="header-user-link-signout"]', state="attached", timeout=10000)
-                await self.page.get_by_test_id("menu-jobs").click(timeout=5000)
+                await self.page.get_by_test_id("menu-jobs").click()
 
                 print("✅ [WTTJ] Auto-login successful")
                 
