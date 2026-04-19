@@ -389,7 +389,7 @@ class HelloWorkWorker:
         print("--- [HW] Navigating to HelloWork ---")
         try:
             # 1. Wait until the network is actually quiet
-            await self.page.goto(self.base_url, wait_until="networkidle", timeout=60000)
+            await self.page.goto(self.base_url, wait_until="networkidle", timeout=90000)
 
             await self.page.wait_for_timeout(10000)
             

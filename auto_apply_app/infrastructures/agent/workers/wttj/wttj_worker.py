@@ -445,7 +445,7 @@ class WelcomeToTheJungleWorker:
             self.page = await self.context.new_page()
             
             # WTTJ usually needs you to hit the base URL to hydrate the cookies properly
-            await self.page.goto(self.base_url, wait_until="networkidle", timeout=120000)
+            await self.page.goto(self.base_url, wait_until="networkidle", timeout=60000)
             await self.page.wait_for_timeout(10000)
             await self._handle_cookies()
 
@@ -462,7 +462,7 @@ class WelcomeToTheJungleWorker:
             try:
                 # 1. Fill the job title (Using your EXACT original selector)
                 try:
-                    await self.page.wait_for_selector('[data-testid="jobs-home-search-field-query"]')
+                    await self.page.wait_for_selector('[data-testid="jobs-home-search-field-query"]', timeout=60000)
                 except Exception:
                     await self.page.reload(wait_until="networkidle")
 
@@ -479,6 +479,9 @@ class WelcomeToTheJungleWorker:
                 # 4. Wait for results
                 await self.page.wait_for_timeout(5000)
 
+                # 5. Handle Cookies one last time before we finish boot
+                await self._handle_cookies()
+                
                 return {}
             except Exception as e:
                 print(f"⚠️ Initial search failed during session boot: {e}")
@@ -537,7 +540,7 @@ class WelcomeToTheJungleWorker:
                 await self.page.wait_for_timeout(30000)
                 
                 await self.page.get_by_test_id("not-logged-visible-login-button").click()
-                await self.page.wait_for_selector('input[id="email_login"]', state="visible", timeout=5000)
+                await self.page.wait_for_selector('input[id="email_login"]', state="visible", timeout=90000)
 
                 await self.page.wait_for_timeout(3000)
 
@@ -719,7 +722,7 @@ class WelcomeToTheJungleWorker:
                 
                 # Wait for the cards list to populate on the current page
                 try:
-                    await self.page.wait_for_selector('li[data-testid="search-results-list-item-wrapper"]', timeout=5000)
+                    await self.page.wait_for_selector('li[data-testid="search-results-list-item-wrapper"]', timeout=90000)
                 except Exception:
                     print(f"⚠️  No results found on page {page_number}.")
                     if page_number == 1:
@@ -742,7 +745,7 @@ class WelcomeToTheJungleWorker:
                     
                     try:
                         # 1. Re-locate to avoid stale elements after coming back
-                        cards = self.page.get_by_test_id("search-results-list-item-wrapper")
+                        cards = self.page.get_by_test_id("search-results-list-item-wrapper", timeout=60000)
                         card = cards.nth(i)
 
 
