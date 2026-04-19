@@ -481,7 +481,7 @@ class WelcomeToTheJungleWorker:
 
                 # 5. Handle Cookies one last time before we finish boot
                 await self._handle_cookies()
-                
+
                 return {}
             except Exception as e:
                 print(f"⚠️ Initial search failed during session boot: {e}")
@@ -745,7 +745,7 @@ class WelcomeToTheJungleWorker:
                     
                     try:
                         # 1. Re-locate to avoid stale elements after coming back
-                        cards = self.page.get_by_test_id("search-results-list-item-wrapper", timeout=60000)
+                        cards = self.page.get_by_test_id("search-results-list-item-wrapper")
                         card = cards.nth(i)
 
 
