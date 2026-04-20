@@ -298,9 +298,9 @@ class WelcomeToTheJungleWorker:
         """
 
         try:
-            await self.page.wait_for_selector('button[id="jobs-search-filter-all"]', state="visible", timeout=15000)
+            await self.page.wait_for_selector('button[id="jobs-search-filter-all"]', state="visible", timeout=60000)
         except Exception:
-             await self.page.reload(wait_until="networkidle")
+            await self.page.reload(wait_until="networkidle")
 
 
         try:
@@ -345,7 +345,9 @@ class WelcomeToTheJungleWorker:
                 await search_button.click()
             
             # Brief wait for the modal to vanish and search to refresh
-            await self.page.wait_for_timeout(1500)
+            await self.page.wait_for_timeout(5000)
+            await self._handle_cookies()
+
 
         except Exception as e:
             print(f"❌ Error applying filters: {e}")
@@ -386,7 +388,7 @@ class WelcomeToTheJungleWorker:
         # 2. Initialize Browser
         self.playwright = await async_playwright().start()
         self.browser = await self.playwright.chromium.launch(
-            headless= preferences.browser_headless, 
+            headless= not preferences.browser_headless, 
             args=['--disable-blink-features=AutomationControlled']
         )
         
@@ -414,7 +416,7 @@ class WelcomeToTheJungleWorker:
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless= state["preferences"].browser_headless,
+                headless= not state["preferences"].browser_headless,
                 args=['--disable-blink-features=AutomationControlled']
             )
             
@@ -445,7 +447,7 @@ class WelcomeToTheJungleWorker:
             self.page = await self.context.new_page()
             
             # WTTJ usually needs you to hit the base URL to hydrate the cookies properly
-            await self.page.goto(self.base_url, wait_until="networkidle", timeout=60000)
+            await self.page.goto(self.base_url, wait_until="networkidle", timeout=120000)
             await self.page.wait_for_timeout(10000)
             await self._handle_cookies()
 
@@ -462,7 +464,7 @@ class WelcomeToTheJungleWorker:
             try:
                 # 1. Fill the job title (Using your EXACT original selector)
                 try:
-                    await self.page.wait_for_selector('[data-testid="jobs-home-search-field-query"]', timeout=60000)
+                    await self.page.wait_for_selector('[data-testid="jobs-home-search-field-query"]')
                 except Exception:
                     await self.page.reload(wait_until="networkidle")
 
@@ -478,9 +480,6 @@ class WelcomeToTheJungleWorker:
                 
                 # 4. Wait for results
                 await self.page.wait_for_timeout(5000)
-
-                # 5. Handle Cookies one last time before we finish boot
-                await self._handle_cookies()
 
                 return {}
             except Exception as e:
@@ -540,7 +539,7 @@ class WelcomeToTheJungleWorker:
                 await self.page.wait_for_timeout(30000)
                 
                 await self.page.get_by_test_id("not-logged-visible-login-button").click()
-                await self.page.wait_for_selector('input[id="email_login"]', state="visible", timeout=90000)
+                await self.page.wait_for_selector('input[id="email_login"]', state="visible", timeout=5000)
 
                 await self.page.wait_for_timeout(3000)
 
@@ -559,8 +558,10 @@ class WelcomeToTheJungleWorker:
                 await self.page.wait_for_timeout(30000)              
                 
                 # Verify Success
-                await self.page.wait_for_selector('button[data-testid="header-user-link-signout"]', state="attached", timeout=10000)
-                await self.page.get_by_test_id("menu-jobs").click()
+                #await self.page.wait_for_selector('button[data-testid="header-user-link-signout"]', state="visible", timeout=60000)
+                await self.page.goto("https://www.welcometothejungle.com/fr/jobs", wait_until="networkidle", timeout=60000)
+                await self.page.wait_for_timeout(30000)
+                await self._handle_cookies()
 
                 print("✅ [WTTJ] Auto-login successful")
                 
@@ -640,6 +641,7 @@ class WelcomeToTheJungleWorker:
             # 4. Wait for results
             results_selector = 'li[data-testid="search-results-list-item-wrapper"]' # Adjust if your selector is different
             await self.page.wait_for_selector(results_selector, state="attached", timeout=60000)
+            await self.page.wait_for_timeout(10000)
             await self._handle_cookies()
             
             # return {
@@ -660,7 +662,7 @@ class WelcomeToTheJungleWorker:
         if await self.page.locator('a[title="Retourner aux résultats"]').count() > 0:
             await self.page.locator('a[title="Retourner aux résultats"]').click()
             await self.page.wait_for_load_state("networkidle")
-            await self.page.wait_for_timeout(5000)
+            await self.page.wait_for_timeout(10000)
             await self._handle_cookies()
         
         else:
@@ -722,7 +724,7 @@ class WelcomeToTheJungleWorker:
                 
                 # Wait for the cards list to populate on the current page
                 try:
-                    await self.page.wait_for_selector('li[data-testid="search-results-list-item-wrapper"]', timeout=90000)
+                    await self.page.wait_for_selector('li[data-testid="search-results-list-item-wrapper"]', timeout=5000)
                 except Exception:
                     print(f"⚠️  No results found on page {page_number}.")
                     if page_number == 1:
@@ -1278,7 +1280,7 @@ class WelcomeToTheJungleWorker:
                                 case "text":
                                     await self.page.locator(f'[data-testid="{testid}-input"]').fill(field["value"])
                                 case "textarea":
-                                    await self.page.locator(f'[data-testid="{testid}-textarea"]').fill(field["value"])
+                                    await self.page.locator(f'[data-testid="{testid}-input"]').fill(field["value"])
                                 case "radio":
                                     await self.page.locator(
                                         f'[data-testid^="{testid}-RADIO"][label="{field["value"]}"]'

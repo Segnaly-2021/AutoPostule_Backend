@@ -337,7 +337,7 @@ class ApecWorker():
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless= preferences.browser_headless,
+                headless= not preferences.browser_headless,
                 args=['--disable-blink-features=AutomationControlled']
             )
             
@@ -370,7 +370,7 @@ class ApecWorker():
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless= state["preferences"].browser_headless,
+                headless= not state["preferences"].browser_headless,
                 args=['--disable-blink-features=AutomationControlled']
             )
             
@@ -1004,49 +1004,86 @@ class ApecWorker():
                 await self.page.wait_for_timeout(5000)
 
                 # B. CV Upload (APEC Specific Logic)
-                # 🚨 Wait for the CV container to prove the form actually loaded past the WAF
                 try:
-                    await self.page.wait_for_selector('.form-check:has-text("Importer un CV")', state="attached", timeout=15000)
+                    await self.page.wait_for_selector('#formUpload, .form-check-true.profil-selection', state="visible", timeout=60000)
                 except Exception:
                     print(f"⚠ Form did not load correctly for {offer.form_url}. Possible WAF block.")
                     continue
 
-                if await self.page.locator('.form-check:has-text("Importer un CV")').count() > 0:
-                    await self.page.locator('label:has-text("Importer un CV")').click() 
-                
                 if user.resume_path:
                     print("⬇️ Downloading resume from cloud to RAM...")
                     resume_bytes = await self.file_storage.download_file(user.resume_path)
-                    
-                    # Fallback if the user entity doesn't have the new human name yet
                     human_name = user.resume_file_name or f"{user.firstname}_{user.lastname}_CV.pdf"
 
-                    # 🚨 Playwright uploads securely from RAM! No temp files!
-                    await self.page.locator('input[type="file"]').first.set_input_files({
-                        "name": human_name,
-                        "mimeType": "application/pdf",
-                        "buffer": resume_bytes
-                    })
-                    
+                    # Detect which scenario we're in
+                    has_saved_resume = await self.page.locator('.form-check-true.profil-selection').count() > 0
+
+                    if has_saved_resume:
+                        print("📄 [APEC] Saved resume detected — uploading a fresh one instead.")
+                        # Click "Importer un CV" radio to reveal the upload form
+                        await self.page.locator('label.choice-highlight.import-cv').click()
+                        await self.page.wait_for_timeout(1000)
+                        # Upload from RAM
+                        await self.page.locator('#formUpload input[type="file"]').first.set_input_files({
+                            "name": human_name,
+                            "mimeType": "application/pdf",
+                            "buffer": resume_bytes
+                        })
+                    else:
+                        print("📄 [APEC] No saved resume — uploading directly.")
+                        # Upload form is already visible, go straight to it
+                        await self.page.locator('#formUpload input[type="file"]').first.set_input_files({
+                            "name": human_name,
+                            "mimeType": "application/pdf",
+                            "buffer": resume_bytes
+                        })
+
+                    await self.page.wait_for_timeout(1000)
+
+                    # Uncheck "save CV to account" to avoid polluting the user's APEC profile
                     try:
-                        await self.page.locator('input[formcontrolname="isCvSave"]').uncheck()
+                        save_checkbox = self.page.locator('input[formcontrolname="isCvSave"]')
+                        if await save_checkbox.count() > 0 and await save_checkbox.is_checked():
+                            await save_checkbox.uncheck()
                     except Exception:
                         pass
 
                 # C. Cover Letter
                 try:
-                    await self.page.wait_for_selector('label:has-text("Saisir directement ma lettre de motivation")', state="visible")
-                    
-                    # Click the radio input directly, not the label
-                    radio_buttons = self.page.locator('input[formcontrolname="choixLm"]')
-                    await radio_buttons.last.click()  # second radio = "Saisir directement"
+                    has_radio_version = await self.page.locator('input[formcontrolname="choixLm"]').count() > 0
 
-                    await self.page.wait_for_timeout(3000)
+                    if has_radio_version:
+                        print("📝 [APEC] Cover letter: last-night radio version detected.")
+                        await self.page.wait_for_selector('label:has-text("Saisir directement ma lettre de motivation")', state="visible")
+                        
+                        # Second radio = "Saisir directement ma lettre de motivation"
+                        await self.page.locator('input[formcontrolname="choixLm"]').last.click()
+                        await self.page.wait_for_timeout(3000)
 
-                    if offer.cover_letter:
-                        await self.page.locator('textarea[formcontrolname="lmTexteSaisie"]').fill(offer.cover_letter)
-                        # Trigger Angular's change detection
-                        await self.page.locator('textarea[formcontrolname="lmTexteSaisie"]').dispatch_event('input')
+                        if offer.cover_letter:
+                            textarea = self.page.locator('textarea[formcontrolname="lmTexteSaisie"]')
+                            await textarea.fill(offer.cover_letter)
+                            await textarea.dispatch_event('input')
+
+                    else:
+                        print("📝 [APEC] Cover letter: current simple message version detected.")
+                        await self.page.wait_for_selector('a[aria-controls="collapseThree"]', state="visible")
+                        anchor = self.page.locator('a[aria-controls="collapseThree"]').first
+                        anchor_label = self.page.locator('div[id="headingThree"]').first
+
+                        await anchor_label.click()
+                        await self.page.wait_for_timeout(5000)
+
+                        val = await anchor.get_attribute('aria-expanded')
+                        if val != 'true':
+                            print("⚠ Accordion didn't open, clicking again...")
+                            await anchor_label.click()
+
+                        await self.page.locator('#collapseThree').wait_for(state="visible")
+
+                        if offer.cover_letter:
+                            await self.page.locator('#comment').fill(offer.cover_letter)
+                            await self.page.locator('#comment').dispatch_event('input')
 
                 except Exception as e:
                     print(f"⚠ Could not fill cover letter: {e}")
