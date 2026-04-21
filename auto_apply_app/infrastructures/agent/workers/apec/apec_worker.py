@@ -294,7 +294,7 @@ class ApecWorker():
 
             for attempt in range(3):
                 try:
-                    await self.page.wait_for_selector('apec-slider input.pull-left', state="visible", timeout=20000)
+                    await self.page.wait_for_selector('apec-slider input.pull-left', state="attached", timeout=45000)
                     print("✅ Full Angular form rendered — all fields ready.")
                     break
                 except Exception:
@@ -311,12 +311,14 @@ class ApecWorker():
                 for contract in contract_types:
                     val = contract_map.get(str(contract.value), None)
                     if val:
+                        await self.page.locator('select[formcontrolname="typesContrat"]').scroll_into_view_if_needed()
                         await self.page.select_option('select[formcontrolname="typesContrat"]', value=val)
                         print(f"  ✓ Contract selected: {contract}")
                         break
 
             # 4. Handle Salary
             if min_salary > 0:
+                await self.page.locator('apec-slider input.pull-left').scroll_into_view_if_needed()
                 salary_input = self.page.locator('apec-slider input.pull-left')
                 if await salary_input.count() > 0:
                     salary_k = str(min_salary // 1000) if min_salary >= 1000 else str(min_salary)
