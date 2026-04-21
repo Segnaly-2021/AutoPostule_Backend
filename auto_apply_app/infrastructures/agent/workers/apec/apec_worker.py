@@ -294,15 +294,14 @@ class ApecWorker():
 
             for attempt in range(3):
                 try:
-                    await self.page.wait_for_selector('select[formcontrolname="typesContrat"]', state="visible", timeout=45000)
-                    await self.page.wait_for_selector('apec-slider input.pull-left', state="visible", timeout=45000)
-                    print("✅ Full form rendered — proceeding with filters.")
+                    await self.page.wait_for_selector('apec-slider input.pull-left', state="visible", timeout=20000)
+                    print("✅ Full Angular form rendered — all fields ready.")
                     break
                 except Exception:
                     if attempt == 2:
-                        print("⚠️ Form never fully rendered after 3 attempts.")
+                        print("⚠️ Angular form never fully rendered after 3 attempts.")
                         raise
-                    print(f"⚠️ Form not ready, attempt {attempt+1}. Reloading...")
+                    print(f"⚠️ Form not ready, attempt {attempt+1}. Reloading in {2 ** attempt}s...")
                     await self.page.reload(wait_until="networkidle")
                     await asyncio.sleep(2 ** attempt)
 
