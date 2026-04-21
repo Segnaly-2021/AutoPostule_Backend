@@ -296,13 +296,14 @@ class ApecWorker():
                 for contract in contract_types:
                     val = contract_map.get(str(contract.value), None)
                     if val:
-                        await self.page.wait_for_selector('select[formcontrolname="typesContrat"]', state="visible", timeout=40000)
+                        await self.page.wait_for_selector('select[formcontrolname="typesContrat"]', state="visible", timeout=60000)
                         await self.page.select_option('select[formcontrolname="typesContrat"]', value=val)
                         print(f"  ✓ Contract selected: {contract}")
                         break
 
             # 4. Handle Salary
             if min_salary > 0:
+                await self.page.wait_for_selector('apec-slider input.pull-left', state="visible", timeout=60000)    
                 salary_input = self.page.locator('apec-slider input.pull-left')
                 if await salary_input.count() > 0:
                     salary_k = str(min_salary // 1000) if min_salary >= 1000 else str(min_salary)
