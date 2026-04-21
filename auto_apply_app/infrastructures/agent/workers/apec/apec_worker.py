@@ -270,17 +270,13 @@ class ApecWorker():
                     else:
                         print(f"⚠️ advancedSearch not visible, attempt {attempt+1}. Retrying in {2 ** attempt}s...")
                         await asyncio.sleep(2 ** attempt)
+        
 
-            # ✅ If we navigated directly, keywords input is already visible
-            # If not, we need to click the advancedSearch link first
-            try:
-                await self.page.wait_for_selector('input[id="keywords"]', state="visible", timeout=5000)
-                print("✅ Already on advanced search page — skipping link click.")
-            except Exception:
-                await self.page.locator('a[id="advancedSearch"]').click()
-                await self.page.wait_for_selector('input[id="keywords"]', state="visible", timeout=15000)
+            await self.page.locator('a[id="advancedSearch"]').click()
+            await self.page.wait_for_load_state("networkidle")  
 
             # 2. Fill the Job Title
+            await self.page.wait_for_selector('input[id="keywords"]', state="visible", timeout=15000)   
             await self.page.locator('input[id="keywords"]').fill(job_title)
 
             # 3. Handle Contract Types
