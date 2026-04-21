@@ -296,6 +296,7 @@ class ApecWorker():
                 for contract in contract_types:
                     val = contract_map.get(str(contract.value), None)
                     if val:
+                        await self.page.wait_for_selector('select[formcontrolname="typesContrat"]', state="visible", timeout=40000)
                         await self.page.select_option('select[formcontrolname="typesContrat"]', value=val)
                         print(f"  ✓ Contract selected: {contract}")
                         break
