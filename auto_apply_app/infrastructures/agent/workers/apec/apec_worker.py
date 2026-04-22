@@ -25,7 +25,7 @@ from auto_apply_app.application.service_ports.file_storage_port import FileStora
 class ApecWorker():
 
     # 🚨 CLASS CONSTANT: Single source of truth for the job card selector
-    CARD_SELECTOR = 'div[class="card card-offer mb-20 card--clickable card-offer--qualified"]'
+    CARD_SELECTOR = 'div[class*="card card-offer mb-20 card--clickable"]'
 
     # --- ADVANCED SEARCH FALLBACK URL ---
     ADVANCED_SEARCH_URL = "https://www.apec.fr/candidat/recherche-emploi.html/emploi/recherche-avancee"
@@ -182,14 +182,36 @@ class ApecWorker():
 
 
     async def get_raw_job_data(self, card: Locator):
+        raw_title = None
+        raw_company = None
+        raw_location = None
+
+        try:
+            await card.locator('p[class="card-offer__company"]').wait_for(state="attached", timeout=10000)
+        except Exception as e:
+            print(f"    ⚠️ Card content not ready: {e}")
+            return None, None, None
+
         try:
             raw_title = await card.locator('h2[class="card-title"]').inner_text()
-            raw_company = await card.locator('p[class="card-offer__company"]').inner_text()
-            raw_location = await card.locator('li:has(img[alt="localisation"])').inner_text() 
-            return raw_company.strip(), raw_title.strip(), raw_location.strip()
-        except Exception:
-            print("    ⚠️ Offer details not found, skipping card.")
-            return None, None, None
+        except Exception as e:
+            print(f"    ⚠️ Could not extract title: {e}")
+
+        try:
+            raw_company = await card.locator('p[class="card-offer__company"]').first.inner_text()
+        except Exception as e:
+            print(f"    ⚠️ Could not extract company: {e}")
+
+        try:
+            raw_location = await card.locator('li:has(img[alt="localisation"])').inner_text()
+        except Exception as e:
+            print(f"    ⚠️ Could not extract location: {e}")
+
+        return (
+            raw_company.strip() if raw_company else None,
+            raw_title.strip() if raw_title else None,
+            raw_location.strip() if raw_location else None
+        )
 
 
     # --- HELPER: Nav Back ---
@@ -391,7 +413,7 @@ class ApecWorker():
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless=state["preferences"].browser_headless,
+                headless= state["preferences"].browser_headless,
                 args=['--disable-blink-features=AutomationControlled']
             )
             
@@ -420,7 +442,7 @@ class ApecWorker():
             # ✅ RETRY: goto + wait_for_selector as one unit
             for attempt in range(3):
                 try:
-                    await self.page.goto(self.base_url, wait_until="networkidle", timeout=90000)
+                    await self.page.goto(f"{self.base_url}candidate.html", wait_until="networkidle", timeout=90000)
                     await self.page.wait_for_selector('li[id="header-monespace"]', state="visible", timeout=30000)
                     break
                 except Exception as e:
@@ -656,12 +678,19 @@ class ApecWorker():
 
                     print(f"  -> Processing card {i+1}/{count} (Page {page_number})")
 
-                    raw_company, raw_title, raw_location = await self.get_raw_job_data(
-                        self.page.locator(self.CARD_SELECTOR).nth(i)
-                    )
+
+
+                    # ✅ Scroll card into viewport before reading its content
+                    # Cards below the fold are hidden until scrolled into view
+                    cards = self.page.locator(self.CARD_SELECTOR)
+                    card = cards.nth(i)
+                    await card.scroll_into_view_if_needed()
+
+                    raw_company, raw_title, raw_location = await self.get_raw_job_data(card)
+
                     print(f"---[APEC WORKER] RAW DATA---\n[APEC Company]: {raw_company},\n[APEC Title]: {raw_title},\n[APEC Location]: {raw_location}")
-                    if not raw_company or not raw_title:
-                        print("    ⚠️ Missing title or company, skipping card.")
+                    if not raw_title:
+                        print("    ⚠️    Missing title, skipping card.")
                         continue
 
                     fast_hash = self._generate_fast_hash(raw_company, raw_title, str(user_id))
