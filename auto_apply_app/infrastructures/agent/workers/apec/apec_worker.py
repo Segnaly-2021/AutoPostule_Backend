@@ -187,10 +187,10 @@ class ApecWorker():
         raw_location = None
 
         try:
-            await card.locator('p[class="card-offer__company"]').wait_for(state="attached", timeout=10000)
+            await card.locator('p[class="card-offer__company"]').wait_for(state="attached", timeout=25000)
         except Exception as e:
-            print(f"    ⚠️ Card content not ready: {e}")
-            return None, None, None
+            print(f"    ⚠️ Card content not ready: {str(e)}")
+            return "No Name", None, None
 
         try:
             raw_title = await card.locator('h2[class="card-title"]').inner_text()
@@ -200,12 +200,13 @@ class ApecWorker():
         try:
             raw_company = await card.locator('p[class="card-offer__company"]').first.inner_text()
         except Exception as e:
-            print(f"    ⚠️ Could not extract company: {e}")
+            raw_company = "No Name"
+            print(f"    ⚠️ Could not extract company: {str(e)}")
 
         try:
             raw_location = await card.locator('li:has(img[alt="localisation"])').inner_text()
         except Exception as e:
-            print(f"    ⚠️ Could not extract location: {e}")
+            print(f"    ⚠️ Could not extract location: {str(e)}")
 
         return (
             raw_company.strip() if raw_company else None,
