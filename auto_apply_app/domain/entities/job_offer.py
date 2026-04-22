@@ -13,10 +13,10 @@ from auto_apply_app.domain.exceptions import JobPostingIdNotSetError
 class JobOffer(Entity):
     url: str    
     form_url: str   
-    company_name: str 
     job_title: str
     location: str
     job_board: JobBoard
+    company_name: Optional[str] = field(default=None) 
     search_id: Optional[UUID] = field(default=None)
     user_id: Optional[UUID] = field(default=None)
     ranking: Optional[int] = field(default=None)    
