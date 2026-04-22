@@ -183,7 +183,7 @@ class ApecWorker():
 
     async def get_raw_job_data(self, card: Locator):
         raw_title = None
-        raw_company = None
+        raw_company = "No Name"
         raw_location = None
 
         try:
@@ -694,7 +694,7 @@ class ApecWorker():
                         print("    ⚠️    Missing title, skipping card.")
                         continue
 
-                    fast_hash = self._generate_fast_hash(raw_company, raw_title, str(user_id))
+                    fast_hash = self._generate_fast_hash(raw_company if raw_company else "No Name", raw_title, str(user_id))
                     if fast_hash in ignored_hashes:
                         print(f"    ⏩ Skipping duplicate: {raw_title} at {raw_company}")
                         continue
@@ -774,7 +774,7 @@ class ApecWorker():
                                     form_url=self.page.url,
                                     search_id=search_id,
                                     user_id=state["user"].id,
-                                    company_name=raw_company,
+                                    company_name=raw_company if raw_company else "No Name",
                                     job_title=raw_title,
                                     location=raw_location, 
                                     job_board=JobBoard.APEC,
