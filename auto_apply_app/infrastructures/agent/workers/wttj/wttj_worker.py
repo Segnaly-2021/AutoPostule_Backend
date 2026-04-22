@@ -1007,7 +1007,7 @@ class WelcomeToTheJungleWorker:
                         
                         await apply_btn.click()
                         # Verify form actually opened by waiting for firstname field
-                        await self.page.wait_for_selector('[data-testid="apply-form-field-firstname"]', state="visible", timeout=15000)
+                        await self.page.wait_for_selector('[data-testid="apply-form-field-firstname"]', state="visible", timeout=45000)
                         form_opened = True
                         break
                     except Exception as e:

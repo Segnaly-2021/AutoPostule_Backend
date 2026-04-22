@@ -284,7 +284,7 @@ class ApecWorker():
             # start_session_with_auth benefit from it automatically
             for attempt in range(3):
                 try:
-                    await self.page.wait_for_selector('a[id="advancedSearch"]', state="visible", timeout=20000)
+                    await self.page.wait_for_selector('a[id="advancedSearch"]', state="visible", timeout=45000)
                     break
                 except Exception:
                     if attempt == 2:
@@ -294,7 +294,7 @@ class ApecWorker():
                         print(f"⚠️ advancedSearch not visible, attempt {attempt+1}. Retrying in {2 ** attempt}s...")
                         await asyncio.sleep(2 ** attempt)
         
-
+    
             await self.page.locator('a[id="advancedSearch"]').click()
             await self.page.wait_for_load_state("networkidle")  
 
@@ -466,7 +466,7 @@ class ApecWorker():
                 await self._apply_filters(job_title, contract_types, min_salary)    
 
                 try:
-                    await self.page.wait_for_selector(self.CARD_SELECTOR, timeout=5000)
+                    await self.page.wait_for_selector(self.CARD_SELECTOR, timeout=25000)
                     print("✅ Search results loaded successfully.")
                 except Exception:
                     print("⚠️ No results found after applying filters.")
