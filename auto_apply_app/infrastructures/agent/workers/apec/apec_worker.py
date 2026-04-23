@@ -837,13 +837,13 @@ class ApecWorker():
                 form_loaded = False
                 for attempt in range(3):
                     try:
-                        await self.page.goto(offer.form_url, wait_until='commit', timeout=90000)
-                        await self.page.wait_for_selector('#formUpload, .form-check-true.profil-selection', state="visible", timeout=60000)
+                        await self.page.goto(offer.form_url, wait_until='networkidle', timeout=90000)
+                        await self.page.wait_for_selector('#formUpload, .form-check-true.profil-selection', state="visible", timeout=90000)
                         form_loaded = True
                         break
-                    except Exception:
+                    except Exception as e:
                         if attempt == 2:
-                            print(f"⚠ Form failed to load after 3 attempts for {offer.form_url}. Skipping.")
+                            print(f"⚠ Form failed to load after 3 attempts for {offer.form_url}. Skipping. \nError: {e}")
                             break
                         print(f"⚠ Form load attempt {attempt+1} failed. Retrying in {2 ** attempt}s...")
                         await asyncio.sleep(2 ** attempt)
