@@ -840,6 +840,9 @@ class ApecWorker():
                 for attempt in range(3):
                     try:
                         await self.page.goto(offer.form_url, wait_until='networkidle', timeout=90000)
+                        await self.page.wait_for_selector('button[title="Postuler"]', state="visible", timeout=60000)
+                        await self.page.locator('button[title="Postuler"]').click()
+                        await self.page.wait_for_load_state("networkidle")
                         await self.page.wait_for_selector('#formUpload, .form-check-true.profil-selection', state="visible", timeout=90000)
                         form_loaded = True
                         break
