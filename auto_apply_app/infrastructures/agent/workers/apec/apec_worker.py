@@ -767,12 +767,14 @@ class ApecWorker():
                             if await postule_btn.count() > 0:
                                 await postule_btn.click()
                                 await self.page.wait_for_load_state("networkidle")
+                                form_url = self.page.url
+                                await self.page.wait_for_selector('#formUpload, .form-check-true.profil-selection', state="visible", timeout=60000)
 
                                 print("    ✅ Valid application form confirmed. Saving to batch.")   
 
                                 offer = JobOffer(
                                     url=full_offer_url,
-                                    form_url=self.page.url,
+                                    form_url=form_url,
                                     search_id=search_id,
                                     user_id=state["user"].id,
                                     company_name=raw_company if raw_company else "No Name",
