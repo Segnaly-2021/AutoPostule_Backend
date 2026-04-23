@@ -487,9 +487,9 @@ class WelcomeToTheJungleWorker:
             # ✅ RETRY: goto + search field appearing as one unit
             for attempt in range(3):
                 try:
-                    await self.page.goto(f"{self.base_url}/jobs", wait_until="networkidle", timeout=120000)
+                    await self.page.goto(self.base_url, wait_until="networkidle", timeout=120000)
                     await self._handle_cookies()
-                    await self.page.wait_for_selector('[data-testid="jobs-home-search-field-query"]', state="visible", timeout=30000)
+                    await self.page.wait_for_selector('a[data-testid="menu-jobs"] p:has-text("Trouver un job")', state="visible", timeout=45000)
                     break
                 except Exception as e:
                     if attempt == 2:
@@ -497,7 +497,7 @@ class WelcomeToTheJungleWorker:
                     print(f"⚠️ [WTTJ] Auth boot attempt {attempt+1} failed. Retrying in {2 ** attempt}s...")
                     await asyncio.sleep(2 ** attempt)
 
-            #await self._handle_cookies()
+            await self.page.locator('a[data-testid="menu-jobs"] p:has-text("Trouver un job")').click()
 
             search_entity = state["job_search"]
             job_title = search_entity.job_title
@@ -537,13 +537,13 @@ class WelcomeToTheJungleWorker:
                 except Exception as e:
                     if attempt == 2:
                         return {"error": "Could not reach Welcome to the Jungle. The job board might be down or undergoing maintenance."}
-                    print(f"⚠️ [WTTJ] Navigation attempt {attempt+1} failed. Error: {str(e)} Retrying in {2 ** attempt}s...")
+                    print(f"⚠️ [WTTJ] Navigation attempt {attempt+1} failed. Error: {e}. Retrying in {2 ** attempt}s...")
                     await asyncio.sleep(2 ** attempt)
             
             return {}        
         except Exception as e:
-            print(f"🚨 Navigation Error: {str(e)}")
-            return {"error": f"Navigation failed: {str(e)}"}
+            print(f"🚨 Navigation Error: {e}")
+            return {"error": f"Navigation failed: {e}"}
 
 
     # --- NODE 3: Login ---
@@ -574,7 +574,7 @@ class WelcomeToTheJungleWorker:
                     except Exception as e:
                         if attempt == 2:
                             return {"error": "Login failed. Could not open the login modal."}
-                        print(f"⚠️ [WTTJ] Login modal attempt {attempt+1} failed. Error: {str(e)} Reloading...")
+                        print(f"⚠️ [WTTJ] Login modal attempt {attempt+1} failed. Error: {e}. Reloading...")
                         await self.page.reload(wait_until="networkidle")
                         await asyncio.sleep(2 ** attempt)
 
@@ -595,9 +595,9 @@ class WelcomeToTheJungleWorker:
                         await submit_btn.click()
                         break
                     except Exception as e:
-                        print(f"⚠️ [WTTJ] Credential submission attempt {attempt+1} failed: {str(e)}")
                         if attempt == 2:
                             return {"error": "Login failed. Could not submit credentials."}
+                        print(f"⚠️ [WTTJ] Credential submission attempt {attempt+1} failed. Error: {e}. Retrying in {2 ** attempt}s...")
                         await asyncio.sleep(2 ** attempt)
 
                 # ✅ RETRY UNIT 3: Proof of login
@@ -607,9 +607,9 @@ class WelcomeToTheJungleWorker:
                         await self.page.wait_for_selector('[data-testid="jobs-home-search-field-query"]', state="visible", timeout=30000)
                         break
                     except Exception as e:
-                        print(f"⚠️ [WTTJ] Post-login verification attempt {attempt+1} failed: {str(e)}")
                         if attempt == 2:
                             return {"error": "Login failed. Please check your WTTJ credentials in your settings."}
+                        print(f"⚠️ [WTTJ] Navigation attempt {attempt+1} failed. Error: {e}. Retrying in {2 ** attempt}s...")
                         await asyncio.sleep(2 ** attempt)
 
                 await self._handle_cookies()
@@ -618,7 +618,7 @@ class WelcomeToTheJungleWorker:
                 return {}
 
             except Exception as e:
-                print(f"❌ [WTTJ] Auto-login failed: {str(e)}")
+                print(f"❌ [WTTJ] Auto-login failed: {e}")
                 return {"error": "Failed to log into Welcome to the Jungle. Please check your credentials."}
 
             finally:
@@ -636,7 +636,7 @@ class WelcomeToTheJungleWorker:
                 await self._save_auth_state(user_id)
                 return {}
             except Exception as e:
-                print(f"Login Error: {str(e)}")
+                print(f"Login Error: {e}")
                 return {"error": "Manual login timed out. We didn't detect a successful login."}
 
 
@@ -655,13 +655,13 @@ class WelcomeToTheJungleWorker:
             # ✅ RETRY UNIT 1: Search field + fill
             for attempt in range(3):
                 try:
-                    await self.page.wait_for_selector('[data-testid="jobs-home-search-field-query"]', state="visible", timeout=15000)
+                    await self.page.wait_for_selector('[data-testid="jobs-home-search-field-query"]', state="visible", timeout=90000)
                     await self.page.get_by_test_id("jobs-home-search-field-query").fill(job_title)
                     break
                 except Exception as e:
                     if attempt == 2:
                         return {"error": f"Failed to execute search for '{job_title}' on Welcome to the Jungle."}
-                    print(f"⚠️ [WTTJ] Search field attempt {attempt+1} failed. Error: {str(e)} Reloading...")
+                    print(f"⚠️ [WTTJ] Search field attempt {attempt+1} failed.Error: {e}. Reloading...")
                     await self.page.reload(wait_until="networkidle")
                     await asyncio.sleep(2 ** attempt)
 
@@ -673,7 +673,7 @@ class WelcomeToTheJungleWorker:
 
             # ✅ Verify results appeared (logical check — no retry)
             try:
-                await self.page.wait_for_selector(self.CARD_SELECTOR, state="attached", timeout=60000)
+                await self.page.wait_for_selector(self.CARD_SELECTOR, state="attached", timeout=90000)
                 print("✅ Search results loaded successfully.")
             except Exception:
                 return {"error": "No new matching jobs were found for this search today."}
@@ -682,7 +682,7 @@ class WelcomeToTheJungleWorker:
             return {}
             
         except Exception as e:
-            print(f"Search Error: {str(e)}")
+            print(f"Search Error: {e}")
             return {"error": f"Failed to execute search for '{job_title}' on Welcome to the Jungle."}
 
 
@@ -762,7 +762,7 @@ class WelcomeToTheJungleWorker:
                                 break
                             except Exception as e:
                                 if attempt == 2:
-                                    print(f"    ⚠️ Card click failed after 3 attempts. Error: {str(e)}. Skipping.")
+                                    print(f"    ⚠️ Card click failed after 3 attempts. Skipping. Error: {e}")
                                     break
                                 await asyncio.sleep(2 ** attempt)
 
@@ -1007,14 +1007,13 @@ class WelcomeToTheJungleWorker:
                         
                         await apply_btn.click()
                         # Verify form actually opened by waiting for firstname field
-                        await self.page.wait_for_selector('[data-testid="apply-form-field-firstname"]', state="visible", timeout=45000)
+                        await self.page.wait_for_selector('[data-testid="apply-form-field-firstname"]', state="visible", timeout=15000)
                         form_opened = True
                         break
                     except Exception as e:
                         if attempt == 2:
-                            print(f"⚠ Form failed to load after 3 attempts for {offer.url}. Skipping.")
+                            print(f"⚠ Form failed to load after 3 attempts for {offer.url}. Skipping. Error: {e}")
                             break
-                        print(f"⚠ Error: {e}")
                         print(f"⚠ Form load attempt {attempt+1} failed. Retrying in {2 ** attempt}s...")
                         await asyncio.sleep(2 ** attempt)
 

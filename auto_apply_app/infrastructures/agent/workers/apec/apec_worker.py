@@ -386,7 +386,7 @@ class ApecWorker():
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless=preferences.browser_headless,
+                headless= preferences.browser_headless,
                 args=['--disable-blink-features=AutomationControlled']
             )
             
@@ -443,8 +443,8 @@ class ApecWorker():
             # ✅ RETRY: goto + wait_for_selector as one unit
             for attempt in range(3):
                 try:
-                    await self.page.goto(f"{self.base_url}candidate.html", wait_until="networkidle", timeout=90000)
-                    await self.page.wait_for_selector('li[id="header-monespace"]', state="visible", timeout=30000)
+                    await self.page.goto(self.base_url, wait_until="networkidle", timeout=90000)
+                    await self.page.wait_for_selector('div[class="card-title"] h2:has-text("Je suis candidat")', state="visible", timeout=45000)
                     break
                 except Exception as e:
                     if attempt == 2:
@@ -453,6 +453,7 @@ class ApecWorker():
                     await asyncio.sleep(2 ** attempt)
 
             await self._handle_cookies()
+            await self.page.locator('div[class="card-title"] h2:has-text("Je suis candidat")').click()
 
             # DUMMY SEARCH TO ESTABLISH SESSION CONTEXT
             search_entity = state["job_search"]

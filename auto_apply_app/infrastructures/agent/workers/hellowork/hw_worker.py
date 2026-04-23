@@ -465,10 +465,10 @@ class HelloWorkWorker:
                     await self._handle_cookies()
                     await self.page.wait_for_selector('[data-cy="headerAccountMenu"]', state="visible", timeout=30000)
                     break
-                except Exception:
+                except Exception as e:
                     if attempt == 2:
                         return {"error": "Could not reach HelloWork. The job board might be down or undergoing maintenance."}
-                    print(f"⚠️ [HW] Navigation attempt {attempt+1} failed. Retrying in {2 ** attempt}s...")
+                    print(f"⚠️ [HW] Navigation attempt {attempt+1} failed. Retrying in {2 ** attempt}s...\nError: {e}")
                     await asyncio.sleep(2 ** attempt)
             
             return {}        
@@ -500,10 +500,10 @@ class HelloWorkWorker:
                         await self.page.locator('[data-cy="headerAccountLogIn"]').click()
                         await self.page.wait_for_selector('input[name="email2"]', state="visible", timeout=30000)
                         break
-                    except Exception:
+                    except Exception as e:
                         if attempt == 2:
                             return {"error": "Login failed. Could not open the login modal."}
-                        print(f"⚠️ [HW] Login modal attempt {attempt+1} failed. Reloading...")
+                        print(f"⚠️ [HW] Login modal attempt {attempt+1} failed. Reloading... \nError: {e}")
                         await self.page.reload(wait_until="networkidle")
                         await asyncio.sleep(2 ** attempt)
 
@@ -520,7 +520,8 @@ class HelloWorkWorker:
                         await self.page.locator('button[type="button"][class="profile-button"]').click()
                         await self.page.wait_for_selector('a[data-cy="cpMenuDashboard"]', state="visible", timeout=60000)
                         break
-                    except Exception:
+                    except Exception as e:
+                        print(f"⚠️ [HW] Credential submission attempt {attempt+1} failed. Retrying... \nError: {e}")
                         if attempt == 2:
                             return {"error": "Login failed. Could not submit credentials."}
                         await asyncio.sleep(2 ** attempt)
@@ -674,8 +675,9 @@ class HelloWorkWorker:
                                 click_success = True
                                 break
                             except Exception as e:
+                                print(f"    ⚠️ Card click attempt {attempt+1} failed. \nError: {e}")
                                 if attempt == 2:
-                                    print(f"    ⚠️ Card click failed after 3 attempts. Skipping. Error: {e}")
+                                    print("    ⚠️ Card click failed after 3 attempts. Skipping.")
                                     break
                                 await asyncio.sleep(2 ** attempt)
 
@@ -713,7 +715,7 @@ class HelloWorkWorker:
                                     break
                                 except Exception as e:
                                     if attempt == 2:
-                                        print(f"    ⚠️ Apply button click failed after 3 attempts. Error: {e} Skipping form interaction.")
+                                        print(f"    ⚠️ Apply button click failed after 3 attempts. \nError: {e}")
                                         break
                                     await asyncio.sleep(2 ** attempt)
 
@@ -807,9 +809,9 @@ class HelloWorkWorker:
                         await self.page.wait_for_selector('input[name="Firstname"]', state="visible", timeout=15000)
                         form_loaded = True
                         break
-                    except Exception:
+                    except Exception as e:
                         if attempt == 2:
-                            print(f"⚠ Form failed to load after 3 attempts for {offer.form_url}. Skipping.")
+                            print(f"⚠ Form failed to load after 3 attempts for {offer.form_url}. Error: {e}. Skipping.")
                             break
                         print(f"⚠ Form load attempt {attempt+1} failed. Retrying in {2 ** attempt}s...")
                         await asyncio.sleep(2 ** attempt)
