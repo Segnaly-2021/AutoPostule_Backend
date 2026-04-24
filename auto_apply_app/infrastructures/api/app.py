@@ -8,13 +8,16 @@ from auto_apply_app.infrastructures.configuration.container import create_applic
 from auto_apply_app.infrastructures.persistence.database.session import engine #,init_db
 from auto_apply_app.infrastructures.config import RepositoryType
 
+# 🚨 NEW: Global exception handlers to prevent raw errors from reaching the frontend
+from auto_apply_app.infrastructures.api.exception_handlers import register_exception_handlers
+
 # Import your concrete implementations
 from auto_apply_app.infrastructures.authentication.password_service import PasswordService
 from auto_apply_app.infrastructures.resume_storage.gcs_storage_adapter import GCSFileStorageAdapter
 from auto_apply_app.infrastructures.authentication.token_provider import JwtTokenProvider
 from auto_apply_app.infrastructures.payment.stripe_payment import StripePaymentAdapter
 from auto_apply_app.infrastructures.board_credentials_encryption.encryption import EncryptionService
-from auto_apply_app.infrastructures.emailing_service.resend_email_service import ResendEmailService # 🚨 NEW
+from auto_apply_app.infrastructures.emailing_service.resend_email_service import ResendEmailService
 
 # Import presenters
 from auto_apply_app.interfaces.presenters.web import (
@@ -48,19 +51,13 @@ async def lifespan(app: FastAPI):
     """
     logger.info("Starting application...")
     
-    # 2. Load configuration
     config = Config()
 
-    # 1. Initialize database tables (Only if in DATABASE mode)
     if config.get_repository_type() == RepositoryType.DATABASE:
-        # A quick note on init_db(): Since you use Alembic for migrations, 
-        # SQLAlchemy's create_all() will just safely skip tables that already exist.
-        #await init_db()
         logger.info("PostgreSQL Database initialized and verified.")
     else:
         logger.info("Running in MEMORY mode. Skipping DB initialization.")
     
-    # 3. Build the Application container
     container = create_application(
         user_presenter=WebUserPresenter(),
         job_presenter=WebJobPresenter(),
@@ -74,22 +71,19 @@ async def lifespan(app: FastAPI):
         file_storage_port=GCSFileStorageAdapter(),
         payment_port=StripePaymentAdapter(),
         sub_presenter=WebSubPresenter(),
-        email_service_port=ResendEmailService(),  # 🚨 NEW
+        email_service_port=ResendEmailService(),
         free_search_presenter=WebFreeSearchPresenter()
     )
     
-    # 4. Attach container to app state
     app.state.container = container
     app.state.config = config
     
     logger.info("Application container initialized successfully")
     
-    yield  # 🚀 THIS IS WHERE YOUR APP RUNS AND ACCEPTS TRAFFIC
+    yield
     
-    # --- CLEANUP ON SHUTDOWN ---
     logger.info("Shutting down application...")
     
-    # 5. Close database connection pool gracefully
     if config.get_repository_type() == RepositoryType.DATABASE:
         await engine.dispose()
         logger.info("PostgreSQL connection pool closed successfully.")
@@ -107,21 +101,23 @@ def create_fastapi_app() -> FastAPI:
         version="1.0.0",
         lifespan=lifespan
     )
-    
-    
+
+    # 🚨 Register global exception handlers BEFORE anything else
+    # This ensures no raw error (SQL, asyncpg, etc.) ever reaches the frontend
+    register_exception_handlers(app)
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[
-            "http://localhost:5173",  # Vite default dev server
+            "http://localhost:5173",
             "https://autopostule.com",
             "https://www.autopostule.com",
             "https://autopostule.netlify.app", 
         ],
         allow_credentials=True,
-        allow_methods=["*"],  # Allow all methods (GET, POST, PUT, DELETE, etc.)
-        allow_headers=["*"],  # Allow all headers (Authorization, Content-Type, etc.)
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
-    
     
     app.include_router(
         user.router,
