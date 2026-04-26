@@ -50,7 +50,7 @@ async def human_click(locator: Locator, hesitation: bool = True) -> None:
     """
     if hesitation:
         await human_delay(200, 800)
-    await locator.click()
+    await locator.click(timeout=120000)
 
 
 async def human_scroll(page, distance: int = None) -> None:

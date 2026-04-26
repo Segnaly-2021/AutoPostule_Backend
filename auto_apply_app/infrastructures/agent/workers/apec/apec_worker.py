@@ -299,7 +299,7 @@ class ApecWorker():
                         await asyncio.sleep(2 ** attempt)
         
             await human_click(self.page.locator('a[id="advancedSearch"]'))  # 🚨 NEW: human click
-            await self.page.wait_for_load_state("networkidle")  
+            await self.page.wait_for_load_state("networkidle", timeout=90000)  
 
             await self.page.wait_for_selector('input[id="keywords"]', state="visible", timeout=15000)
             await human_type(self.page.locator('input[id="keywords"]'), job_title)  # 🚨 NEW: typed not filled
