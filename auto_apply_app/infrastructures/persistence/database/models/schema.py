@@ -286,10 +286,3 @@ class UserFingerprintDB(Base):
     user: Mapped["UserDB"] = relationship("UserDB", back_populates="fingerprint")
 
 
-# =============================================================================
-# In UserDB — add this back-reference relationship
-# =============================================================================
-
-    fingerprint: Mapped[Optional["UserFingerprintDB"]] = relationship(
-        "UserFingerprintDB", back_populates="user", uselist=False
-    )
