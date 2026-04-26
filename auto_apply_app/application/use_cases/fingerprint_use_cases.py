@@ -3,18 +3,18 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from auto_apply_app.application.repositories.unit_of_work import UnitOfWork
+from auto_apply_app.application.service_ports.fingerprint_generator_port import (
+    FingerprintGeneratorPort,
+)
 from auto_apply_app.application.common.result import Result, Error
 from auto_apply_app.domain.entities.user_fingerprint import UserFingerprint
-from auto_apply_app.infrastructures.agent.fingerprint_generation_service import (
-    FingerprintGenerationService,
-)
 
 
 @dataclass
 class GetOrCreateUserFingerprintUseCase:
     
     uow: UnitOfWork
-    generator: FingerprintGenerationService
+    generator: FingerprintGeneratorPort
 
     async def execute(self, user_id: UUID) -> Result[UserFingerprint]:
         try:
