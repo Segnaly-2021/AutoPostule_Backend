@@ -51,6 +51,11 @@ class UserDB(Base):
         "AgentStateDB", back_populates="user", uselist=False
     )
 
+     # 🚨 ADD THIS:
+    fingerprint: Mapped[Optional["UserFingerprintDB"]] = relationship(
+        "UserFingerprintDB", back_populates="user", uselist=False, cascade="all, delete-orphan"
+    )
+
 
 class AuthUserDB(Base):
     __tablename__ = "auth_users"
