@@ -1,4 +1,4 @@
-# auto_apply_app/infrastructure/agent/workers/hellowork_worker.py
+# auto_apply_app/infrastructures/agent/workers/hellowork/hw_worker.py
 import asyncio
 import hashlib
 import os
@@ -21,6 +21,14 @@ from auto_apply_app.application.use_cases.agent_state_use_cases import GetAgentS
 from auto_apply_app.application.service_ports.encryption_port import EncryptionServicePort
 from auto_apply_app.application.service_ports.file_storage_port import FileStoragePort 
 from auto_apply_app.application.use_cases.agent_use_cases import GetIgnoredHashesUseCase
+
+# 🚨 NEW: Human behavior helpers
+from auto_apply_app.infrastructures.agent.human_behavior import (
+    human_delay,
+    human_type,
+    human_click,
+    human_warmup,
+)
 
 
 class HelloWorkWorker:
@@ -181,14 +189,11 @@ class HelloWorkWorker:
 
     # --- HELPER: Nav Back to Search Results with Retry + Verification ---
     async def _nav_back_to_search(self, search_url: str) -> bool:
-        """
-        Navigate back to the search results page with retry logic.
-        Returns True if successful, False if the page state is broken.
-        """
         for attempt in range(3):
             try:
                 await self.page.goto(search_url, wait_until="networkidle")
                 await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=10000)
+                await human_delay(800, 2000)  # 🚨 NEW: pause to "read" results
                 return True
             except Exception as e:
                 if attempt == 2:
@@ -204,17 +209,14 @@ class HelloWorkWorker:
         try:
             print("--- [HW] Applying Search Filters ---")
 
-            # ✅ RETRY UNIT 1: Open the filter panel
-            # all_filters_label is the gateway — if this fails, no filters get applied
-            # Using :has-text("Filtres") to disambiguate from sticky/inline filter labels
             FILTER_LABEL_SELECTOR = 'div[class="tw-layout-inner-grid"] label[for="allFilters"][data-cy="serpFilters"]:has-text(" Filtres ")'
 
+            # ✅ RETRY UNIT 1: Open the filter panel
             for attempt in range(3):
                 try:
                     await self.page.wait_for_selector(FILTER_LABEL_SELECTOR, state="visible", timeout=20000)
                     all_filters_label = self.page.locator(FILTER_LABEL_SELECTOR).first
-                    await all_filters_label.click()
-                    # Verify the panel actually opened
+                    await human_click(all_filters_label)  # 🚨 NEW
                     await self.page.wait_for_selector('input#toggle-salary', state="attached", timeout=10000)
                     break
                 except Exception as e:
@@ -230,6 +232,7 @@ class HelloWorkWorker:
                         checkbox_selector = f'input[id="c-{str(contract.value)}"]'
                         checkbox = self.page.locator(checkbox_selector)
                         if await checkbox.count() > 0 and not await checkbox.is_checked():
+                            await human_delay(300, 700)  # 🚨 NEW
                             await self.page.locator(f'label[for="{await checkbox.get_attribute("id")}"]').click()
                     except Exception:
                         pass
@@ -238,6 +241,7 @@ class HelloWorkWorker:
             if min_salary > 0:
                 toggle_salary = self.page.locator('input#toggle-salary')
                 if await toggle_salary.count() > 0:
+                    await human_delay(300, 700)  # 🚨 NEW
                     await self.page.locator('label[for="toggle-salary"]').click()
                     await self.page.wait_for_selector('input#msa:not([disabled])', timeout=3000)
                     await self.page.evaluate("""(val) => {
@@ -246,6 +250,8 @@ class HelloWorkWorker:
                         el.dispatchEvent(new Event('change', { bubbles: true }));
                         el.dispatchEvent(new Event('input', { bubbles: true }));
                     }""", min_salary)
+
+            await human_delay(800, 1800)  # 🚨 NEW: review form before submit
 
             # ✅ RETRY UNIT 2: Submit filters + verify results appeared
             submit_filters_btn = self.page.locator('[data-cy="offerNumberButton"]')
@@ -264,7 +270,7 @@ class HelloWorkWorker:
 
         except Exception as e:
             print(f"❌ Error applying filters: {e}")
-            raise  # bubble up so callers can handle
+            raise
 
 
     # --- HELPER: Handle Pagination with Retry ---
@@ -284,8 +290,8 @@ class HelloWorkWorker:
                 return False
 
             print(f"➡️ [HW] Moving to page {page_number + 1}...")
+            await human_delay(1500, 3500)  # 🚨 NEW: pause before pagination
 
-            # ✅ RETRY: Click next + wait for cards as one unit
             for attempt in range(3):
                 try:
                     await next_button.click()
@@ -313,6 +319,7 @@ class HelloWorkWorker:
             cookie_btn = self.page.locator('button[id="hw-cc-notice-continue-without-accepting-btn"]')
             if await cookie_btn.count() > 0:
                 is_visible = True
+                await human_delay(300, 800)  # 🚨 NEW: hesitate before dismissing cookie banner
                 await cookie_btn.click()
         except Exception as e:
             if is_visible:
@@ -360,19 +367,50 @@ class HelloWorkWorker:
         await self._emit(state, "Initializing Browser") 
         print(f"--- [HW] Starting session for {state['user'].firstname} ---")
         preferences = state["preferences"]
-        self.playwright = await async_playwright().start()
-        self.browser = await self.playwright.chromium.launch(
-            headless=preferences.browser_headless, 
-            args=['--disable-blink-features=AutomationControlled']
-        )
-        real_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-        self.context = await self.browser.new_context(
-            user_agent=real_user_agent,
-        )
-        stealth = Stealth()
-        await stealth.apply_stealth_async(self.context)
-        self.page = await self.context.new_page()
-        return {}
+
+        # 🚨 NEW: Pull identity from state
+        fingerprint = state.get("user_fingerprint")
+        proxy_config = state.get("proxy_config")
+
+        try:
+            self.playwright = await async_playwright().start()
+            self.browser = await self.playwright.chromium.launch(
+                headless=preferences.browser_headless, 
+                args=['--disable-blink-features=AutomationControlled']
+            )
+
+            # 🚨 NEW: Build context kwargs from fingerprint + proxy
+            context_kwargs = {}
+            if fingerprint:
+                context_kwargs.update(fingerprint.to_playwright_context_args())
+                print(f"   🪪 Applying fingerprint: {fingerprint.platform} / {fingerprint.viewport_width}x{fingerprint.viewport_height}")
+            else:
+                context_kwargs["user_agent"] = (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+                )
+
+            if proxy_config:
+                context_kwargs["proxy"] = {
+                    "server": proxy_config["server"],
+                    "username": proxy_config["username"],
+                    "password": proxy_config["password"],
+                }
+                print(f"   🌐 Routing through proxy: {proxy_config['server']}")
+
+            self.context = await self.browser.new_context(**context_kwargs)
+
+            # 🚨 NEW: Inject fingerprint init script BEFORE any page loads
+            if fingerprint:
+                await self.context.add_init_script(fingerprint.to_init_script())
+
+            stealth = Stealth()
+            await stealth.apply_stealth_async(self.context)
+            self.page = await self.context.new_page()
+            return {}
+        except Exception as e:
+            print(f"Session Error: {e}")
+            return {"error": "Failed to start the secure browsing session."}
 
 
     # --- NODE 1 Bis: Boot & Inject Session (Submit Track) ---
@@ -380,6 +418,10 @@ class HelloWorkWorker:
         await self._emit(state, "Initializing Secure Browser") 
         print("--- [HW] Booting Browser (Session Injection) ---")
         user_id = str(state["user"].id)
+
+        # 🚨 NEW: Pull identity from state
+        fingerprint = state.get("user_fingerprint")
+        proxy_config = state.get("proxy_config")
         
         try:
             self.playwright = await async_playwright().start()
@@ -388,21 +430,39 @@ class HelloWorkWorker:
                 args=['--disable-blink-features=AutomationControlled']
             )
             
-            real_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
             session_path = self._get_auth_state_path(user_id)
 
-            if session_path:
-                self.context = await self.browser.new_context(
-                    storage_state=session_path,
-                    user_agent=real_user_agent,
-                    device_scale_factor=1,
-                    has_touch=False,
-                    is_mobile=False
-                )
+            # 🚨 NEW: Build context kwargs from fingerprint + proxy + saved session
+            context_kwargs = {}
+            if fingerprint:
+                context_kwargs.update(fingerprint.to_playwright_context_args())
+                context_kwargs.update({
+                    "device_scale_factor": fingerprint.device_scale_factor,
+                    "has_touch": False,
+                    "is_mobile": False,
+                })
             else:
-                self.context = await self.browser.new_context(
-                    user_agent=real_user_agent,
+                context_kwargs["user_agent"] = (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
                 )
+
+            if session_path:
+                context_kwargs["storage_state"] = session_path
+
+            if proxy_config:
+                context_kwargs["proxy"] = {
+                    "server": proxy_config["server"],
+                    "username": proxy_config["username"],
+                    "password": proxy_config["password"],
+                }
+                print(f"   🌐 Routing through proxy: {proxy_config['server']}")
+
+            self.context = await self.browser.new_context(**context_kwargs)
+
+            # 🚨 NEW: Inject fingerprint init script
+            if fingerprint:
+                await self.context.add_init_script(fingerprint.to_init_script())
 
             stealth = Stealth()
             await stealth.apply_stealth_async(self.context)
@@ -421,6 +481,7 @@ class HelloWorkWorker:
                     await asyncio.sleep(2 ** attempt)
 
             await self._handle_cookies()
+            await human_warmup(self.page, self.base_url)  # 🚨 NEW: human warmup
 
             # Dummy Search to Establish Session Context
             search_entity = state["job_search"]
@@ -431,9 +492,11 @@ class HelloWorkWorker:
 
             print(f"--- [HW] Dummy Searching for: {job_title} ---")
             try:
-                await self.page.locator('input[id="k"]').fill(job_title)
+                await human_type(self.page.locator('input[id="k"]'), job_title)  # 🚨 NEW
                 if location and location.strip() != "":
-                    await self.page.locator('input[id="l"]').fill(location)
+                    await human_delay(300, 700)  # 🚨 NEW: pause between fields
+                    await human_type(self.page.locator('input[id="l"]'), location)  # 🚨 NEW
+                await human_delay(500, 1200)  # 🚨 NEW: pause before submitting
                 await self.page.keyboard.press("Enter")
 
                 await self.page.wait_for_load_state("networkidle")
@@ -456,9 +519,6 @@ class HelloWorkWorker:
         await self._emit(state, "Navigating to Job Board")
         print("--- [HW] Navigating to HelloWork ---")
         try:
-            # ✅ RETRY: goto + cookies + wait_for_selector as one unit
-            # Cookies sit between goto and header check because the cookie banner
-            # can block the header element from being visible
             for attempt in range(3):
                 try:
                     await self.page.goto(self.base_url, wait_until="networkidle", timeout=60000)
@@ -470,7 +530,8 @@ class HelloWorkWorker:
                         return {"error": "Could not reach HelloWork. The job board might be down or undergoing maintenance."}
                     print(f"⚠️ [HW] Navigation attempt {attempt+1} failed. Retrying in {2 ** attempt}s...\nError: {e}")
                     await asyncio.sleep(2 ** attempt)
-            
+
+            await human_warmup(self.page, self.base_url)  # 🚨 NEW: warmup after navigation
             return {}        
         except Exception as e:
             print(f"🚨 Navigation Error: {e}")
@@ -496,8 +557,8 @@ class HelloWorkWorker:
                 # ✅ RETRY UNIT 1: Open login modal + verify email input appears
                 for attempt in range(3):
                     try:
-                        await self.page.locator('[data-cy="headerAccountMenu"]').click()
-                        await self.page.locator('[data-cy="headerAccountLogIn"]').click()
+                        await human_click(self.page.locator('[data-cy="headerAccountMenu"]'))  # 🚨 NEW
+                        await human_click(self.page.locator('[data-cy="headerAccountLogIn"]'))  # 🚨 NEW
                         await self.page.wait_for_selector('input[name="email2"]', state="visible", timeout=30000)
                         break
                     except Exception as e:
@@ -510,13 +571,20 @@ class HelloWorkWorker:
                 login_plain = await self.encryption_service.decrypt(creds["hellowork"].login_encrypted)
                 pass_plain = await self.encryption_service.decrypt(creds["hellowork"].password_encrypted)
 
-                # ✅ RETRY UNIT 2: Fill credentials + submit
+                # ✅ RETRY UNIT 2: Fill credentials with HUMAN typing
                 for attempt in range(3):
                     try:
                         await self.page.locator('input[name="email2"]').clear()
-                        await self.page.locator('input[name="email2"]').fill(login_plain)
+                        await human_delay(300, 700)  # 🚨 NEW
+                        await human_type(self.page.locator('input[name="email2"]'), login_plain)  # 🚨 NEW
+
+                        await human_delay(400, 900)  # 🚨 NEW: pause between fields
+
                         await self.page.locator('input[name="password2"]').clear()
-                        await self.page.locator('input[name="password2"]').fill(pass_plain)
+                        await human_delay(200, 500)  # 🚨 NEW
+                        await human_type(self.page.locator('input[name="password2"]'), pass_plain)  # 🚨 NEW
+
+                        await human_delay(600, 1500)  # 🚨 NEW: review before submit
                         await self.page.locator('button[type="button"][class="profile-button"]').click()
                         await self.page.wait_for_selector('a[data-cy="cpMenuDashboard"]', state="visible", timeout=60000)
                         break
@@ -576,13 +644,20 @@ class HelloWorkWorker:
 
         print(f"--- [HW] Searching for: {job_title} ---")
         try:
+            await human_warmup(self.page, self.base_url)  # 🚨 NEW: warmup before searching
+
             # ✅ RETRY UNIT 1: Search input + submit
             for attempt in range(3):
                 try:
                     await self.page.wait_for_selector('input[id="k"]', state="visible", timeout=15000)
-                    await self.page.locator('input[id="k"]').fill(job_title)
+                    await self.page.locator('input[id="k"]').clear()
+                    await human_delay(200, 500)  # 🚨 NEW
+                    await human_type(self.page.locator('input[id="k"]'), job_title)  # 🚨 NEW
                     if location and location.strip() != "":
-                        await self.page.locator('input[id="l"]').fill(location)
+                        await human_delay(300, 700)  # 🚨 NEW
+                        await self.page.locator('input[id="l"]').clear()
+                        await human_type(self.page.locator('input[id="l"]'), location)  # 🚨 NEW
+                    await human_delay(500, 1200)  # 🚨 NEW: pause before submitting
                     await self.page.keyboard.press("Enter")
                     await self.page.wait_for_load_state("networkidle")
                     break
@@ -597,7 +672,6 @@ class HelloWorkWorker:
             if contract_types or min_salary > 0:
                 await self._apply_filters(contract_types, min_salary)
 
-            # ✅ Verify results appeared (logical check — no retry needed)
             try:
                 await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=10000)
                 print("✅ Search results loaded successfully.")
@@ -651,8 +725,8 @@ class HelloWorkWorker:
                     try:
                         card = self.page.locator(self.CARD_SELECTOR).nth(i)
 
-                        # ✅ Scroll card into viewport before reading its content
                         await card.scroll_into_view_if_needed()
+                        await human_delay(400, 1000)  # 🚨 NEW: pause to "look at" the card
 
                         raw_company, raw_title, raw_location = await self.get_raw_job_data(card)
                         print(f"---[HW JOB DATA - user: {user_id}]---")
@@ -665,12 +739,11 @@ class HelloWorkWorker:
                             continue
 
                         # ✅ RETRY: card.click() + networkidle as one unit
-                        # Card can go stale between locating and clicking on slow pages
                         click_success = False
                         for attempt in range(3):
                             try:
                                 card = self.page.locator(self.CARD_SELECTOR).nth(i)
-                                await card.click()
+                                await human_click(card)  # 🚨 NEW
                                 await self.page.wait_for_load_state("networkidle")
                                 click_success = True
                                 break
@@ -689,10 +762,11 @@ class HelloWorkWorker:
                         fast_hash = self._generate_fast_hash(raw_company, raw_title, str(user_id))
                         if fast_hash in ignored_hashes:
                             print(f"     ⏩ Skipping duplicate: {raw_title} at {raw_company}")
-                            # ✅ Use nav_back helper with retry + verification
                             if not await self._nav_back_to_search(search_url):
                                 break
                             continue
+
+                        await human_delay(1500, 3500)  # 🚨 NEW: pause to "read" the job description
 
                         # Extract Description
                         try:
@@ -704,13 +778,12 @@ class HelloWorkWorker:
                             job_desc = ""
 
                         # ✅ RETRY: Apply button click only
-                        # The internal/external form detection logic stays intact after the retry
                         moving_to_form_btn = self.page.locator('a[data-cy="applyButtonHeader"]').first
                         if await moving_to_form_btn.count() > 0:
                             click_ok = False
                             for attempt in range(3):
                                 try:
-                                    await moving_to_form_btn.click()
+                                    await human_click(moving_to_form_btn)  # 🚨 NEW
                                     click_ok = True
                                     break
                                 except Exception as e:
@@ -744,7 +817,6 @@ class HelloWorkWorker:
                                     found_job_entities.append(offer)
                                     print(f"    📦 Current batch size: {len(found_job_entities)}/{worker_job_limit}")
 
-                        # ✅ Use nav_back helper with retry + verification
                         if not await self._nav_back_to_search(search_url):
                             break
                         
@@ -795,16 +867,16 @@ class HelloWorkWorker:
 
             print(f"📝 Applying to: {offer.job_title} ({i+1}/{len(hw_jobs)})")
             try:
-                # ✅ RETRY: goto + applyButtonHeader click + Firstname input as one unit
-                # This is the form entry point — WAF hot zone
+                # ✅ RETRY: form entry as one critical unit
                 form_loaded = False
                 for attempt in range(3):
                     try:
                         await self.page.goto(offer.form_url, wait_until="commit", timeout=60000)
+                        await human_delay(1500, 3500)  # 🚨 NEW: pause after navigation
 
                         moving_to_form_btn = self.page.locator('a[data-cy="applyButtonHeader"]')
                         if await moving_to_form_btn.count() > 0:
-                            await moving_to_form_btn.click()
+                            await human_click(moving_to_form_btn)  # 🚨 NEW
 
                         await self.page.wait_for_selector('input[name="Firstname"]', state="visible", timeout=15000)
                         form_loaded = True
@@ -820,7 +892,8 @@ class HelloWorkWorker:
                     i += 1
                     continue
 
-                await self.page.locator('input[name="LastName"]').fill(user.lastname)
+                await human_delay(400, 1000)  # 🚨 NEW
+                await human_type(self.page.locator('input[name="LastName"]'), user.lastname)  # 🚨 NEW
 
                 if user.resume_path:
                     print("⬇️ Downloading resume from cloud to RAM...")
@@ -831,18 +904,20 @@ class HelloWorkWorker:
                         "mimeType": "application/pdf",
                         "buffer": resume_bytes
                     })
+                    await human_delay(1000, 2000)  # 🚨 NEW: wait for upload to register
                 
                 if offer.cover_letter:
-                    await self.page.locator('[data-cy="motivationFieldButton"]').click()
+                    await human_click(self.page.locator('[data-cy="motivationFieldButton"]'))  # 🚨 NEW
                     await self.page.wait_for_selector('textarea[name="MotivationLetter"]', state="visible", timeout=10000)
+                    # Long text — fill is fine, humans paste cover letters
                     await self.page.locator('textarea[name="MotivationLetter"]').fill(offer.cover_letter)
 
                 # ✅ NO RETRY on submit click — would cause duplicate submission risk
+                await human_delay(1500, 3500)  # 🚨 NEW: review before submitting
                 submit_btn = self.page.locator('[data-cy="submitButton"]')
                 if await submit_btn.is_visible():
                     await submit_btn.click()
 
-                    # Wait directly for notification
                     try:
                         notification = self.page.locator('[data-intersect-name-value="notification"]')
                         await notification.wait_for(state="attached", timeout=45000)
@@ -890,18 +965,15 @@ class HelloWorkWorker:
     def get_graph(self):
         workflow = StateGraph(JobApplicationState)
         
-        # SCRAPE TRACK
         workflow.add_node("start", self.start_session)
         workflow.add_node("nav", self.go_to_job_board)
         workflow.add_node("login", self.request_login)
         workflow.add_node("search", self.search_jobs)
         workflow.add_node("scrape", self.get_matched_jobs)
         
-        # SUBMIT TRACK
         workflow.add_node("start_with_session", self.start_session_with_auth)
         workflow.add_node("submit", self.submit_applications)
         
-        # SHARED
         workflow.add_node("cleanup", self.cleanup)
 
         workflow.set_conditional_entry_point(
@@ -909,14 +981,12 @@ class HelloWorkWorker:
             {"start": "start", "start_with_session": "start_with_session"}
         )
         
-        # SCRAPE EDGES
         workflow.add_conditional_edges("start", self.route_node_exit, {"error": "cleanup", "continue": "nav"})
         workflow.add_conditional_edges("nav", self.route_node_exit, {"error": "cleanup", "continue": "login"})
         workflow.add_conditional_edges("login", self.route_node_exit, {"error": "cleanup", "continue": "search"})
         workflow.add_conditional_edges("search", self.route_node_exit, {"error": "cleanup", "continue": "scrape"})
         workflow.add_conditional_edges("scrape", self.route_node_exit, {"error": "cleanup", "continue": "cleanup"})
 
-        # SUBMIT EDGES
         workflow.add_conditional_edges("start_with_session", self.route_node_exit, {"error": "cleanup", "continue": "submit"})
         workflow.add_conditional_edges("submit", self.route_node_exit, {"error": "cleanup", "continue": "cleanup"})
         

@@ -5,6 +5,7 @@ from auto_apply_app.domain.entities.user import User
 from auto_apply_app.domain.entities.user_subscription import UserSubscription
 from auto_apply_app.domain.entities.user_preferences import UserPreferences
 from auto_apply_app.domain.entities.board_credentials import BoardCredential
+from auto_apply_app.domain.entities.user_fingerprint import UserFingerprint
 from auto_apply_app.domain.entities.job_search import JobSearch
 from auto_apply_app.domain.entities.job_offer import JobOffer
 
@@ -39,6 +40,8 @@ class JobApplicationState(TypedDict):
     job_search: Annotated[JobSearch, keep_first]
     preferences: Annotated[UserPreferences, keep_first]
     credentials: Annotated[Optional[Dict[str, BoardCredential]], keep_first]
+    user_fingerprint: Annotated[Optional[UserFingerprint], keep_first]
+    proxy_config: Annotated[Optional[dict], keep_first]
     max_jobs: Annotated[int, take_latest]
     worker_job_limit: Annotated[int, take_latest]
 

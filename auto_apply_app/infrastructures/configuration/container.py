@@ -1,3 +1,6 @@
+# auto_apply_app/infrastructures/configuration/container.py
+
+import os
 from dataclasses import dataclass
 from typing import Callable
 
@@ -13,7 +16,12 @@ from auto_apply_app.application.service_ports.file_storage_port import FileStora
 from auto_apply_app.application.service_ports.token_provider_port import TokenProviderPort
 from auto_apply_app.application.service_ports.payment_port import PaymentPort
 from auto_apply_app.application.service_ports.encryption_port import EncryptionServicePort
-from auto_apply_app.application.service_ports.email_service_port import EmailServicePort # 🚨 NEW
+from auto_apply_app.application.service_ports.email_service_port import EmailServicePort
+
+# 🚨 NEW: Proxy adapters + fingerprint generator
+from auto_apply_app.infrastructures.proxy.iproyal_proxy_adapter import IPRoyalProxyAdapter
+from auto_apply_app.infrastructures.proxy.no_proxy_adapter import NoProxyAdapter
+from auto_apply_app.infrastructures.agent.fingerprint_generator import FingerprintGenerator
 
 # Presenters
 from auto_apply_app.interfaces.presenters.base_presenter import (
@@ -37,8 +45,8 @@ from auto_apply_app.application.use_cases.user_use_cases import (
     GetUserUseCase,
     ChangePasswordUseCase,
     UploadUserResumeUseCase,
-    RequestPasswordResetUseCase,  # 🚨 NEW
-    ConfirmPasswordResetUseCase   # 🚨 NEW
+    RequestPasswordResetUseCase,
+    ConfirmPasswordResetUseCase
 )
 from auto_apply_app.application.use_cases.agent_use_cases import (
     ApproveJobUseCase,
@@ -64,7 +72,7 @@ from auto_apply_app.application.use_cases.job_offer_use_cases import (
     ToggleInterviewStatusUseCase,
     ToggleResponseStatusUseCase,
     CleanupUnsubmittedJobsUseCase,
-    GetDailyStatsUseCase  # 🚨 NEW: Imported the daily stats use case
+    GetDailyStatsUseCase
 )
 from auto_apply_app.application.use_cases.preferences_use_cases import (
     GetUserPreferencesUseCase,
@@ -74,6 +82,10 @@ from auto_apply_app.application.use_cases.agent_state_use_cases import (
     GetAgentStateUseCase,
     ShutdownAgentUseCase,
     ResetAgentUseCase,
+)
+# 🚨 NEW
+from auto_apply_app.application.use_cases.fingerprint_use_cases import (
+    GetOrCreateUserFingerprintUseCase,
 )
 
 # Controllers
@@ -86,6 +98,18 @@ from auto_apply_app.interfaces.controllers.preference_controllers import Prefere
 from auto_apply_app.interfaces.controllers.agent_state_controllers import AgentStateController
 from auto_apply_app.interfaces.controllers.free_search_controller import FreeSearchController
 from auto_apply_app.infrastructures.agent.fake_agent.create_fake_agent import create_fake_agent
+
+
+def _resolve_proxy_service():
+    """
+    Resolves the proxy adapter based on the PROXY_PROVIDER env var.
+    Defaults to NoProxyAdapter (safe for local dev / when not configured).
+    """
+    provider = os.getenv("PROXY_PROVIDER", "none").lower()
+    if provider == "iproyal":
+        return IPRoyalProxyAdapter()
+    return NoProxyAdapter()
+
 
 def create_application(
     user_presenter: UserPresenter,
@@ -100,7 +124,7 @@ def create_application(
     file_storage_port: FileStoragePort,
     payment_port: PaymentPort,
     encryption_port: EncryptionServicePort,
-    email_service_port: EmailServicePort,  # 🚨 NEW
+    email_service_port: EmailServicePort,
     free_search_presenter: FreeSearchPresenter
 ) -> "Application":
 
@@ -121,7 +145,7 @@ def create_application(
         file_storage_port=file_storage_port,
         payment_port=payment_port,
         encryption_port=encryption_port,
-        email_service_port=email_service_port,  # 🚨 NEW
+        email_service_port=email_service_port,
         free_search_presenter=free_search_presenter
     )
 
@@ -138,7 +162,7 @@ class Application:
     file_storage_port: FileStoragePort
     payment_port: PaymentPort
     encryption_port: EncryptionServicePort
-    email_service_port: EmailServicePort  # 🚨 NEW
+    email_service_port: EmailServicePort
 
     # Presenters
     user_presenter: UserPresenter
@@ -173,8 +197,6 @@ class Application:
             login_use_case=LoginUserUseCase(self.password_service, self.token_provider, uow),
             logout_use_case=LogoutUseCase(self.token_provider, self.token_repo),
             change_password_use_case=ChangePasswordUseCase(self.password_service, uow),
-            
-            # 🚨 NEW: Inject the two new Use Cases into the AuthController
             request_password_reset_use_case=RequestPasswordResetUseCase(
                 uow=uow,
                 token_provider=self.token_provider,
@@ -203,6 +225,13 @@ class Application:
     def agent_controller(self) -> AgentController:
         uow = self.uow_factory()
 
+        # 🚨 NEW: Resolve proxy adapter and build fingerprint use case
+        proxy_service = _resolve_proxy_service()
+        get_or_create_fingerprint_uc = GetOrCreateUserFingerprintUseCase(
+            uow=uow,
+            generator=FingerprintGenerator(),
+        )
+
         agent_service = create_agent(
             results_saver=SaveJobApplicationsUseCase(uow),
             consume_credits_use_case=ConsumeAiCreditsUseCase(uow),
@@ -213,7 +242,10 @@ class Application:
             get_agent_state_use_case=GetAgentStateUseCase(uow),
             reset_agent_state_use_case=ResetAgentUseCase(uow),
             get_daily_stats_use_case=GetDailyStatsUseCase(uow),
-            cleanup_unsubmitted_use_case=CleanupUnsubmittedJobsUseCase(uow)
+            cleanup_unsubmitted_use_case=CleanupUnsubmittedJobsUseCase(uow),
+            # 🚨 NEW
+            get_or_create_fingerprint_use_case=get_or_create_fingerprint_uc,
+            proxy_service=proxy_service,
         )
 
         return AgentController(
@@ -236,7 +268,7 @@ class Application:
             get_user_applications_use_case=GetUserApplicationsUseCase(uow),
             toggle_interview_status_use_case=ToggleInterviewStatusUseCase(uow),
             toggle_response_status_use_case=ToggleResponseStatusUseCase(uow),
-            get_daily_stats_use_case=GetDailyStatsUseCase(uow),  # 🚨 NEW: Injected into the controller
+            get_daily_stats_use_case=GetDailyStatsUseCase(uow),
             job_offer_presenter=self.job_presenter
         )
 

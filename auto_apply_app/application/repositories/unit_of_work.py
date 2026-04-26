@@ -1,3 +1,4 @@
+# auto_apply_app/application/repositories/unit_of_work.py
 from abc import ABC, abstractmethod
 from auto_apply_app.application.repositories.user_repo import UserRepository
 from auto_apply_app.application.repositories.auth_repo import AuthRepository
@@ -6,6 +7,7 @@ from auto_apply_app.application.repositories.job_offer_repo import JobOfferRepos
 from auto_apply_app.application.repositories.job_search_repo import JobSearchRepository
 from auto_apply_app.application.repositories.board_credentials_repo import BoardCredentialsRepository
 from auto_apply_app.application.repositories.preferences_repo import UserPreferencesRepository
+from auto_apply_app.application.repositories.user_fingerprint_repo import UserFingerprintRepository
 
 
 
@@ -22,6 +24,7 @@ class UnitOfWork(ABC):
     search_repo: JobSearchRepository
     user_pref_repo: UserPreferencesRepository
     board_cred_repo: BoardCredentialsRepository
+    user_fingerprint_repo: UserFingerprintRepository
     
     async def __aenter__(self):
         return self

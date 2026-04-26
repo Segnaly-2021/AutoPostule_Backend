@@ -15,10 +15,12 @@ from auto_apply_app.application.use_cases.agent_use_cases import (
 )
 from auto_apply_app.application.use_cases.job_offer_use_cases import CleanupUnsubmittedJobsUseCase, GetDailyStatsUseCase
 from auto_apply_app.application.use_cases.agent_state_use_cases import GetAgentStateUseCase, ResetAgentUseCase
+from auto_apply_app.application.use_cases.fingerprint_use_cases import GetOrCreateUserFingerprintUseCase  # 🚨 NEW
 
 # Ports
 from auto_apply_app.application.service_ports.encryption_port import EncryptionServicePort
-from auto_apply_app.application.service_ports.file_storage_port import FileStoragePort  
+from auto_apply_app.application.service_ports.file_storage_port import FileStoragePort
+from auto_apply_app.application.service_ports.proxy_service_port import ProxyServicePort  # 🚨 NEW
 
 
 
@@ -29,10 +31,13 @@ def create_agent(
     encryption_service: EncryptionServicePort,
     file_storage: FileStoragePort,
     get_ignored_hashes_use_case: GetIgnoredHashesUseCase,
-    get_agent_state_use_case: GetAgentStateUseCase,                # 🚨 NEW
-    reset_agent_state_use_case: ResetAgentUseCase,                 # 🚨 NEW
-    cleanup_unsubmitted_use_case: CleanupUnsubmittedJobsUseCase,    # 🚨 NEW
-    get_daily_stats_use_case: GetDailyStatsUseCase                 # 🚨 NEW
+    get_agent_state_use_case: GetAgentStateUseCase,
+    reset_agent_state_use_case: ResetAgentUseCase,
+    cleanup_unsubmitted_use_case: CleanupUnsubmittedJobsUseCase,
+    get_daily_stats_use_case: GetDailyStatsUseCase,
+    # 🚨 NEW
+    get_or_create_fingerprint_use_case: GetOrCreateUserFingerprintUseCase,
+    proxy_service: ProxyServicePort,
 ) -> MasterAgent:
     """
     Factory function to create the MasterAgent Singleton.
@@ -55,7 +60,7 @@ def create_agent(
        get_ignored_hashes=get_ignored_hashes_use_case,
        encryption_service=encryption_service,
        file_storage=file_storage,
-       get_agent_state=get_agent_state_use_case # 🚨 Wired!
+       get_agent_state=get_agent_state_use_case
     )
     
     # 2. Instantiate HelloWork Worker
@@ -63,7 +68,7 @@ def create_agent(
         get_ignored_hashes=get_ignored_hashes_use_case,
         encryption_service=encryption_service,
         file_storage=file_storage,
-        get_agent_state=get_agent_state_use_case # 🚨 Wired!
+        get_agent_state=get_agent_state_use_case
     )
     
     # 3. Instantiate WTTJ Worker
@@ -72,7 +77,7 @@ def create_agent(
         encryption_service=encryption_service,
         file_storage=file_storage,
         api_keys=api_keys,
-        get_agent_state=get_agent_state_use_case # 🚨 Wired!
+        get_agent_state=get_agent_state_use_case
     )
     
     # 4. Return Master Agent
@@ -84,8 +89,11 @@ def create_agent(
         file_storage=file_storage,
         consume_credits_use_case=consume_credits_use_case,
         save_applications_use_case=results_saver,
-        cleanup_unsubmitted_use_case=cleanup_unsubmitted_use_case, # 🚨 Wired!
-        get_agent_state=get_agent_state_use_case,                  # 🚨 Wired!
-        reset_agent_state=reset_agent_state_use_case,               # 🚨 Wired!
-        get_daily_stats=get_daily_stats_use_case                   # 🚨 Wired!
+        cleanup_unsubmitted_use_case=cleanup_unsubmitted_use_case,
+        get_agent_state=get_agent_state_use_case,
+        reset_agent_state=reset_agent_state_use_case,
+        get_daily_stats=get_daily_stats_use_case,
+        # 🚨 NEW
+        get_or_create_fingerprint=get_or_create_fingerprint_use_case,
+        proxy_service=proxy_service,
     )

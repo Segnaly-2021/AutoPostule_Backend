@@ -72,4 +72,9 @@ jobs:
             RESEND_API_KEY=${{ secrets.RESEND_API_KEY }}
             FRONTEND_URL=${{ secrets.FRONTEND_URL }}
             EMAIL_FROM=${{ secrets.EMAIL_FROM }}
+            IPROYAL_HOST=${{ secrets.IPROYAL_HOST }}
+            IPROYAL_PORT=${{ secrets.IPROYAL_PORT }}
+            IPROYAL_USERNAME=${{ secrets.IPROYAL_USERNAME }}
+            IPROYAL_PASSWORD_TEMPLATE=${{ secrets.IPROYAL_PASSWORD_TEMPLATE }}
+            PROXY_PROVIDER=${{ secrets.PROXY_PROVIDER }}
             

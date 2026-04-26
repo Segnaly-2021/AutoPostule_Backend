@@ -18,7 +18,10 @@ from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
 
 
-
+from auto_apply_app.application.service_ports.proxy_service_port import ProxyServicePort
+from auto_apply_app.application.use_cases.fingerprint_use_case import (
+    GetOrCreateUserFingerprintUseCase,
+)
 from auto_apply_app.application.service_ports.agent_port import AgentServicePort
 from auto_apply_app.application.service_ports.file_storage_port import FileStoragePort
 from auto_apply_app.domain.value_objects import ApplicationStatus, ClientType, JobBoard
@@ -240,16 +243,18 @@ class MasterAgent(AgentServicePort):
         consume_credits_use_case: ConsumeAiCreditsUseCase,
         save_applications_use_case: SaveJobApplicationsUseCase,
         cleanup_unsubmitted_use_case: CleanupUnsubmittedJobsUseCase,
-        get_agent_state: GetAgentStateUseCase,    # 🚨 NEW
-        reset_agent_state: ResetAgentUseCase,      # 🚨 NEW
-        get_daily_stats: GetDailyStatsUseCase,     # 🚨 NEW
+        get_agent_state: GetAgentStateUseCase,
+        reset_agent_state: ResetAgentUseCase,
+        get_daily_stats: GetDailyStatsUseCase,
+        # 🚨 NEW
+        get_or_create_fingerprint: GetOrCreateUserFingerprintUseCase,
+        proxy_service: ProxyServicePort,
     ):
         # Workers
         self._wttj = wttj_worker
         self._hw = hellowork_worker
         self._apec = apec_worker
 
-        # System messages for each board (for the LLM prompt)
         self.system_messages = MasterAgent.MASTER_SYSTEM_MESSAGE
         
         # Tools
@@ -257,10 +262,14 @@ class MasterAgent(AgentServicePort):
         self.consume_credits = consume_credits_use_case
         self.save_applications = save_applications_use_case
         self.cleanup_unsubmitted = cleanup_unsubmitted_use_case
-        self.get_agent_state = get_agent_state       # 🚨 NEW
-        self.reset_agent_state = reset_agent_state   # 🚨 NEW
+        self.get_agent_state = get_agent_state
+        self.reset_agent_state = reset_agent_state
         self.get_daily_stats = get_daily_stats
         self._checkpointer = None
+
+        # 🚨 NEW
+        self.get_or_create_fingerprint = get_or_create_fingerprint
+        self.proxy_service = proxy_service
         
         self._active_workers: Dict[str, Any] = {}
         self.file_storage = file_storage
@@ -810,6 +819,7 @@ class MasterAgent(AgentServicePort):
             interrupt_before=["human_review"] 
         )
     
+    # UPDATED run_job_search — fetch fingerprint + proxy, inject into initial_state
     async def run_job_search(
         self, 
         user: User, 
@@ -821,25 +831,45 @@ class MasterAgent(AgentServicePort):
     ) -> None:
         print(f"🤖 Master Agent waking up for user: {user.email}")
 
-        # 🚨 FORCE CLEAN SLATE ON BOOT
         await self.reset_agent_state.execute(user.id)
 
-        # 🚨 UPDATE: Added new state properties
+        # 🚨 NEW: Fetch the user's persistent fingerprint (lazy generates if missing)
+        print("🪪 Resolving user fingerprint...")
+        fingerprint_result = await self.get_or_create_fingerprint.execute(user.id)
+        if not fingerprint_result.is_success:
+            print(f"⚠️  Fingerprint resolution failed: {fingerprint_result.error.message}")
+            fingerprint = None
+        else:
+            fingerprint = fingerprint_result.value
+            print(f"   ✓ Fingerprint loaded — UA: {fingerprint.user_agent[:50]}...")
+
+        # 🚨 NEW: Resolve proxy config (None if NoProxyAdapter is active)
+        print("🌐 Resolving proxy for user...")
+        proxy_config = self.proxy_service.get_proxy_for_user(str(user.id))
+        if proxy_config:
+            print(f"   ✓ Proxy assigned: {proxy_config['server']}")
+        else:
+            print("   ⚠️  No proxy configured — running with direct connection")
+
         initial_state = JobApplicationState(
             user=user,
             job_search=search,
             subscription=subscription,
             preferences=preferences,
             credentials=credentials,
-            max_jobs=10 if "BASIC" in subscription.account_type.name else 60, # Inject limits!
+            max_jobs=10 if "BASIC" in subscription.account_type.name else 60,
             worker_job_limit=0,
             found_raw_offers=[],
             processed_offers=[],
-            submitted_offers=[], # New Outbox
+            submitted_offers=[],
             current_url="",
             is_logged_in=False,
-            status="starting"
+            status="starting",
+            # 🚨 NEW
+            user_fingerprint=fingerprint,
+            proxy_config=proxy_config,
         )
+        
         print(f"📊 Initial State prepared with user preferences and subscription details {initial_state}.")
 
         # 🚨 UPDATE: Register ALL active workers for this search
@@ -958,56 +988,63 @@ class MasterAgent(AgentServicePort):
 
 
     async def resume_job_search(
-            self,
-            user: User,
-            search: JobSearch,
-            subscription: UserSubscription,     # 🚨 Passed from Use Case
-            preferences: UserPreferences,       # 🚨 Passed from Use Case
-            approved_jobs: list,                # 🚨 Passed from Use Case
-            credentials: Optional[Dict[str, BoardCredential]] = None, # 🚨 Passed from Use Case
-            progress_callback: Optional[Callable] = None
-        ) -> None:
-            print(f"🔄 Resuming job search {search.id} for user: {user.email}")
+        self,
+        user: User,
+        search: JobSearch,
+        subscription: UserSubscription,
+        preferences: UserPreferences,
+        approved_jobs: list,
+        credentials: Optional[Dict[str, BoardCredential]] = None,
+        progress_callback: Optional[Callable] = None
+    ) -> None:
+        print(f"🔄 Resuming job search {search.id} for user: {user.email}")
 
-            await self.reset_agent_state.execute(user.id)
-            
-            if not self._checkpointer:
-                self._checkpointer = await Config.get_checkpointer()
+        await self.reset_agent_state.execute(user.id)
 
-            app = self.get_graph()
-            config = {"configurable": {"thread_id": f"search_{search.id}"}}
+        # 🚨 NEW: Same identity logic for the resume path (SUBMIT track)
+        fingerprint_result = await self.get_or_create_fingerprint.execute(user.id)
+        fingerprint = fingerprint_result.value if fingerprint_result.is_success else None
+        proxy_config = self.proxy_service.get_proxy_for_user(str(user.id))
+        
+        if not self._checkpointer:
+            self._checkpointer = await Config.get_checkpointer()
 
-            print("🔄 Stripping all entities to raw dictionaries for LangGraph...")
+        app = self.get_graph()
+        config = {"configurable": {"thread_id": f"search_{search.id}"}}
 
-            # 🚨 INJECT PURE PRIMITIVES INTO STATE
-            await app.aupdate_state(
-                config, 
-                {
-                    "user": user,
-                    "job_search": search,
-                    "subscription": subscription,
-                    "preferences": preferences,
-                    "credentials": credentials,
-                    "processed_offers": approved_jobs
-                },
-                as_node="human_review" 
-            )
+        print("🔄 Stripping all entities to raw dictionaries for LangGraph...")
 
-            active_instances = []
-            for board, is_active in preferences.active_boards.items():
-                if is_active:
-                    worker = self._get_worker_for_board(board.lower())
-                    worker._progress_callback = progress_callback 
-                    active_instances.append(worker)
+        await app.aupdate_state(
+            config, 
+            {
+                "user": user,
+                "job_search": search,
+                "subscription": subscription,
+                "preferences": preferences,
+                "credentials": credentials,
+                "processed_offers": approved_jobs,
+                # 🚨 NEW
+                "user_fingerprint": fingerprint,
+                "proxy_config": proxy_config,
+            },
+            as_node="human_review" 
+        )
 
-            self._active_workers[str(search.id)] = active_instances
-            self._progress_callback = progress_callback 
-            
-            try:
-                async for _ in app.astream(None, config, subgraphs=True):
-                    pass
-            finally:
-                self._progress_callback = None
-                for worker in active_instances:
-                    worker._progress_callback = None
-                self._active_workers.pop(str(search.id), None)
+        active_instances = []
+        for board, is_active in preferences.active_boards.items():
+            if is_active:
+                worker = self._get_worker_for_board(board.lower())
+                worker._progress_callback = progress_callback 
+                active_instances.append(worker)
+
+        self._active_workers[str(search.id)] = active_instances
+        self._progress_callback = progress_callback 
+        
+        try:
+            async for _ in app.astream(None, config, subgraphs=True):
+                pass
+        finally:
+            self._progress_callback = None
+            for worker in active_instances:
+                worker._progress_callback = None
+            self._active_workers.pop(str(search.id), None)

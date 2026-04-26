@@ -9,6 +9,7 @@ from auto_apply_app.infrastructures.persistence.database.repositories.subscripti
 from auto_apply_app.infrastructures.persistence.database.repositories.user_preferences_repo_db import UserPreferencesRepoDB
 from auto_apply_app.infrastructures.persistence.database.repositories.board_credentials_repo_db import BoardCredentialRepoDB
 from auto_apply_app.infrastructures.persistence.database.repositories.agent_state_repo_db import AgentStateRepoDB
+from auto_apply_app.infrastructures.persistence.database.repositories.user_fingerprint_repo_db import UserFingerprintRepoDB
 
 
 
@@ -29,6 +30,7 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         self.user_pref_repo = UserPreferencesRepoDB(self.session)
         self.board_cred_repo = BoardCredentialRepoDB(self.session)
         self.agent_state_repo = AgentStateRepoDB(self.session)
+        self.user_fingerprint_repo = UserFingerprintRepoDB(self.session)
         
         return self
 

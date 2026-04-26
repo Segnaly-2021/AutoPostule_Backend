@@ -1,4 +1,4 @@
-# auto_apply_app/infrastructure/agent/workers/wttj_worker.py
+# auto_apply_app/infrastructures/agent/workers/wttj/wttj_worker.py
 import hashlib
 import os
 import json
@@ -24,6 +24,14 @@ from auto_apply_app.application.use_cases.agent_state_use_cases import GetAgentS
 from auto_apply_app.application.service_ports.encryption_port import EncryptionServicePort 
 from auto_apply_app.application.service_ports.file_storage_port import FileStoragePort 
 from auto_apply_app.application.use_cases.agent_use_cases import GetIgnoredHashesUseCase
+
+# 🚨 NEW: Human behavior helpers
+from auto_apply_app.infrastructures.agent.human_behavior import (
+    human_delay,
+    human_type,
+    human_click,
+    human_warmup,
+)
 
 
 class WelcomeToTheJungleWorker:
@@ -135,8 +143,7 @@ class WelcomeToTheJungleWorker:
             
             later_button = modal.get_by_text("Peut-être plus tard", exact=True)
             if await later_button.is_visible():
-                await later_button.click()
-                # ✅ FIXED: Wait for modal to disappear instead of arbitrary timeout
+                await human_click(later_button)  # 🚨 NEW
                 await modal.wait_for(state="hidden", timeout=5000)
                 print("✅ [WTTJ] Dismissed application modal.")
             else:
@@ -156,8 +163,7 @@ class WelcomeToTheJungleWorker:
             
             close_button = modal.locator('[data-dialog-dismiss][title="Close"]')
             if await close_button.is_visible():
-                await close_button.click()
-                # ✅ FIXED: Wait for modal to disappear instead of arbitrary timeout
+                await human_click(close_button)  # 🚨 NEW
                 await modal.wait_for(state="hidden", timeout=5000)
                 print("✅ [WTTJ] Closed apply form modal.")
             else:
@@ -222,7 +228,6 @@ class WelcomeToTheJungleWorker:
         raw_company = None
         raw_location = None
 
-        # Gate check — if title not attached, card content hasn't rendered
         try:
             await card.locator('h2 div[role="mark"]').wait_for(state="attached", timeout=10000)
         except Exception as e:
@@ -269,8 +274,8 @@ class WelcomeToTheJungleWorker:
                 return False
 
             print(f"➡️ [WTTJ] Moving to page {page_number + 1}...")
+            await human_delay(1500, 3500)  # 🚨 NEW: pause before pagination
 
-            # ✅ RETRY: Click next + wait for cards as one unit
             for attempt in range(3):
                 try:
                     await next_button.click()
@@ -295,11 +300,10 @@ class WelcomeToTheJungleWorker:
     async def _apply_filters(self, contract_types: list[ContractType], min_salary: int):
         try:
             # ✅ RETRY UNIT 1: Open filter modal
-            # jobs-search-filter-all is the gateway — if it fails, no filters get applied
             for attempt in range(3):
                 try:
                     await self.page.wait_for_selector('button[id="jobs-search-filter-all"]', state="visible", timeout=30000)
-                    await self.page.locator('button[id="jobs-search-filter-all"]').click()
+                    await human_click(self.page.locator('button[id="jobs-search-filter-all"]'))  # 🚨 NEW
                     await self.page.wait_for_selector('div[data-testid="filter-modal"]', state="visible", timeout=10000)
                     break
                 except Exception as e:
@@ -317,6 +321,7 @@ class WelcomeToTheJungleWorker:
                     if await checkbox.count() > 0:
                         print(f"  Found checkbox for contract type: {str(contract.name)}")
                         if await checkbox.get_attribute("aria-checked") == 'false':
+                            await human_delay(300, 700)  # 🚨 NEW
                             await checkbox.click()
                             print(f"  ✓ Checked: {str(contract.value)}")
                 except Exception as e:
@@ -327,10 +332,13 @@ class WelcomeToTheJungleWorker:
                 salary_id = f"jobs-search-search-all-modal-salary-{min_salary}+"
                 salary_radio = self.page.locator(f"div[id='{salary_id}']")
                 if await salary_radio.count() > 0:
+                    await human_delay(300, 700)  # 🚨 NEW
                     await salary_radio.click(force=True)
                     print(f"  ✓ Selected Salary: ≥ {min_salary}€")
                 else:
                     print(f"  ⚠️ Salary option '{min_salary}+' not found in modal.")
+
+            await human_delay(800, 1800)  # 🚨 NEW: review form before submit
 
             # ✅ RETRY UNIT 2: Submit filters + verify results appeared
             search_button = self.page.locator('button[id="jobs-search-modal-search-button"]')
@@ -356,32 +364,27 @@ class WelcomeToTheJungleWorker:
 
     # --- HELPER: Nav Back with Retry + Verification ---
     async def nav_back(self, url: str) -> bool:
-        """
-        Navigate back to the search results page with retry logic.
-        Returns True if successful, False if the page state is broken.
-        """
-        # Try the in-page "Retourner aux résultats" link first
         try:
             if await self.page.locator('a[title="Retourner aux résultats"]').count() > 0:
                 await self.page.locator('a[title="Retourner aux résultats"]').click()
                 await self.page.wait_for_load_state("networkidle")
                 await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=15000)
                 await self._handle_cookies()
+                await human_delay(800, 2000)  # 🚨 NEW: pause to "read" results
                 return True
         except Exception:
             pass
 
-        # Fallback: navigate directly to URL with retry
         for attempt in range(3):
             try:
                 await self.page.goto(url, wait_until="networkidle")
                 await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=15000)
                 await self._handle_cookies()
+                await human_delay(800, 2000)  # 🚨 NEW
                 return True
             except Exception as e:
                 if attempt == 2:
                     print(f"    ⚠️ Could not return to search results after 3 attempts: {e}")
-                    # Last resort: reload
                     try:
                         await self.page.reload(wait_until="networkidle")
                         await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=10000)
@@ -430,23 +433,51 @@ class WelcomeToTheJungleWorker:
         print(f"--- [WTTJ] Starting session for {state['user'].firstname} ---")
         
         preferences = state["preferences"]
+
+        # 🚨 NEW: Pull identity from state
+        fingerprint = state.get("user_fingerprint")
+        proxy_config = state.get("proxy_config")
         
-        self.playwright = await async_playwright().start()
-        self.browser = await self.playwright.chromium.launch(
-            headless=preferences.browser_headless, 
-            args=['--disable-blink-features=AutomationControlled']
-        )
-        
-        real_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-        self.context = await self.browser.new_context(
-            user_agent=real_user_agent,
-        )
-        
-        stealth = Stealth()
-        await stealth.apply_stealth_async(self.context)
-        self.page = await self.context.new_page()
-        
-        return {}
+        try:
+            self.playwright = await async_playwright().start()
+            self.browser = await self.playwright.chromium.launch(
+                headless=preferences.browser_headless, 
+                args=['--disable-blink-features=AutomationControlled']
+            )
+
+            # 🚨 NEW: Build context kwargs from fingerprint + proxy
+            context_kwargs = {}
+            if fingerprint:
+                context_kwargs.update(fingerprint.to_playwright_context_args())
+                print(f"   🪪 Applying fingerprint: {fingerprint.platform} / {fingerprint.viewport_width}x{fingerprint.viewport_height}")
+            else:
+                context_kwargs["user_agent"] = (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+                )
+
+            if proxy_config:
+                context_kwargs["proxy"] = {
+                    "server": proxy_config["server"],
+                    "username": proxy_config["username"],
+                    "password": proxy_config["password"],
+                }
+                print(f"   🌐 Routing through proxy: {proxy_config['server']}")
+
+            self.context = await self.browser.new_context(**context_kwargs)
+
+            # 🚨 NEW: Inject fingerprint init script BEFORE any page loads
+            if fingerprint:
+                await self.context.add_init_script(fingerprint.to_init_script())
+            
+            stealth = Stealth()
+            await stealth.apply_stealth_async(self.context)
+            self.page = await self.context.new_page()
+            
+            return {}
+        except Exception as e:
+            print(f"Session Error: {e}")
+            return {"error": "Failed to start the secure browsing session."}
 
 
     # --- NODE 1 Bis: Boot & Inject Session (Submit Track) ---
@@ -454,6 +485,10 @@ class WelcomeToTheJungleWorker:
         await self._emit(state, "Initializing Secure Browser") 
         print("--- [WTTJ] Booting Browser (Session Injection) ---")
         user_id = str(state["user"].id)
+
+        # 🚨 NEW: Pull identity from state
+        fingerprint = state.get("user_fingerprint")
+        proxy_config = state.get("proxy_config")
         
         try:
             self.playwright = await async_playwright().start()
@@ -462,23 +497,42 @@ class WelcomeToTheJungleWorker:
                 args=['--disable-blink-features=AutomationControlled']
             )
             
-            real_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
             session_path = self._get_auth_state_path(user_id)
-            
+
+            # 🚨 NEW: Build context kwargs from fingerprint + proxy + saved session
+            context_kwargs = {}
+            if fingerprint:
+                context_kwargs.update(fingerprint.to_playwright_context_args())
+                context_kwargs.update({
+                    "device_scale_factor": fingerprint.device_scale_factor,
+                    "has_touch": False,
+                    "is_mobile": False,
+                })
+            else:
+                context_kwargs["user_agent"] = (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+                )
+
             if session_path:
                 print(f"🔓 Found saved session for user {user_id}. Injecting cookies...")
-                self.context = await self.browser.new_context(
-                    storage_state=session_path,
-                    user_agent=real_user_agent,
-                    device_scale_factor=1,
-                    has_touch=False,
-                    is_mobile=False
-                )
+                context_kwargs["storage_state"] = session_path
             else:
                 print("⚠ No session found. Booting fresh context...")
-                self.context = await self.browser.new_context(
-                    user_agent=real_user_agent,
-                )
+
+            if proxy_config:
+                context_kwargs["proxy"] = {
+                    "server": proxy_config["server"],
+                    "username": proxy_config["username"],
+                    "password": proxy_config["password"],
+                }
+                print(f"   🌐 Routing through proxy: {proxy_config['server']}")
+
+            self.context = await self.browser.new_context(**context_kwargs)
+
+            # 🚨 NEW: Inject fingerprint init script
+            if fingerprint:
+                await self.context.add_init_script(fingerprint.to_init_script())
 
             stealth = Stealth()
             await stealth.apply_stealth_async(self.context)
@@ -497,7 +551,8 @@ class WelcomeToTheJungleWorker:
                     print(f"⚠️ [WTTJ] Auth boot attempt {attempt+1} failed. Retrying in {2 ** attempt}s...")
                     await asyncio.sleep(2 ** attempt)
 
-            await self.page.locator('a[data-testid="menu-jobs"] p:has-text("Trouver un job")').click()
+            await human_warmup(self.page, self.base_url)  # 🚨 NEW: human warmup
+            await human_click(self.page.locator('a[data-testid="menu-jobs"] p:has-text("Trouver un job")'))  # 🚨 NEW
 
             search_entity = state["job_search"]
             job_title = search_entity.job_title
@@ -506,7 +561,7 @@ class WelcomeToTheJungleWorker:
 
             print(f"--- [WTTJ] Dummy Searching for: {job_title} ---")
             try:
-                await self.page.get_by_test_id("jobs-home-search-field-query").fill(job_title)
+                await human_type(self.page.get_by_test_id("jobs-home-search-field-query"), job_title)  # 🚨 NEW
                 
                 if contract_types or min_salary > 0:
                     await self._apply_filters(contract_types, min_salary)
@@ -527,7 +582,6 @@ class WelcomeToTheJungleWorker:
         await self._emit(state, "Navigating to Job Board")
         print("--- [WTTJ] Navigating ---")
         try:
-            # ✅ RETRY: goto + cookies + login button as one unit
             for attempt in range(3):
                 try:
                     await self.page.goto(self.base_url, wait_until="networkidle", timeout=90000)
@@ -539,7 +593,8 @@ class WelcomeToTheJungleWorker:
                         return {"error": "Could not reach Welcome to the Jungle. The job board might be down or undergoing maintenance."}
                     print(f"⚠️ [WTTJ] Navigation attempt {attempt+1} failed. Error: {e}. Retrying in {2 ** attempt}s...")
                     await asyncio.sleep(2 ** attempt)
-            
+
+            await human_warmup(self.page, self.base_url)  # 🚨 NEW: warmup after navigation
             return {}        
         except Exception as e:
             print(f"🚨 Navigation Error: {e}")
@@ -568,7 +623,7 @@ class WelcomeToTheJungleWorker:
                 # ✅ RETRY UNIT 1: Open login modal + verify email input appears
                 for attempt in range(3):
                     try:
-                        await self.page.get_by_test_id("not-logged-visible-login-button").click()
+                        await human_click(self.page.get_by_test_id("not-logged-visible-login-button"))  # 🚨 NEW
                         await self.page.wait_for_selector('input[id="email_login"]', state="visible", timeout=15000)
                         break
                     except Exception as e:
@@ -581,13 +636,20 @@ class WelcomeToTheJungleWorker:
                 login_plain = await self.encryption_service.decrypt(creds["wttj"].login_encrypted)
                 pass_plain = await self.encryption_service.decrypt(creds["wttj"].password_encrypted)
 
-                # ✅ RETRY UNIT 2: Fill credentials + submit
+                # ✅ RETRY UNIT 2: Fill credentials with HUMAN typing + submit
                 for attempt in range(3):
                     try:
                         await self.page.locator('input[id="email_login"]').clear()
-                        await self.page.locator('input[id="email_login"]').fill(login_plain)
+                        await human_delay(300, 700)  # 🚨 NEW
+                        await human_type(self.page.locator('input[id="email_login"]'), login_plain)  # 🚨 NEW
+
+                        await human_delay(400, 900)  # 🚨 NEW: pause between fields
+
                         await self.page.locator('input[id="password"]').clear()
-                        await self.page.locator('input[id="password"]').fill(pass_plain)
+                        await human_delay(200, 500)  # 🚨 NEW
+                        await human_type(self.page.locator('input[id="password"]'), pass_plain)  # 🚨 NEW
+
+                        await human_delay(600, 1500)  # 🚨 NEW: review before submit
 
                         submit_btn = self.page.locator('[data-testid="login-button-submit"]') 
                         if await submit_btn.count() == 0:
@@ -652,11 +714,17 @@ class WelcomeToTheJungleWorker:
         print(f"--- [WTTJ] Searching for: {job_title} ---")
         
         try:
+            await human_warmup(self.page, self.base_url)  # 🚨 NEW: warmup before searching
+
             # ✅ RETRY UNIT 1: Search field + fill
             for attempt in range(3):
                 try:
                     await self.page.wait_for_selector('[data-testid="jobs-home-search-field-query"]', state="visible", timeout=90000)
-                    await self.page.get_by_test_id("jobs-home-search-field-query").fill(job_title)
+                    search_field = self.page.get_by_test_id("jobs-home-search-field-query")
+                    await search_field.clear()
+                    await human_delay(200, 500)  # 🚨 NEW
+                    await human_type(search_field, job_title)  # 🚨 NEW
+                    await human_delay(500, 1200)  # 🚨 NEW: pause before submitting
                     break
                 except Exception as e:
                     if attempt == 2:
@@ -665,13 +733,11 @@ class WelcomeToTheJungleWorker:
                     await self.page.reload(wait_until="networkidle")
                     await asyncio.sleep(2 ** attempt)
 
-            # Apply filters (owns its own retry logic)
             if contract_types or min_salary > 0:
                 await self._apply_filters(contract_types, min_salary)
 
             await self.page.wait_for_load_state("networkidle")
 
-            # ✅ Verify results appeared (logical check — no retry)
             try:
                 await self.page.wait_for_selector(self.CARD_SELECTOR, state="attached", timeout=90000)
                 print("✅ Search results loaded successfully.")
@@ -735,8 +801,8 @@ class WelcomeToTheJungleWorker:
                     try:
                         card = self.page.get_by_test_id("search-results-list-item-wrapper").nth(i)
 
-                        # ✅ Scroll card into viewport before reading its content
                         await card.scroll_into_view_if_needed()
+                        await human_delay(400, 1000)  # 🚨 NEW: pause to "look at" the card
 
                         raw_company, raw_title, raw_location = await self.get_raw_job_data(card)
                         print(f"---[WTTJ WORKER] RAW DATA---\n[WTTJ Company]: {raw_company},\n[WTTJ Title]: {raw_title},\n[WTTJ Location]: {raw_location}")
@@ -754,9 +820,8 @@ class WelcomeToTheJungleWorker:
                         for attempt in range(3):
                             try:
                                 card = self.page.get_by_test_id("search-results-list-item-wrapper").nth(i)
-                                await card.click()
+                                await human_click(card)  # 🚨 NEW
                                 await self.page.wait_for_load_state("networkidle")
-                                # Wait for job detail to actually load
                                 await self.page.wait_for_selector('[data-testid="job_bottom-button-apply"]', state="attached", timeout=40000)
                                 click_success = True
                                 break
@@ -771,7 +836,8 @@ class WelcomeToTheJungleWorker:
                         
                         current_url = self.page.url           
 
-                        # Extract Job Description
+                        await human_delay(1500, 3500)  # 🚨 NEW: pause to "read" the job description
+
                         try:
                             desc_el = self.page.locator("div#the-position-section")
                             if await desc_el.count() == 0: 
@@ -780,7 +846,6 @@ class WelcomeToTheJungleWorker:
                         except Exception:
                             job_desc = ""
 
-                        # Check Apply Button (Internal vs External)
                         apply_btn = self.page.locator('[data-testid="job_bottom-button-apply"]').first
                         
                         if await apply_btn.count() > 0:
@@ -812,7 +877,6 @@ class WelcomeToTheJungleWorker:
                                 await self._handle_wttj_close_modal()
                                 print(f"     📦 Current batch size: {len(found_job_entities)}/{worker_job_limit}")
 
-                        # ✅ Use nav_back helper with retry + verification
                         if not await self.nav_back(result_url):
                             break
                         
@@ -991,13 +1055,13 @@ class WelcomeToTheJungleWorker:
 
             print(f"📝 [WTTJ] Applying to: {offer.job_title} ({i+1}/{len(wttj_jobs)})")
             try:
-                # ✅ RETRY: goto + cookies + apply button + form open as one critical unit
-                # This is the WAF hot zone — one shot is not enough
+                # ✅ RETRY: form entry as one critical unit
                 form_opened = False
                 for attempt in range(3):
                     try:
                         await self.page.goto(offer.url, wait_until="commit", timeout=60000)
                         await self._handle_cookies()
+                        await human_delay(1500, 3500)  # 🚨 NEW: pause after navigation
                         
                         await self.page.wait_for_selector('[data-testid="job_bottom-button-apply"]', state="attached", timeout=30000)
                         apply_btn = self.page.locator('[data-testid="job_bottom-button-apply"]').first
@@ -1005,8 +1069,7 @@ class WelcomeToTheJungleWorker:
                         if await apply_btn.count() == 0:
                             raise Exception("Apply button not found")
                         
-                        await apply_btn.click()
-                        # Verify form actually opened by waiting for firstname field
+                        await human_click(apply_btn)  # 🚨 NEW
                         await self.page.wait_for_selector('[data-testid="apply-form-field-firstname"]', state="visible", timeout=15000)
                         form_opened = True
                         break
@@ -1023,16 +1086,19 @@ class WelcomeToTheJungleWorker:
 
                 await self._handle_cookies()
                 
-                # Fill Form (local operations — no retry needed)
-                await self.page.get_by_test_id("apply-form-field-firstname").fill(user.firstname)
-                await self.page.get_by_test_id("apply-form-field-lastname").fill(user.lastname)
+                # Fill Form with HUMAN typing for short fields
+                await human_type(self.page.get_by_test_id("apply-form-field-firstname"), user.firstname)  # 🚨 NEW
+                await human_delay(200, 500)  # 🚨 NEW
+                await human_type(self.page.get_by_test_id("apply-form-field-lastname"), user.lastname)  # 🚨 NEW
                 
                 if user.phone_number: 
-                    await self.page.get_by_test_id("apply-form-field-phone").fill(user.phone_number)
+                    await human_delay(200, 500)  # 🚨 NEW
+                    await human_type(self.page.get_by_test_id("apply-form-field-phone"), user.phone_number)  # 🚨 NEW
                 
                 current_pos = getattr(user, 'current_position', "")
                 if current_pos:
-                    await self.page.get_by_test_id("apply-form-field-subtitle").fill(current_pos) 
+                    await human_delay(200, 500)  # 🚨 NEW
+                    await human_type(self.page.get_by_test_id("apply-form-field-subtitle"), current_pos)  # 🚨 NEW
 
                 # File Upload
                 resume_bytes = None
@@ -1045,6 +1111,7 @@ class WelcomeToTheJungleWorker:
                         "mimeType": "application/pdf",
                         "buffer": resume_bytes
                     })
+                    await human_delay(1000, 2000)  # 🚨 NEW: wait for upload to register
 
                 # Dynamic Questions
                 if resume_bytes:
@@ -1071,27 +1138,29 @@ class WelcomeToTheJungleWorker:
                                         await self.page.locator('[role="listbox"] li').filter(has_text=field["value"]).click()
                                     case "checkbox":
                                         await self.page.locator(f'[data-testid="{testid}-input"]').check()
+                                await human_delay(300, 700)  # 🚨 NEW: between dynamic questions
                             except Exception as e:
                                 print(f"⚠️ [WTTJ] Could not fill question {testid}: {e}")
                                 continue
                     
-                # Cover Letter
+                # Cover Letter — fill is fine, humans paste cover letters
                 if offer.cover_letter:
                     await self.page.get_by_test_id("apply-form-field-cover_letter").fill(offer.cover_letter)
                 
                 # Consent Checkbox
                 checkbox = self.page.locator('input[id="consent"]')
                 if await checkbox.count() > 0 and not await checkbox.is_checked():
+                    await human_delay(300, 700)  # 🚨 NEW
                     await self.page.locator('label[for="consent"]').click()
                 
                 # ✅ NO RETRY on submit click — would cause duplicate submission risk
+                await human_delay(1500, 3500)  # 🚨 NEW: review before submitting
                 await self.page.wait_for_selector('[data-testid="apply-form-submit"]', state="attached")
                 submit_btn = self.page.locator('[data-testid="apply-form-submit"]')
                 
                 if await submit_btn.is_visible():
                     await submit_btn.click()
 
-                    # Wait directly for confirmation (Paperplane icon)
                     try:
                         await self.page.wait_for_selector('svg[alt="Paperplane"]', state="visible", timeout=45000)
                         print(f"✅ [WTTJ] Application submitted for {offer.job_title}")                    
@@ -1130,18 +1199,15 @@ class WelcomeToTheJungleWorker:
     def get_graph(self):
         workflow = StateGraph(JobApplicationState)
         
-        # SCRAPE TRACK
         workflow.add_node("start", self.start_session)
         workflow.add_node("nav", self.go_to_job_board)
         workflow.add_node("login", self.request_login)
         workflow.add_node("search", self.search_jobs)
         workflow.add_node("scrape", self.get_matched_jobs)
         
-        # SUBMIT TRACK
         workflow.add_node("start_with_session", self.start_session_with_auth) 
         workflow.add_node("submit", self.submit_applications)
         
-        # SHARED
         workflow.add_node("cleanup", self.cleanup)
 
         workflow.set_conditional_entry_point(
@@ -1152,14 +1218,12 @@ class WelcomeToTheJungleWorker:
             }
         )
         
-        # SCRAPE EDGES
         workflow.add_conditional_edges("start", self.route_node_exit, {"error": "cleanup", "continue": "nav"})
         workflow.add_conditional_edges("nav", self.route_node_exit, {"error": "cleanup", "continue": "login"})
         workflow.add_conditional_edges("login", self.route_node_exit, {"error": "cleanup", "continue": "search"})
         workflow.add_conditional_edges("search", self.route_node_exit, {"error": "cleanup", "continue": "scrape"})
         workflow.add_conditional_edges("scrape", self.route_node_exit, {"error": "cleanup", "continue": "cleanup"}) 
 
-        # SUBMIT EDGES
         workflow.add_conditional_edges("start_with_session", self.route_node_exit, {"error": "cleanup", "continue": "submit"})
         workflow.add_conditional_edges("submit", self.route_node_exit, {"error": "cleanup", "continue": "cleanup"})
         

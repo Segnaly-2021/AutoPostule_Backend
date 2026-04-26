@@ -224,7 +224,7 @@ class JobOfferDB(Base):
     cover_letter: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     ranking: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     job_desc: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    application_date: Mapped[datetime] = mapped_column(
+    application_date: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True),
         nullable=True
     )
@@ -255,3 +255,36 @@ class AgentStateDB(Base):
 
     # Relationship
     user: Mapped["UserDB"] = relationship("UserDB", back_populates="agent_state")
+
+
+
+class UserFingerprintDB(Base):
+    __tablename__ = "user_fingerprints"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        unique=True,
+        index=True
+    )
+    user_agent: Mapped[str] = mapped_column(String(500))
+    viewport_width: Mapped[int] = mapped_column(Integer)
+    viewport_height: Mapped[int] = mapped_column(Integer)
+    device_scale_factor: Mapped[float] = mapped_column()
+    locale: Mapped[str] = mapped_column(String(20))
+    timezone_id: Mapped[str] = mapped_column(String(50))
+    hardware_concurrency: Mapped[int] = mapped_column(Integer)
+    platform: Mapped[str] = mapped_column(String(50))
+    webgl_vendor: Mapped[str] = mapped_column(String(100))
+    webgl_renderer: Mapped[str] = mapped_column(String(255))
+
+    user: Mapped["UserDB"] = relationship("UserDB", back_populates="fingerprint")
+
+
+# =============================================================================
+# In UserDB — add this back-reference relationship
+# =============================================================================
+
+    fingerprint: Mapped[Optional["UserFingerprintDB"]] = relationship(
+        "UserFingerprintDB", back_populates="user", uselist=False
+    )
