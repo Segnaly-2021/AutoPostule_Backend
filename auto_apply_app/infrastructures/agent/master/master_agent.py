@@ -19,7 +19,7 @@ from langchain_anthropic import ChatAnthropic
 
 
 from auto_apply_app.application.service_ports.proxy_service_port import ProxyServicePort
-from auto_apply_app.application.use_cases.fingerprint_use_case import (
+from auto_apply_app.application.use_cases.fingerprint_use_cases import (
     GetOrCreateUserFingerprintUseCase,
 )
 from auto_apply_app.application.service_ports.agent_port import AgentServicePort
