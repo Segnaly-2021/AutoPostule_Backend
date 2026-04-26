@@ -16,12 +16,28 @@ async def human_delay(min_ms: int = 500, max_ms: int = 2000) -> None:
 async def human_type(locator: Locator, text: str, min_delay: int = 50, max_delay: int = 150) -> None:
     """
     Types text character-by-character with realistic per-key jitter.
+    Always clears the field first to avoid appending to existing content.
+
     Replaces locator.fill() for credential and form inputs.
     fill() pastes the entire string instantly via JavaScript, which is
     highly detectable. type() simulates real keystrokes.
     """
     if not text:
         return
+
+    # Always start from a clean field — prevents appending to existing text
+    try:
+        await locator.clear()
+    except Exception:
+        # Some elements (contenteditable, custom widgets) don't support .clear()
+        # Fall back to select-all + delete via keyboard
+        try:
+            await locator.click()
+            await locator.press("Control+A")
+            await locator.press("Delete")
+        except Exception:
+            pass
+
     delay = random.randint(min_delay, max_delay)
     await locator.type(text, delay=delay)
 

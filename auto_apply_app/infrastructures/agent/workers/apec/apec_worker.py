@@ -401,13 +401,13 @@ class ApecWorker():
                     "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
                 )
 
-            if proxy_config:
-                context_kwargs["proxy"] = {
-                    "server": proxy_config["server"],
-                    "username": proxy_config["username"],
-                    "password": proxy_config["password"],
-                }
-                print(f"   🌐 Routing through proxy: {proxy_config['server']}")
+            # if proxy_config:
+            #     context_kwargs["proxy"] = {
+            #         "server": proxy_config["server"],
+            #         "username": proxy_config["username"],
+            #         "password": proxy_config["password"],
+            #     }
+            #     print(f"   🌐 Routing through proxy: {proxy_config['server']}")
 
             self.context = await self.browser.new_context(**context_kwargs)
 
@@ -465,13 +465,13 @@ class ApecWorker():
             else:
                 print("⚠ No session found. Booting fresh context...")
 
-            if proxy_config:
-                context_kwargs["proxy"] = {
-                    "server": proxy_config["server"],
-                    "username": proxy_config["username"],
-                    "password": proxy_config["password"],
-                }
-                print(f"   🌐 Routing through proxy: {proxy_config['server']}")
+            # if proxy_config:
+            #     context_kwargs["proxy"] = {
+            #         "server": proxy_config["server"],
+            #         "username": proxy_config["username"],
+            #         "password": proxy_config["password"],
+            #     }
+            #     print(f"   🌐 Routing through proxy: {proxy_config['server']}")
 
             self.context = await self.browser.new_context(**context_kwargs)
 
