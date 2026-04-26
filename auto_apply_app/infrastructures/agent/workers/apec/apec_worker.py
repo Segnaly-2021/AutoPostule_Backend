@@ -972,11 +972,11 @@ class ApecWorker():
                     anchor_sec_label = self.page.locator('div[id="heading_additionalData"]').first
                     
                     await human_click(anchor_sec_label)  # 🚨 NEW
-                    await self.page.wait_for_selector('.ng-option', state="visible", timeout=10000)
+                    await self.page.wait_for_selector('.ng-option', state="visible", timeout=20000)
                     
                     if await anchor_sec.get_attribute('aria-expanded') != 'true':
                         await anchor_sec_label.click()
-                        await self.page.wait_for_selector('.ng-option', state="visible", timeout=10000)
+                        await self.page.wait_for_selector('.ng-option', state="visible", timeout=20000)
 
                     if hasattr(user, 'study_level') and user.study_level:
                         await self.page.locator('ng-select[formcontrolname="idNiveauFormation"]').click()
