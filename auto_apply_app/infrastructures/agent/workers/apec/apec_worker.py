@@ -906,25 +906,34 @@ class ApecWorker():
                     resume_bytes = await self.file_storage.download_file(user.resume_path)
                     human_name = user.resume_file_name or f"{user.firstname}_{user.lastname}_CV.pdf"
 
-                    has_saved_resume = await self.page.locator('.form-check.uploadFile.profil-selection').count() > 0
+                    print("📄 [APEC] Uploading resume...")
+                    await self.page.wait_for_selector('#formUpload input[type="file"]', state="attached", timeout=15000)
+                    await self.page.locator('#formUpload input[type="file"]').first.set_input_files({
+                        "name": human_name,
+                        "mimeType": "application/pdf",
+                        "buffer": resume_bytes
+                    })
+                    await human_delay(1000, 2000)
 
-                    if has_saved_resume:
-                        print("📄 [APEC] Saved resume detected — uploading a fresh one instead.")
-                        await human_click(self.page.locator('label.choice-highlight.import-cv'))  # 🚨 NEW
-                        await self.page.wait_for_selector('#formUpload input[type="file"]', state="visible", timeout=10000)
-                        await self.page.locator('#formUpload input[type="file"]').first.set_input_files({
-                            "name": human_name,
-                            "mimeType": "application/pdf",
-                            "buffer": resume_bytes
-                        })
-                    else:
-                        print("📄 [APEC] No saved resume — uploading directly.")
-                        await self.page.locator('#formUpload input[type="file"]').first.set_input_files({
-                            "name": human_name,
-                            "mimeType": "application/pdf",
-                            "buffer": resume_bytes
-                        })
-                    await human_delay(1000, 2000)  # 🚨 NEW: wait for upload to register
+                    # has_saved_resume = await self.page.locator('.form-check.uploadFile.profil-selection').count() > 0
+
+                    # if has_saved_resume:
+                    #     print("📄 [APEC] Saved resume detected — uploading a fresh one instead.")
+                    #     await human_click(self.page.locator('label.choice-highlight.import-cv'))  # 🚨 NEW
+                    #     await self.page.wait_for_selector('#formUpload input[type="file"]', state="visible", timeout=10000)
+                    #     await self.page.locator('#formUpload input[type="file"]').first.set_input_files({
+                    #         "name": human_name,
+                    #         "mimeType": "application/pdf",
+                    #         "buffer": resume_bytes
+                    #     })
+                    # else:
+                    #     print("📄 [APEC] No saved resume — uploading directly.")
+                    #     await self.page.locator('#formUpload input[type="file"]').first.set_input_files({
+                    #         "name": human_name,
+                    #         "mimeType": "application/pdf",
+                    #         "buffer": resume_bytes
+                    #     })
+                    # await human_delay(1000, 2000)  # 🚨 NEW: wait for upload to register
 
                     try:
                         save_checkbox = self.page.locator('input[formcontrolname="isCvSave"]')
