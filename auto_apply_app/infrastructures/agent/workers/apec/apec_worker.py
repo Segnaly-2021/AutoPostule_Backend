@@ -736,7 +736,12 @@ class ApecWorker():
                         print("    ⚠️    Missing title, skipping card.")
                         continue
 
-                    fast_hash = self._generate_fast_hash(raw_company if raw_company else "No Name", raw_title, str(user_id))
+                    fast_hash = self._generate_fast_hash(
+                        raw_company if raw_company else "No Name", 
+                        raw_title, 
+                        str(user_id)
+                    )
+
                     if fast_hash in ignored_hashes:
                         print(f"    ⏩ Skipping duplicate: {raw_title} at {raw_company}")
                         continue
@@ -807,7 +812,7 @@ class ApecWorker():
                                 await human_click(postule_btn)  # 🚨 NEW: human click
                                 await self.page.wait_for_load_state("networkidle")
                                 form_url = self.page.url
-                                await self.page.wait_for_selector('#formUpload, .form-check-true.profil-selection', state="visible", timeout=60000)
+                                await self.page.wait_for_selector('#formUpload, .form-check.uploadFile.profil-selection', state="visible", timeout=60000)
 
                                 print("    ✅ Valid application form confirmed. Saving to batch.")   
 
@@ -882,7 +887,7 @@ class ApecWorker():
                         await self.page.wait_for_selector('button[title="Postuler"]', state="visible", timeout=60000)
                         await human_click(self.page.locator('button[title="Postuler"]'))  # 🚨 NEW
                         await self.page.wait_for_load_state("networkidle")
-                        await self.page.wait_for_selector('#formUpload, .form-check-true.profil-selection', state="visible", timeout=90000)
+                        await self.page.wait_for_selector('#formUpload, .form-check.uploadFile.profil-selection', state="visible", timeout=90000)
                         form_loaded = True
                         break
                     except Exception as e:
@@ -901,7 +906,7 @@ class ApecWorker():
                     resume_bytes = await self.file_storage.download_file(user.resume_path)
                     human_name = user.resume_file_name or f"{user.firstname}_{user.lastname}_CV.pdf"
 
-                    has_saved_resume = await self.page.locator('.form-check-true.profil-selection').count() > 0
+                    has_saved_resume = await self.page.locator('.form-check.uploadFile.profil-selection').count() > 0
 
                     if has_saved_resume:
                         print("📄 [APEC] Saved resume detected — uploading a fresh one instead.")
