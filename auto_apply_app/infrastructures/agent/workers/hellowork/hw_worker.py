@@ -586,7 +586,7 @@ class HelloWorkWorker:
 
                         await human_delay(600, 1500)  # 🚨 NEW: review before submit
                         await self.page.locator('button[type="button"][class="profile-button"]').click()
-                        await self.page.wait_for_selector('a[data-cy="cpMenuDashboard"]', state="visible", timeout=60000)
+                        await self.page.wait_for_selector('a[data-cy="cpMenuDashboard"]', state="attached", timeout=60000)
                         break
                     except Exception as e:
                         print(f"⚠️ [HW] Credential submission attempt {attempt+1} failed. Retrying... \nError: {e}")
