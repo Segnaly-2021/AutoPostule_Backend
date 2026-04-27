@@ -26,7 +26,7 @@ class UserFingerprint(Entity):
 		"""
 		return {
 			"user_agent": self.user_agent,
-			"viewport": {"width": self.viewport_width, "height": self.viewport_height},
+			#"viewport": {"width": self.viewport_width, "height": self.viewport_height},
 			"device_scale_factor": self.device_scale_factor,
 			"locale": self.locale,
 			"timezone_id": self.timezone_id,
