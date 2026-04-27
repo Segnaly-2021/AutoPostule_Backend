@@ -812,7 +812,7 @@ class ApecWorker():
                                 await human_click(postule_btn)  # 🚨 NEW: human click
                                 await self.page.wait_for_load_state("networkidle")
                                 form_url = self.page.url
-                                await self.page.wait_for_selector('#formUpload, .form-check.uploadFile.profil-selection', state="visible", timeout=60000)
+                                await self.page.wait_for_selector('#formUpload, .form-check.uploadFile.profil-selection', state="attached", timeout=60000)
 
                                 print("    ✅ Valid application form confirmed. Saving to batch.")   
 
@@ -887,7 +887,7 @@ class ApecWorker():
                         await self.page.wait_for_selector('button[title="Postuler"]', state="visible", timeout=60000)
                         await human_click(self.page.locator('button[title="Postuler"]'))  # 🚨 NEW
                         await self.page.wait_for_load_state("networkidle")
-                        await self.page.wait_for_selector('#formUpload, .form-check.uploadFile.profil-selection', state="visible", timeout=90000)
+                        await self.page.wait_for_selector('#formUpload, .form-check.uploadFile.profil-selection', state="attached", timeout=90000)
                         form_loaded = True
                         break
                     except Exception as e:
