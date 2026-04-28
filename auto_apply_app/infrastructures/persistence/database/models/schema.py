@@ -137,7 +137,8 @@ class UserPreferencesDB(Base):
     active_boards: Mapped[dict] = mapped_column(JSONB, default=lambda: {
         'hellowork': True,
         'wttj': False,
-        'apec': False
+        'apec': False,
+        'jobteaser': False
     })
     creativity_level: Mapped[int] = mapped_column(Integer, default=8)
 

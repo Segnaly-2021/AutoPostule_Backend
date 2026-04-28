@@ -20,7 +20,9 @@ class UserPreferences(Entity):
     active_boards: Dict[str, bool] = field(default_factory=lambda: {
         'hellowork': True,
         'wttj': False,
-        'apec': False
+        'apec': False,
+        'jobteaser': False,
+        'indeed': False
     })
     
     # AI Configuration

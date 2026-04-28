@@ -37,6 +37,8 @@ class JobBoard(Enum):
     WTTJ = "wttj"
     HELLOWORK = "hellowork"
     APEC = "apec"
+    JOBTEASER = "jobteaser"
+    INDEED = "indeed"
 
 
  

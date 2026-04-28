@@ -20,7 +20,7 @@ class BoardCredential(Entity):
     - Decryption should only happen at the point of use (in workers)
     """
     user_id: UUID
-    job_board: str  # 'hellowork', 'wttj', 'apec'
+    job_board: str  # 'hellowork', 'wttj', 'apec', 'jobteaser', 'indeed'
     
     
     # Encrypted fields (handled by infrastructure layer)
