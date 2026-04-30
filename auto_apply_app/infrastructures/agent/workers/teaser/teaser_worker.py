@@ -1,7 +1,6 @@
 # auto_apply_app/infrastructures/agent/workers/teaser/teaser_worker.py
 import hashlib
 import os
-import json
 import asyncio
 import pdfplumber
 from typing import Optional
@@ -52,7 +51,6 @@ class JobTeaserWorker:
                  get_ignored_hashes: GetIgnoredHashesUseCase,
                  encryption_service: EncryptionServicePort,
                  file_storage: FileStoragePort,
-                 api_keys: dict,
                  get_agent_state: GetAgentStateUseCase
                 ):
         
@@ -62,7 +60,6 @@ class JobTeaserWorker:
         self.base_url = "https://www.jobteaser.com/fr"
         self.file_storage = file_storage
         self.get_agent_state = get_agent_state
-        self.api_keys = api_keys
         
         # Runtime State (Lazy Initialization)
         self.playwright: Optional[Playwright] = None
@@ -72,7 +69,7 @@ class JobTeaserWorker:
 
         # Progress callback (set per-run by master)
         self._progress_callback = None
-        self._source_name = "TEASER"
+        self._source_name = "JOBTEASER"
 
 
     # =========================================================================
@@ -106,20 +103,20 @@ class JobTeaserWorker:
         c = str(company_name).replace(" ", "").lower().strip()
         t = str(job_title).replace(" ", "").lower().strip()
         u = str(user_id).strip()
-        b = "wttj"
+        b = "jobteaser"
         raw_string = f"{c}_{t}_{b}_{u}"
         return hashlib.md5(raw_string.encode()).hexdigest()
 
     def _get_session_file_path(self, user_id: str) -> str:
         directory = os.path.join(os.getcwd(), "tmp", "sessions")
         os.makedirs(directory, exist_ok=True)
-        return os.path.join(directory, f"{user_id}_wttj_session.json")
+        return os.path.join(directory, f"{user_id}_jobteaser_session.json")
 
     async def _save_auth_state(self, user_id: str):
         if self.context:
             path = self._get_session_file_path(user_id)
             await self.context.storage_state(path=path)
-            print(f"🔒 [WTTJ] Session saved securely for user {user_id}")
+            print(f"🔒 [JOBTEASER] Session saved securely for user {user_id}")
 
     def _get_auth_state_path(self, user_id: str) -> str | None:
         path = self._get_session_file_path(user_id)
@@ -144,45 +141,7 @@ class JobTeaserWorker:
         except Exception:
             print("info: No cookie popup detected (or already gone).")
 
-    async def _handle_wttj_application_modal(self):
-        try:
-            modal = self.page.locator('[data-testid="modals"]')
-            if not await modal.is_visible():
-                return
-            
-            later_button = modal.get_by_text("Peut-être plus tard", exact=True)
-            if await later_button.is_visible():
-                await human_click(later_button)  # 🚨 NEW
-                await modal.wait_for(state="hidden", timeout=5000)
-                print("✅ [WTTJ] Dismissed application modal.")
-            else:
-                await self.page.evaluate("""
-                    const portal = document.getElementById('portal/:rcm:');
-                    if (portal) portal.remove();
-                """)
-                print("✅ [WTTJ] Removed application modal via DOM.")
-        except Exception as e:
-            print(f"⚠️ [WTTJ] Could not dismiss application modal: {e}")
-
-    async def _handle_wttj_close_modal(self):
-        try:
-            modal = self.page.locator('[data-testid="apply-form-modal"]')
-            if not await modal.is_visible():
-                return
-            
-            close_button = modal.locator('[data-dialog-dismiss][title="Close"]')
-            if await close_button.is_visible():
-                await human_click(close_button)  # 🚨 NEW
-                await modal.wait_for(state="hidden", timeout=5000)
-                print("✅ [WTTJ] Closed apply form modal.")
-            else:
-                await self.page.evaluate("""
-                    const modal = document.querySelector('[data-testid="apply-form-modal"]');
-                    if (modal) modal.closest('[role="dialog"]').remove();
-                """)
-                print("✅ [WTTJ] Removed apply form modal via DOM.")
-        except Exception as e:
-            print(f"⚠️ [WTTJ] Could not close apply form modal: {e}")
+    
 
     async def force_cleanup(self):
         print("🛑 Force cleanup initiated")
@@ -266,24 +225,24 @@ class JobTeaserWorker:
         try:
             nav = self.page.locator('nav[data-testid="job-ads-pagination"]')
             if await nav.count() == 0:
-                print("🔚 [TEASER] No pagination nav. Single page of results.")
+                print("🔚 [JOBTEASER] No pagination nav. Single page of results.")
                 return False
 
             next_control = nav.locator('> *:last-child')
             if await next_control.count() == 0:
-                print("🔚 [TEASER] No next control found.")
+                print("🔚 [JOBTEASER] No next control found.")
                 return False
 
             tag_name = await next_control.evaluate("el => el.tagName.toLowerCase()")
             if tag_name == "button":
-                print("🔚 [TEASER] Next button disabled. Reached last page.")
+                print("🔚 [JOBTEASER] Next button disabled. Reached last page.")
                 return False
 
             if tag_name != "a":
-                print(f"🔚 [TEASER] Unexpected last pagination element: <{tag_name}>")
+                print(f"🔚 [JOBTEASER] Unexpected last pagination element: <{tag_name}>")
                 return False
 
-            print(f"➡️ [TEASER] Moving to page {page_number + 1}...")
+            print(f"➡️ [JOBTEASER] Moving to page {page_number + 1}...")
             await human_delay(1500, 3500)  # 🚨 NEW: pause before pagination
 
             for attempt in range(3):
@@ -294,14 +253,14 @@ class JobTeaserWorker:
                     break
                 except Exception as e:
                     if attempt == 2:
-                        print(f"⚠️ [TEASER] Pagination failed after 3 attempts: {e}")
+                        print(f"⚠️ [JOBTEASER] Pagination failed after 3 attempts: {e}")
                         return False
                     await asyncio.sleep(2 ** attempt)
 
             return True
 
         except Exception as e:
-            print(f"⚠️ [TEASER] Pagination error: {e}")
+            print(f"⚠️ [JOBTEASER] Pagination error: {e}")
             return False
 
 
@@ -337,7 +296,7 @@ class JobTeaserWorker:
                     for contract in contract_types:
                         teaser_name = self.TEASER_CONTRACT_NAME_MAP.get(str(contract.value))
                         if not teaser_name:
-                            print(f"  ⚠️ [TEASER] No mapping for contract '{contract.value}', skipping.")
+                            print(f"  ⚠️ [JOBTEASER] No mapping for contract '{contract.value}', skipping.")
                             continue
                         try:
                             checkbox = self.page.locator(
@@ -356,7 +315,7 @@ class JobTeaserWorker:
                     await self.page.keyboard.press("Enter")
                     await self.page.wait_for_load_state("networkidle")
                 except Exception as e:
-                    print(f"  ⚠️ [TEASER] Contract filter step failed: {e}")
+                    print(f"  ⚠️ [JOBTEASER] Contract filter step failed: {e}")
 
             # ---------- 2. LOCATION ----------
             if location and location.strip():
@@ -377,7 +336,7 @@ class JobTeaserWorker:
                     await self.page.wait_for_load_state("networkidle")
                     print(f"  ✓ Location selected: {location}")
                 except Exception as e:
-                    print(f"  ⚠️ [TEASER] Location filter step failed: {e}")
+                    print(f"  ⚠️ [JOBTEASER] Location filter step failed: {e}")
 
             # ---------- 3. SECONDARY FILTERS MODAL — "Candidature simplifiée" ----------
             for attempt in range(3):
@@ -395,7 +354,7 @@ class JobTeaserWorker:
                     break
                 except Exception as e:
                     if attempt == 2:
-                        print(f"⚠️ [TEASER] Could not open secondary filters modal: {e}")
+                        print(f"⚠️ [JOBTEASER] Could not open secondary filters modal: {e}")
                         raise
                     await asyncio.sleep(2 ** attempt)
 
@@ -422,7 +381,7 @@ class JobTeaserWorker:
                     break
                 except Exception as e:
                     if attempt == 2:
-                        print(f"⚠️ [TEASER] Filter modal submit failed after 3 attempts: {e}")
+                        print(f"⚠️ [JOBTEASER] Filter modal submit failed after 3 attempts: {e}")
                         raise
                     await asyncio.sleep(2 ** attempt)
 
@@ -486,9 +445,9 @@ class JobTeaserWorker:
     def route_action_intent(self, state: JobApplicationState):
         intent = state.get("action_intent", "SCRAPE") 
         if intent == "SUBMIT":
-            print("🛤️ [WTTJ] Routing to SUBMIT track...")
+            print("🛤️ [JOBTEASER] Routing to SUBMIT track...")
             return "start_with_session"
-        print("🛤️ [WTTJ] Routing to SCRAPE track...")
+        print("🛤️ [JOBTEASER] Routing to SCRAPE track...")
         return "start"
 
 
@@ -499,7 +458,7 @@ class JobTeaserWorker:
     # --- NODE 1: Start Session ---
     async def start_session(self, state: JobApplicationState):
         await self._emit(state, "Initializing Browser") 
-        print(f"--- [TEASER] Starting session for {state['user'].firstname} ---")
+        print(f"--- [JOBTEASER] Starting session for {state['user'].firstname} ---")
         
         preferences = state["preferences"]
 
@@ -552,7 +511,7 @@ class JobTeaserWorker:
     # --- NODE 1 Bis: Boot & Inject Session (Submit Track) ---
     async def start_session_with_auth(self, state: JobApplicationState):
         await self._emit(state, "Initializing Secure Browser")
-        print("--- [TEASER] Booting Browser (Session Injection) ---")
+        print("--- [JOBTEASER] Booting Browser (Session Injection) ---")
         user_id = str(state["user"].id)
 
         # 🚨 NEW: Pull identity from state
@@ -622,7 +581,7 @@ class JobTeaserWorker:
                 except Exception as e:
                     if attempt == 2:
                         return {"error": f"Failed to reach JobTeaser after 3 attempts: {str(e)}"}
-                    print(f"⚠️ [TEASER] Auth boot attempt {attempt+1} failed. Retrying in {2 ** attempt}s...")
+                    print(f"⚠️ [JOBTEASER] Auth boot attempt {attempt+1} failed. Retrying in {2 ** attempt}s...")
                     await asyncio.sleep(2 ** attempt)
 
             await human_warmup(self.page, self.base_url)  # 🚨 NEW: human warmup
@@ -646,7 +605,7 @@ class JobTeaserWorker:
             contract_types = getattr(search_entity, 'contract_types', [])
             location = getattr(search_entity, 'location', "")
 
-            print(f"--- [TEASER] Dummy Searching for: {job_title} ---")
+            print(f"--- [JOBTEASER] Dummy Searching for: {job_title} ---")
             try:
                 # Replicate the exact search_jobs flow so behavioral fingerprint
                 # looks consistent with what an organic user would do.
@@ -675,10 +634,10 @@ class JobTeaserWorker:
                 # Confirm results loaded — gives us a stable post-warmup state
                 try:
                     await self.page.wait_for_selector(self.CARD_SELECTOR, state="attached", timeout=30000)
-                    print("✅ [TEASER] Dummy search complete — session warmed up.")
+                    print("✅ [JOBTEASER] Dummy search complete — session warmed up.")
                 except Exception:
                     # No results is fine — we're not actually scraping here, just looking human
-                    print("⚠️ [TEASER] Dummy search ran but no cards found. Continuing.")
+                    print("⚠️ [JOBTEASER] Dummy search ran but no cards found. Continuing.")
 
                 return {}
             except Exception as e:
@@ -693,7 +652,7 @@ class JobTeaserWorker:
     # --- NODE 2: Navigation ---
     async def go_to_job_board(self, state: JobApplicationState):
         await self._emit(state, "Navigating to Job Board")
-        print("--- [TEASER] Navigating ---")
+        print("--- [JOBTEASER] Navigating ---")
         try:
             for attempt in range(3):
                 try:
@@ -704,7 +663,7 @@ class JobTeaserWorker:
                 except Exception as e:
                     if attempt == 2:
                         return {"error": "Could not reach JobTeaser. The job board might be down or undergoing maintenance."}
-                    print(f"⚠️ [TEASER] Navigation attempt {attempt+1} failed. Error: {e}. Retrying in {2 ** attempt}s...")
+                    print(f"⚠️ [JOBTEASER] Navigation attempt {attempt+1} failed. Error: {e}. Retrying in {2 ** attempt}s...")
                     await asyncio.sleep(2 ** attempt)
 
             await human_warmup(self.page, self.base_url)  # 🚨 NEW: warmup after navigation
@@ -722,10 +681,10 @@ class JobTeaserWorker:
         creds = state.get("credentials")
         user_id = str(state["user"].id)
         
-        print("--- [TEASER] Requesting Login ---")
+        print("--- [JOBTEASER] Requesting Login ---")
 
         if prefs.is_full_automation and creds["jobteaser"]:
-            print("🔐 [TEASER] Full Automation: Attempting auto-login...")
+            print("🔐 [JOBTEASER] Full Automation: Attempting auto-login...")
 
             login_plain = None
             pass_plain = None
@@ -754,7 +713,7 @@ class JobTeaserWorker:
                     except Exception as e:
                         if attempt == 2:
                             return {"error": "Login failed. Could not reach the login form."}
-                        print(f"⚠️ [TEASER] Login flow attempt {attempt+1} failed. Error: {e}. Reloading...")
+                        print(f"⚠️ [JOBTEASER] Login flow attempt {attempt+1} failed. Error: {e}. Reloading...")
                         await self.page.reload(wait_until="networkidle")
                         await asyncio.sleep(2 ** attempt)
 
@@ -780,7 +739,7 @@ class JobTeaserWorker:
                     except Exception as e:
                         if attempt == 2:
                             return {"error": "Login failed. Could not submit credentials."}
-                        print(f"⚠️ [TEASER] Credential submission attempt {attempt+1} failed. Error: {e}. Retrying in {2 ** attempt}s...")
+                        print(f"⚠️ [JOBTEASER] Credential submission attempt {attempt+1} failed. Error: {e}. Retrying in {2 ** attempt}s...")
                         await asyncio.sleep(2 ** attempt)
 
               # ✅ RETRY UNIT 3: Proof of login
@@ -793,15 +752,15 @@ class JobTeaserWorker:
                     except Exception as e:
                         if attempt == 2:
                             return {"error": "Login failed. Please check your JobTeaser credentials in your settings."}
-                        print(f"⚠️ [TEASER] Post-login verification attempt {attempt+1} failed. Error: {e}. Retrying in {2 ** attempt}s...")
+                        print(f"⚠️ [JOBTEASER] Post-login verification attempt {attempt+1} failed. Error: {e}. Retrying in {2 ** attempt}s...")
                         await asyncio.sleep(2 ** attempt)
 
-                print("✅ [TEASER] Auto-login successful")
+                print("✅ [JOBTEASER] Auto-login successful")
                 await self._save_auth_state(user_id)
                 return {}
 
             except Exception as e:
-                print(f"❌ [TEASER] Auto-login failed: {e}")
+                print(f"❌ [JOBTEASER] Auto-login failed: {e}")
                 return {"error": "Failed to log into JobTeaser. Please check your credentials."}
 
             finally:
@@ -832,7 +791,7 @@ class JobTeaserWorker:
         contract_types = getattr(search_entity, 'contract_types', [])
         location = getattr(search_entity, 'location', "")
 
-        print(f"--- [TEASER] Searching for: {job_title} ---")
+        print(f"--- [JOBTEASER] Searching for: {job_title} ---")
 
         try:
             await human_warmup(self.page, self.base_url)
@@ -864,7 +823,7 @@ class JobTeaserWorker:
                 except Exception as e:
                     if attempt == 2:
                         return {"error": f"Failed to execute search for '{job_title}' on JobTeaser."}
-                    print(f"⚠️ [TEASER] Search field attempt {attempt+1} failed. Error: {e}. Reloading...")
+                    print(f"⚠️ [JOBTEASER] Search field attempt {attempt+1} failed. Error: {e}. Reloading...")
                     await self.page.reload(wait_until="networkidle")
                     await asyncio.sleep(2 ** attempt)
 
@@ -888,7 +847,7 @@ class JobTeaserWorker:
     # --- NODE 5: Scrape Jobs ---
     async def get_matched_jobs(self, state: JobApplicationState):
         await self._emit(state, "Extracting Job Data")
-        print("--- [TEASER] Scraping Jobs ---")
+        print("--- [JOBTEASER] Scraping Jobs ---")
 
         user_id = state["user"].id
         search_id = state["job_search"].id
@@ -911,7 +870,7 @@ class JobTeaserWorker:
 
         try:
             while len(found_job_entities) < worker_job_limit and page_number <= max_pages:
-                print(f"📄 [TEASER] Processing Page {page_number}...")
+                print(f"📄 [JOBTEASER] Processing Page {page_number}...")
 
                 try:
                     await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=15000)
@@ -1057,45 +1016,61 @@ class JobTeaserWorker:
     # --- NODE 7: Submit ---
     async def submit_applications(self, state: JobApplicationState):
         await self._emit(state, "Submitting Applications")
-        print("--- [WTTJ] Submitting Applications ---")
-        
+        print("--- [JOBTEASER] Submitting Applications ---")
+
         jobs_to_process = state.get("processed_offers", [])
-        user = state["user"] 
+        user = state["user"]
         preferences = state["preferences"]
 
-        assigned_submit_limit = state.get("worker_job_limit", 5) 
+        assigned_submit_limit = state.get("worker_job_limit", 5)
 
-        wttj_jobs = [job for job in jobs_to_process if job.job_board == JobBoard.WTTJ and job.status == ApplicationStatus.APPROVED]
+        teaser_jobs = [
+            job for job in jobs_to_process
+            if job.job_board == JobBoard.JOBTEASER and job.status == ApplicationStatus.APPROVED
+        ]
 
-        if not wttj_jobs:
-            print("No approved WTTJ jobs in submission queue.")
-            return {"status": "no_wttj_jobs_to_submit"}
+        if not teaser_jobs:
+            print("No approved JobTeaser jobs in submission queue.")
+            return {"status": "no_teaser_jobs_to_submit"}
 
         successful_submissions = []
         i = 0
-        for offer in wttj_jobs:
+        for offer in teaser_jobs:
             if len(successful_submissions) >= assigned_submit_limit:
-                print(f"🛑 [WTTJ] Reached assigned submission limit ({assigned_submit_limit}). Halting further submissions.")
+                print(f"🛑 [JOBTEASER] Reached assigned submission limit ({assigned_submit_limit}). Halting.")
                 break
 
-            print(f"📝 [WTTJ] Applying to: {offer.job_title} ({i+1}/{len(wttj_jobs)})")
+            print(f"📝 [JOBTEASER] Applying to: {offer.job_title} ({i+1}/{len(teaser_jobs)})")
             try:
-                # ✅ RETRY: form entry as one critical unit
+                # ✅ RETRY: navigate to offer page, click apply, wait for form
                 form_opened = False
                 for attempt in range(3):
                     try:
+                        # Navigate to the OFFER page (not form_url) — humans click through
                         await self.page.goto(offer.url, wait_until="commit", timeout=60000)
-                        await self._handle_cookies()
-                        await human_delay(1500, 3500)  # 🚨 NEW: pause after navigation
-                        
-                        await self.page.wait_for_selector('[data-testid="job_bottom-button-apply"]', state="attached", timeout=30000)
-                        apply_btn = self.page.locator('[data-testid="job_bottom-button-apply"]').first
-                        
+                        await human_delay(1500, 3500)  # 🚨 pause after navigation
+
+                        # Wait for the apply button on the detail page
+                        await self.page.wait_for_selector(
+                            'button[data-testid="jobad-DetailView__CandidateActions__Buttons_apply_internal_candidacy"]',
+                            state="attached",
+                            timeout=60000,
+                        )
+                        apply_btn = self.page.locator(
+                            'button[data-testid="jobad-DetailView__CandidateActions__Buttons_apply_internal_candidacy"]'
+                        ).first
+
                         if await apply_btn.count() == 0:
-                            raise Exception("Apply button not found")
-                        
-                        await human_click(apply_btn)  # 🚨 NEW
-                        await self.page.wait_for_selector('[data-testid="apply-form-field-firstname"]', state="visible", timeout=15000)
+                            raise Exception("Apply button not found on offer page")
+
+                        await human_click(apply_btn)  # 🚨
+
+                        # Wait for the application form to render
+                        await self.page.wait_for_selector(
+                            'form#application-flow-form',
+                            state="visible",
+                            timeout=15000,
+                        )
                         form_opened = True
                         break
                     except Exception as e:
@@ -1109,110 +1084,99 @@ class JobTeaserWorker:
                     i += 1
                     continue
 
-                await self._handle_cookies()
-                
-                # Fill Form with HUMAN typing for short fields
-                await human_type(self.page.get_by_test_id("apply-form-field-firstname"), user.firstname)  # 🚨 NEW
-                await human_delay(200, 500)  # 🚨 NEW
-                await human_type(self.page.get_by_test_id("apply-form-field-lastname"), user.lastname)  # 🚨 NEW
-                
-                if user.phone_number: 
-                    await human_delay(200, 500)  # 🚨 NEW
-                    await human_type(self.page.get_by_test_id("apply-form-field-phone"), user.phone_number)  # 🚨 NEW
-                
-                current_pos = getattr(user, 'current_position', "")
-                if current_pos:
-                    await human_delay(200, 500)  # 🚨 NEW
-                    await human_type(self.page.get_by_test_id("apply-form-field-subtitle"), current_pos)  # 🚨 NEW
+                # Profile is pre-filled by JobTeaser from the user's account.
+                # We only need to upload resume + (conditionally) fill cover letter.
 
-                # File Upload
-                resume_bytes = None
+                # Resume upload — JobTeaser file input is hidden, set_input_files works on attached input
                 if user.resume_path:
                     print("⬇️ Downloading resume from cloud to RAM...")
                     resume_bytes = await self.file_storage.download_file(user.resume_path)
                     human_name = user.resume_file_name or f"{user.firstname}_{user.lastname}_CV.pdf"
-                    await self.page.get_by_test_id("apply-form-field-resume").set_input_files({
+
+                    resume_input = self.page.locator('input#resume_0[type="file"]')
+                    await resume_input.wait_for(state="attached", timeout=10000)
+                    await resume_input.set_input_files({
                         "name": human_name,
                         "mimeType": "application/pdf",
-                        "buffer": resume_bytes
+                        "buffer": resume_bytes,
                     })
-                    await human_delay(1000, 2000)  # 🚨 NEW: wait for upload to register
+                    await human_delay(1500, 2500)  # 🚨 wait for upload to register
 
-                # Dynamic Questions
-                if resume_bytes:
-                    questions = await self._handle_dynamic_questions(user, preferences, resume_bytes)
-                    if not questions:
-                        print("No dynamic questions detected or failed to parse.")
+                # Cover letter — DETECT which variant of the form we got
+                # Variant A: <textarea name="coverLetterContent"> exists → required, fill it
+                # Variant B: <div class="CoverLetter_cvOnlyDescription..."> → no cover letter requested
+                cover_textarea = self.page.locator('textarea[name="coverLetterContent"]')
+                if await cover_textarea.count() > 0:
+                    if offer.cover_letter:
+                        await human_delay(400, 900)
+                        # fill() is appropriate for long text — humans paste cover letters
+                        await cover_textarea.fill(offer.cover_letter)
+                        print(f"   📝 Cover letter filled.")
                     else:
-                        for testid, field in questions.items():
-                            if field.get("skip"):
-                                continue
-                            try:
-                                match field["type"]:
-                                    case "text":
-                                        await self.page.locator(f'[data-testid="{testid}-input"]').fill(field["value"])
-                                    case "textarea":
-                                        await self.page.locator(f'[data-testid="{testid}-input"]').fill(field["value"])
-                                    case "radio":
-                                        await self.page.locator(
-                                            f'[data-testid^="{testid}-RADIO"][label="{field["value"]}"]'
-                                        ).click()
-                                    case "dropdown":
-                                        await self.page.locator(f'[data-testid="{testid}-DROPDOWN"]').click()
-                                        await self.page.wait_for_selector('[role="listbox"]', state="visible", timeout=5000)
-                                        await self.page.locator('[role="listbox"] li').filter(has_text=field["value"]).click()
-                                    case "checkbox":
-                                        await self.page.locator(f'[data-testid="{testid}-input"]').check()
-                                await human_delay(300, 700)  # 🚨 NEW: between dynamic questions
-                            except Exception as e:
-                                print(f"⚠️ [WTTJ] Could not fill question {testid}: {e}")
-                                continue
-                    
-                # Cover Letter — fill is fine, humans paste cover letters
-                if offer.cover_letter:
-                    await self.page.get_by_test_id("apply-form-field-cover_letter").fill(offer.cover_letter)
-                
-                # Consent Checkbox
-                checkbox = self.page.locator('input[id="consent"]')
-                if await checkbox.count() > 0 and not await checkbox.is_checked():
-                    await human_delay(300, 700)  # 🚨 NEW
-                    await self.page.locator('label[for="consent"]').click()
-                
-                # ✅ NO RETRY on submit click — would cause duplicate submission risk
-                await human_delay(1500, 3500)  # 🚨 NEW: review before submitting
-                await self.page.wait_for_selector('[data-testid="apply-form-submit"]', state="attached")
-                submit_btn = self.page.locator('[data-testid="apply-form-submit"]')
-                
-                if await submit_btn.is_visible():
-                    await submit_btn.click()
-
-                    try:
-                        await self.page.wait_for_selector('svg[alt="Paperplane"]', state="visible", timeout=45000)
-                        print(f"✅ [WTTJ] Application submitted for {offer.job_title}")                    
-                        offer.status = ApplicationStatus.SUBMITTED
-                        successful_submissions.append(offer)
-                    except Exception:
-                        print(f"⚠️ Submission of {offer.url} failed — confirmation not received.")
+                        # Form requires a cover letter but we have none — skip this offer
+                        print(f"⚠️ [JOBTEASER] Form requires cover letter but none generated. Skipping {offer.job_title}.")
+                        i += 1
                         continue
                 else:
-                    print(f"❌ [WTTJ] Submit button not visible for {offer.job_title}.")
+                    print(f"   ℹ️ No cover letter requested for {offer.job_title}.")
+
+                # ✅ NO RETRY on submit click — duplicate submission risk
+                await human_delay(1500, 3500)  # 🚨 review before submitting
+
+                # The submit button stays disabled until the form is fully valid
+                # (resume uploaded, cover letter filled if required).
+                # Wait for it to BECOME enabled before clicking.
+                submit_btn = self.page.locator(
+                    'button[data-testid="jobad-DetailView__ApplicationFlow__Buttons__apply_button"]'
+                )
+                await submit_btn.wait_for(state="attached", timeout=10000)
+
+                try:
+                    # Wait until the disabled attribute is removed
+                    # (Playwright's :enabled pseudo-class handles this cleanly)
+                    await self.page.wait_for_selector(
+                        'button[data-testid="jobad-DetailView__ApplicationFlow__Buttons__apply_button"]:not([disabled])',
+                        state="visible",
+                        timeout=15000,
+                    )
+                except Exception:
+                    print(f"❌ [JOBTEASER] Submit button stayed disabled for {offer.job_title}. Form may be incomplete.")
+                    continue
+
+                await submit_btn.click()
+
+                try:
+                    # Success indicator can take several seconds to appear server-side
+                    await self.page.wait_for_selector(
+                        'aside[data-testid="jobad-DetailView__Heading__already_applied"]',
+                        state="visible",
+                        timeout=45000,
+                    )
+                    print(f"✅ [JOBTEASER] Application submitted for {offer.job_title}")
+                    offer.status = ApplicationStatus.SUBMITTED
+                    successful_submissions.append(offer)
+                except Exception:
+                    print(f"⚠️ Submission of {offer.url} failed — confirmation not received.")
+                    continue
+                else:
+                    print(f"❌ [JOBTEASER] Submit button not visible for {offer.job_title}.")
 
             except Exception as e:
-                print(f"❌ [WTTJ] Submission failed for {offer.url}: {e}")
-            
-            i += 1 
+                print(f"❌ [JOBTEASER] Submission failed for {offer.url}: {e}")
+
+            i += 1
 
         if not successful_submissions:
-            return {"error": "All WTTJ application attempts failed. Forms may have changed."}
+            return {"error": "All JobTeaser application attempts failed. Forms may have changed."}
 
-        print(f"✅ [WTTJ] Successfully submitted {len(successful_submissions)} applications. Handing back to Master...")
+        print(f"✅ [JOBTEASER] Successfully submitted {len(successful_submissions)} applications. Handing back to Master...")
         return {"submitted_offers": successful_submissions}
 
 
     # --- NODE 8: Cleanup ---
     async def cleanup(self, state: JobApplicationState):
         await self._emit(state, "Cleaning Up")
-        print("--- [WTTJ] Cleanup ---")
+        print("--- [JOBTEASER] Cleanup ---")
         await self.force_cleanup()
         return {}
 

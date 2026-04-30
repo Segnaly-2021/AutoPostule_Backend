@@ -13,6 +13,7 @@ class User(Entity):
   resume_path: Optional[str] = None
   resume_file_name: Optional[str] = None
   current_position: Optional[str] = None  
+  linkedin_url: Optional[str] = None
   current_company: Optional[str] = None
   phone_number: Optional[str] = None
   school_type: Optional[str] = None

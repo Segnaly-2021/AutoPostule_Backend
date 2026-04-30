@@ -4,6 +4,7 @@ import os
 import json
 import asyncio
 import pdfplumber
+from datetime import datetime
 from typing import Optional
 from langgraph.graph import StateGraph, END
 from playwright_stealth import Stealth
@@ -37,7 +38,7 @@ from auto_apply_app.infrastructures.agent.human_behavior import (
 class WelcomeToTheJungleWorker:
 
     # 🚨 CLASS CONSTANT: Single source of truth for the job card selector
-    CARD_SELECTOR = 'li[data-testid="search-results-list-item-wrapper"]'
+    CARD_SELECTOR = 'a.no-underline[href*="/fr/companies/"][href*="/jobs/"]'
 
     def __init__(self, 
                  get_ignored_hashes: GetIgnoredHashesUseCase,
@@ -155,25 +156,6 @@ class WelcomeToTheJungleWorker:
         except Exception as e:
             print(f"⚠️ [WTTJ] Could not dismiss application modal: {e}")
 
-    async def _handle_wttj_close_modal(self):
-        try:
-            modal = self.page.locator('[data-testid="apply-form-modal"]')
-            if not await modal.is_visible():
-                return
-            
-            close_button = modal.locator('[data-dialog-dismiss][title="Close"]')
-            if await close_button.is_visible():
-                await human_click(close_button)  # 🚨 NEW
-                await modal.wait_for(state="hidden", timeout=5000)
-                print("✅ [WTTJ] Closed apply form modal.")
-            else:
-                await self.page.evaluate("""
-                    const modal = document.querySelector('[data-testid="apply-form-modal"]');
-                    if (modal) modal.closest('[role="dialog"]').remove();
-                """)
-                print("✅ [WTTJ] Removed apply form modal via DOM.")
-        except Exception as e:
-            print(f"⚠️ [WTTJ] Could not close apply form modal: {e}")
 
     async def force_cleanup(self):
         print("🛑 Force cleanup initiated")
@@ -229,24 +211,31 @@ class WelcomeToTheJungleWorker:
         raw_location = None
 
         try:
-            await card.locator('h2 div[role="mark"]').wait_for(state="attached", timeout=10000)
+            # Wait for the desktop title block to be ready
+            await card.locator('div.hidden.lg\\:flex p').first.wait_for(state="attached", timeout=10000)
         except Exception as e:
             print(f"    ⚠️ Card content not ready: {e}")
             return "No Name", None, None
 
         try:
-            raw_title = await card.locator('h2 div[role="mark"]').inner_text()
+            # Title: first <p> with heading-md-strong inside the desktop block
+            raw_title = await card.locator('p[class*="heading-md-strong"]').first.inner_text()
         except Exception as e:
             print(f"    ⚠️ Could not extract title: {e}")
 
         try:
-            raw_company = await card.locator('a[role="link"] + div > span').inner_text()
+            # Company: <p> with body-lg-strong (sibling of title)
+            raw_company = await card.locator('p[class*="body-lg-strong"]').first.inner_text()
         except Exception as e:
             raw_company = "No Name"
             print(f"    ⚠️ Could not extract company: {e}")
 
         try:
-            raw_location = await card.locator('svg[alt="Location"] ~ span span').inner_text()
+            # Location: <span> sibling of <svg> with map-marker-alt icon
+            # The chip contains: <svg><use href="#map-marker-alt"></use></svg><span>Paris</span>
+            raw_location = await card.locator(
+                'div:has(svg use[href="#map-marker-alt"]) span'
+            ).first.inner_text()
         except Exception as e:
             print(f"    ⚠️ Could not extract location: {e}")
 
@@ -261,15 +250,16 @@ class WelcomeToTheJungleWorker:
     async def _handle_wttj_pagination(self, page_number: int) -> bool:
         try:
             next_button = self.page.locator(
-                'nav[aria-label="Pagination"] a:has(svg[alt="Right"])'
+                'button[data-testid="job-list-pagination-arrow-next"]'
             )
 
             if await next_button.count() == 0:
                 print("🔚 [WTTJ] No next button found. Reached last page.")
                 return False
 
-            is_disabled = await next_button.get_attribute("aria-disabled")
-            if is_disabled == "true":
+            # Disabled = last page
+            is_disabled = await next_button.is_disabled()
+            if is_disabled:
                 print("🔚 [WTTJ] Next button disabled. Reached last page.")
                 return False
 
@@ -296,64 +286,196 @@ class WelcomeToTheJungleWorker:
             return False
 
 
-    # --- HELPER: Apply Search Filters with Retry ---
-    async def _apply_filters(self, contract_types: list[ContractType], min_salary: int):
+   # --- HELPER: Expand a collapsible form section by its title ---
+    async def _expand_section(self, section_title: str):
+        """Click section header to expand if collapsed. Idempotent."""
         try:
-            # ✅ RETRY UNIT 1: Open filter modal
+            btn = self.page.locator(
+                f'button[aria-expanded="false"]:has-text("{section_title}")'
+            )
+            if await btn.count() > 0:
+                await human_click(btn)
+                await human_delay(400, 800)
+                print(f"  ✓ Expanded section: {section_title}")
+            else:
+                print(f"  ℹ️  Section '{section_title}' already open or not found.")
+        except Exception as e:
+            print(f"  ⚠️  Could not expand '{section_title}': {e}")
+
+
+    # --- HELPER: Map graduation year diff → experience checkboxes ---
+    def _map_experience_levels(self, graduation_year: Optional[str]) -> list[str]:
+        """Returns list of experience-level testid values (e.g. ['zero_to_one', 'one_to_three'])."""
+        if not graduation_year:
+            return ["zero_to_one", "one_to_three"]
+        try:
+            diff = datetime.now().year - int(graduation_year)
+        except (TypeError, ValueError):
+            return ["zero_to_one", "one_to_three"]
+
+        if diff <= 1:
+            return ["zero_to_one", "one_to_three"]
+        if diff <= 3:
+            return ["one_to_three", "three_to_five"]
+        if diff <= 10:
+            return ["three_to_five", "five_to_ten"]
+        return ["five_to_ten", "more_than_ten"]
+
+
+    # --- HELPER: Apply Search Filters with Retry ---
+    async def _apply_filters(
+        self,
+        user,
+        job_title: str,
+        contract_types: list,
+        min_salary: int,
+        location: str,
+    ):
+        WTTJ_CONTRACT_MAP = {
+            "FULL_TIME": "full_time",
+            "TEMPORARY": "temporary",
+            "INTERNSHIP": "internship",
+            "APPRENTICESHIP": "apprenticeship",
+            "FREELANCE": "freelance",
+        }
+        HIDDEN_CONTRACTS = {"temporary", "internship", "apprenticeship"}
+
+        try:
+            # ============ 1. RÔLE SECTION ============
+            await self._expand_section("Rôle")
+
+            print("📝 [WTTJ] Filling role...")
+            role_input = self.page.locator('input[name="futureRole"]')
+            await role_input.wait_for(state="visible", timeout=10000)
+            await role_input.clear()
+            await human_delay(200, 500)
+            await human_type(role_input, job_title)
+            await human_delay(400, 900)
+
+            print("📝 [WTTJ] Selecting experience levels...")
+            exp_values = self._map_experience_levels(user.graduation_year)
+            for value in exp_values:
+                try:
+                    label = self.page.locator(f'label[data-testid="experienceLevel-option-{value}"]')
+                    if await label.count() > 0:
+                        await human_delay(250, 600)
+                        await label.click()
+                        print(f"  ✓ Experience: {value}")
+                except Exception as e:
+                    print(f"  ⚠️  Could not select experience '{value}': {e}")
+
+            # ============ 2. LOCALISATION SECTION ============
+            await self._expand_section("Localisation")
+
+            print(f"📝 [WTTJ] Filling location: {location}...")
+            loc_input = self.page.locator('input[data-testid="location-search-input"]')
+            await loc_input.wait_for(state="visible", timeout=10000)
+            await loc_input.clear()
+            await human_delay(200, 500)
+            await human_type(loc_input, location)
+            await human_delay(800, 1500)  # let suggestions render
+
+            try:
+                await self.page.wait_for_selector(
+                    'ul[role="listbox"] li[role="option"]',
+                    state="visible",
+                    timeout=8000,
+                )
+                first_suggestion = self.page.locator('ul[role="listbox"] li[role="option"]').first
+                await human_click(first_suggestion)
+                print("  ✓ Location suggestion selected")
+            except Exception as e:
+                print(f"  ⚠️  Could not select location suggestion: {e}")
+
+            await human_delay(400, 800)
+
+            print("📝 [WTTJ] Selecting remote preferences...")
+            for value in ["partial", "punctual", "no"]:
+                try:
+                    label = self.page.locator(f'label[data-testid="remote-option-{value}"]')
+                    if await label.count() > 0:
+                        await human_delay(250, 600)
+                        await label.click()
+                        print(f"  ✓ Remote: {value}")
+                except Exception as e:
+                    print(f"  ⚠️  Could not select remote '{value}': {e}")
+
+            print("📝 [WTTJ] Selecting visa: europe...")
+            try:
+                visa_label = self.page.locator('label[data-testid="visa-option-europe"]')
+                if await visa_label.count() > 0:
+                    await human_delay(250, 600)
+                    await visa_label.click()
+            except Exception as e:
+                print(f"  ⚠️  Could not select visa 'europe': {e}")
+
+            # ============ 3. CONTRAT ET SALAIRE SECTION ============
+            await self._expand_section("Contrat et salaire")
+
+            wttj_values = []
+            for ct in contract_types:
+                mapped = WTTJ_CONTRACT_MAP.get(str(ct.name).upper())
+                if mapped:
+                    wttj_values.append(mapped)
+
+            # Expand "Voir plus" if any selected contract is hidden
+            needs_voir_plus = any(v in HIDDEN_CONTRACTS for v in wttj_values)
+            if needs_voir_plus:
+                try:
+                    voir_plus = self.page.locator('button[data-testid="contract-type-toggle-button"]')
+                    if await voir_plus.count() > 0:
+                        btn_text = (await voir_plus.text_content() or "").strip()
+                        if "plus" in btn_text.lower():
+                            await human_click(voir_plus)
+                            await human_delay(400, 800)
+                            print("  ✓ Expanded 'Voir plus' for contract types")
+                except Exception as e:
+                    print(f"  ⚠️  Could not expand 'Voir plus': {e}")
+
+            print(f"📝 [WTTJ] Selecting contract types: {wttj_values}")
+            for value in wttj_values:
+                try:
+                    label = self.page.locator(f'label[data-testid="contractType-option-{value}"]')
+                    if await label.count() > 0:
+                        await human_delay(250, 600)
+                        await label.click()
+                        print(f"  ✓ Contract: {value}")
+                except Exception as e:
+                    print(f"  ⚠️  Could not select contract '{value}': {e}")
+
+            print(f"📝 [WTTJ] Filling salary: {min_salary}...")
+            try:
+                salary_input = self.page.locator('input[data-testid="salary-field-value-input"]')
+                await salary_input.wait_for(state="visible", timeout=10000)
+                await salary_input.clear()
+                await human_delay(200, 500)
+                await human_type(salary_input, str(min_salary))
+            except Exception as e:
+                print(f"  ⚠️  Could not fill salary: {e}")
+
+            await human_delay(800, 1800)
+
+            # ============ 4. SUBMIT ============
+            print("📝 [WTTJ] Submitting preferences...")
+            save_btn = self.page.locator('button[data-testid="filters-save-button"]')
+
             for attempt in range(3):
                 try:
-                    await self.page.wait_for_selector('button[id="jobs-search-filter-all"]', state="visible", timeout=30000)
-                    await human_click(self.page.locator('button[id="jobs-search-filter-all"]'))  # 🚨 NEW
-                    await self.page.wait_for_selector('div[data-testid="filter-modal"]', state="visible", timeout=10000)
+                    await self.page.wait_for_selector(
+                        'button[data-testid="filters-save-button"]:not([aria-disabled="true"])',
+                        state="visible",
+                        timeout=10000,
+                    )
+                    await save_btn.click()
+                    await self.page.wait_for_load_state("networkidle")
+                    await self.page.wait_for_selector(self.CARD_SELECTOR, state="attached", timeout=15000)
                     break
                 except Exception as e:
                     if attempt == 2:
-                        print(f"⚠️ [WTTJ] Could not open filter modal after 3 attempts: {e}")
+                        print(f"⚠️ [WTTJ] Filter submit failed after 3 attempts: {e}")
                         raise
-                    print(f"⚠️ [WTTJ] Filter modal attempt {attempt+1} failed. Reloading...")
-                    await self.page.reload(wait_until="networkidle")
+                    print(f"⚠️ [WTTJ] Submit attempt {attempt+1} failed: {e}")
                     await asyncio.sleep(2 ** attempt)
-
-            # Handle Contract Types (Checkboxes)
-            for contract in contract_types:
-                try:
-                    checkbox = self.page.locator(f"input[id='jobs-search-all-modal-contract-{str(contract.name).lower()}']")
-                    if await checkbox.count() > 0:
-                        print(f"  Found checkbox for contract type: {str(contract.name)}")
-                        if await checkbox.get_attribute("aria-checked") == 'false':
-                            await human_delay(300, 700)  # 🚨 NEW
-                            await checkbox.click()
-                            print(f"  ✓ Checked: {str(contract.value)}")
-                except Exception as e:
-                    print(f"  ⚠️  Could not select contract type '{str(contract.value)}': {e}")
-            
-            # Handle Salary (Radio Buttons)
-            if min_salary > 0:
-                salary_id = f"jobs-search-search-all-modal-salary-{min_salary}+"
-                salary_radio = self.page.locator(f"div[id='{salary_id}']")
-                if await salary_radio.count() > 0:
-                    await human_delay(300, 700)  # 🚨 NEW
-                    await salary_radio.click(force=True)
-                    print(f"  ✓ Selected Salary: ≥ {min_salary}€")
-                else:
-                    print(f"  ⚠️ Salary option '{min_salary}+' not found in modal.")
-
-            await human_delay(800, 1800)  # 🚨 NEW: review form before submit
-
-            # ✅ RETRY UNIT 2: Submit filters + verify results appeared
-            search_button = self.page.locator('button[id="jobs-search-modal-search-button"]')
-            if await search_button.count() > 0:
-                for attempt in range(3):
-                    try:
-                        await search_button.click()
-                        await self.page.wait_for_load_state("networkidle")
-                        await self.page.wait_for_selector(self.CARD_SELECTOR, state="attached", timeout=15000)
-                        break
-                    except Exception as e:
-                        if attempt == 2:
-                            print(f"⚠️ [WTTJ] Filter submit failed after 3 attempts: {e}")
-                            raise
-                        await asyncio.sleep(2 ** attempt)
 
             await self._handle_cookies()
 
@@ -586,7 +708,7 @@ class WelcomeToTheJungleWorker:
                 try:
                     await self.page.goto(self.base_url, wait_until="networkidle", timeout=90000)
                     await self._handle_cookies()
-                    await self.page.wait_for_selector('[data-testid="not-logged-visible-login-button"]', state="visible", timeout=30000)
+                    await self.page.wait_for_selector('a[data-testid="nav-sign-in-button"]', state="visible", timeout=30000)
                     break
                 except Exception as e:
                     if attempt == 2:
@@ -620,16 +742,21 @@ class WelcomeToTheJungleWorker:
             pass_plain = None
 
             try:
-                # ✅ RETRY UNIT 1: Open login modal + verify email input appears
+                # ✅ RETRY UNIT 1: Click "Se connecter" → land on sign-in page → verify email input
                 for attempt in range(3):
                     try:
-                        await human_click(self.page.get_by_test_id("not-logged-visible-login-button"))  # 🚨 NEW
-                        await self.page.wait_for_selector('input[id="email_login"]', state="visible", timeout=15000)
+                        await human_click(self.page.locator('a[data-testid="nav-sign-in-button"]'))  # 🚨 NEW
+                        await self.page.wait_for_load_state("networkidle")
+                        await self.page.wait_for_selector(
+                            'input[data-testid="sign-in-form-email-input"]',
+                            state="visible",
+                            timeout=15000,
+                        )
                         break
                     except Exception as e:
                         if attempt == 2:
-                            return {"error": "Login failed. Could not open the login modal."}
-                        print(f"⚠️ [WTTJ] Login modal attempt {attempt+1} failed. Error: {e}. Reloading...")
+                            return {"error": "Login failed. Could not open the sign-in page."}
+                        print(f"⚠️ [WTTJ] Sign-in page attempt {attempt+1} failed. Error: {e}. Reloading...")
                         await self.page.reload(wait_until="networkidle")
                         await asyncio.sleep(2 ** attempt)
 
@@ -639,19 +766,21 @@ class WelcomeToTheJungleWorker:
                 # ✅ RETRY UNIT 2: Fill credentials with HUMAN typing + submit
                 for attempt in range(3):
                     try:
-                        await self.page.locator('input[id="email_login"]').clear()
+                        email_input = self.page.locator('input[data-testid="sign-in-form-email-input"]')
+                        await email_input.clear()
                         await human_delay(300, 700)  # 🚨 NEW
-                        await human_type(self.page.locator('input[id="email_login"]'), login_plain)  # 🚨 NEW
+                        await human_type(email_input, login_plain)  # 🚨 NEW
 
                         await human_delay(400, 900)  # 🚨 NEW: pause between fields
 
-                        await self.page.locator('input[id="password"]').clear()
+                        pass_input = self.page.locator('input[data-testid="sign-in-form-password-input"]')
+                        await pass_input.clear()
                         await human_delay(200, 500)  # 🚨 NEW
-                        await human_type(self.page.locator('input[id="password"]'), pass_plain)  # 🚨 NEW
+                        await human_type(pass_input, pass_plain)  # 🚨 NEW
 
                         await human_delay(600, 1500)  # 🚨 NEW: review before submit
 
-                        submit_btn = self.page.locator('[data-testid="login-button-submit"]') 
+                        submit_btn = self.page.locator('button[data-testid="sign-in-form-submit-button"]')
                         if await submit_btn.count() == 0:
                             submit_btn = self.page.locator('button[type="submit"]')
                         await submit_btn.click()
@@ -662,16 +791,19 @@ class WelcomeToTheJungleWorker:
                         print(f"⚠️ [WTTJ] Credential submission attempt {attempt+1} failed. Error: {e}. Retrying in {2 ** attempt}s...")
                         await asyncio.sleep(2 ** attempt)
 
-                # ✅ RETRY UNIT 3: Proof of login
+                # ✅ RETRY UNIT 3: Proof of login = "Mon espace" button visible
                 for attempt in range(3):
                     try:
-                        await self.page.goto(f"{self.base_url}/jobs", wait_until="networkidle", timeout=60000)
-                        await self.page.wait_for_selector('[data-testid="jobs-home-search-field-query"]', state="visible", timeout=30000)
+                        await self.page.wait_for_selector(
+                            'button[data-testid="nav-my-space-button"]',
+                            state="visible",
+                            timeout=30000,
+                        )
                         break
                     except Exception as e:
                         if attempt == 2:
                             return {"error": "Login failed. Please check your WTTJ credentials in your settings."}
-                        print(f"⚠️ [WTTJ] Navigation attempt {attempt+1} failed. Error: {e}. Retrying in {2 ** attempt}s...")
+                        print(f"⚠️ [WTTJ] Login proof attempt {attempt+1} failed. Error: {e}. Retrying in {2 ** attempt}s...")
                         await asyncio.sleep(2 ** attempt)
 
                 await self._handle_cookies()
@@ -691,10 +823,14 @@ class WelcomeToTheJungleWorker:
 
         else:
             try:
-                await self.page.get_by_test_id("not-logged-visible-login-button").click()
+                await self.page.locator('a[data-testid="nav-sign-in-button"]').click()
                 print("⚠ ACTION REQUIRED: Manual login required (waiting 90s)...")
                 await asyncio.sleep(90)
-                await self.page.get_by_test_id("menu-jobs").click(timeout=5000)
+                await self.page.wait_for_selector(
+                    'button[data-testid="nav-my-space-button"]',
+                    state="visible",
+                    timeout=5000,
+                )
                 await self._save_auth_state(user_id)
                 return {}
             except Exception as e:
@@ -704,49 +840,56 @@ class WelcomeToTheJungleWorker:
 
     # --- NODE 4: Search ---
     async def search_jobs(self, state: JobApplicationState):
-        await self._emit(state, "Searching for Jobs") 
+        await self._emit(state, "Searching for Jobs")
 
+        user = state["user"]
         search_entity = state["job_search"]
         job_title = search_entity.job_title
         contract_types = getattr(search_entity, 'contract_types', [])
-        min_salary = getattr(search_entity, 'min_salary', 0)
+        min_salary = getattr(search_entity, 'min_salary', 0) or 20000
+        location = getattr(search_entity, 'location', "") or "France"
 
         print(f"--- [WTTJ] Searching for: {job_title} ---")
-        
-        try:
-            await human_warmup(self.page, self.base_url)  # 🚨 NEW: warmup before searching
 
-            # ✅ RETRY UNIT 1: Search field + fill
+        try:
+            await human_warmup(self.page, self.base_url)  # 🚨 NEW
+
+            # ✅ RETRY UNIT 1: Click "Trouver un job" → land on /jobs-matches → preferences form visible
             for attempt in range(3):
                 try:
-                    await self.page.wait_for_selector('[data-testid="jobs-home-search-field-query"]', state="visible", timeout=90000)
-                    search_field = self.page.get_by_test_id("jobs-home-search-field-query")
-                    await search_field.clear()
-                    await human_delay(200, 500)  # 🚨 NEW
-                    await human_type(search_field, job_title)  # 🚨 NEW
-                    await human_delay(500, 1200)  # 🚨 NEW: pause before submitting
+                    await human_click(self.page.locator('a[data-testid="nav-find-a-job-button"]'))  # 🚨 NEW
+                    await self.page.wait_for_load_state("networkidle")
+                    await self.page.wait_for_selector(
+                        'input[name="futureRole"]',
+                        state="visible",
+                        timeout=30000,
+                    )
                     break
                 except Exception as e:
                     if attempt == 2:
-                        return {"error": f"Failed to execute search for '{job_title}' on Welcome to the Jungle."}
-                    print(f"⚠️ [WTTJ] Search field attempt {attempt+1} failed.Error: {e}. Reloading...")
-                    await self.page.reload(wait_until="networkidle")
+                        return {"error": f"Could not reach the WTTJ preferences form for '{job_title}'."}
+                    print(f"⚠️ [WTTJ] Preferences form attempt {attempt+1} failed. Error: {e}. Retrying...")
                     await asyncio.sleep(2 ** attempt)
 
-            if contract_types or min_salary > 0:
-                await self._apply_filters(contract_types, min_salary)
+            # Fill the preferences form (role, experience, location, remote, visa, contract, salary)
+            await self._apply_filters(
+                user=user,
+                job_title=job_title,
+                contract_types=contract_types,
+                min_salary=min_salary,
+                location=location,
+            )
 
-            await self.page.wait_for_load_state("networkidle")
-
+            # Wait for the job listings to render — proof of search success
             try:
-                await self.page.wait_for_selector(self.CARD_SELECTOR, state="attached", timeout=90000)
+                await self.page.wait_for_selector(self.CARD_SELECTOR, state="attached", timeout=60000)
                 print("✅ Search results loaded successfully.")
             except Exception:
                 return {"error": "No new matching jobs were found for this search today."}
 
             await self._handle_cookies()
             return {}
-            
+
         except Exception as e:
             print(f"Search Error: {e}")
             return {"error": f"Failed to execute search for '{job_title}' on Welcome to the Jungle."}
@@ -781,14 +924,14 @@ class WelcomeToTheJungleWorker:
                 print(f"📄 [WTTJ] Processing Page {page_number}...")
                 
                 try:
-                    await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=15000)
+                    await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=45000)
                 except Exception:
                     print(f"⚠️  No results found on page {page_number}.")
                     if page_number == 1:
                         return {"found_raw_offers": []}
                     break
 
-                cards = self.page.get_by_test_id("search-results-list-item-wrapper")
+                cards = self.page.locator(self.CARD_SELECTOR)
                 count = await cards.count()
                 result_url = self.page.url 
                 
@@ -799,7 +942,7 @@ class WelcomeToTheJungleWorker:
                     print(f"  -> Processing card {i+1}/{count} (Page {page_number})")
                     
                     try:
-                        card = self.page.get_by_test_id("search-results-list-item-wrapper").nth(i)
+                        card = self.page.locator(self.CARD_SELECTOR).nth(i)
 
                         await card.scroll_into_view_if_needed()
                         await human_delay(400, 1000)  # 🚨 NEW: pause to "look at" the card
@@ -874,7 +1017,7 @@ class WelcomeToTheJungleWorker:
                                     job_desc=job_desc
                                 )                                
                                 found_job_entities.append(offer)
-                                await self._handle_wttj_close_modal()
+                                
                                 print(f"     📦 Current batch size: {len(found_job_entities)}/{worker_job_limit}")
 
                         if not await self.nav_back(result_url):

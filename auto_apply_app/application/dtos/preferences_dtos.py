@@ -86,7 +86,7 @@ class UserPreferencesResponse:
             ai_model = default_prefs.ai_model # ✅ NEW
             active_boards = default_prefs.active_boards
 
-        all_boards = ['hellowork', 'wttj', 'apec']
+        all_boards = ['hellowork', 'wttj', 'apec', 'jobteaser']
         credentials_structure = {}
         configured_boards = {c.job_board.lower(): c for c in credentials}
         

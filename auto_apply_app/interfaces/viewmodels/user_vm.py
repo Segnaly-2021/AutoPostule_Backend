@@ -20,6 +20,7 @@ class UserViewModel:
     graduation_year: str = None
     major: str  = None
     study_level: str = None
+    linkedin_url: Optional[str] = None  # 🚨 NEW: LinkedIn URL
 
 # 🚨 NEW: Specific response for the upload endpoint
 @dataclass(frozen=True)

@@ -19,11 +19,13 @@ from auto_apply_app.interfaces.presenters.base_presenter import (
   AgentStatePresenter,
  
 )
+
 from auto_apply_app.domain.entities.agent_state import AgentState
 from auto_apply_app.interfaces.viewmodels.agent_state_vm import (
     AgentStateViewModel,
     AgentStateMessageViewModel,
 )
+
 from auto_apply_app.interfaces.viewmodels.user_vm import (
   UserViewModel, 
   LoginViewModel,
@@ -75,6 +77,7 @@ class WebUserPresenter(UserPresenter):
             graduation_year=user.res_graduation_year,
             major=user.res_major,
             study_level=user.res_study_level,
+            linkedin_url=user.res_linkedin_url if user.res_linkedin_url else None,  # 🚨 NEW: Map LinkedIn URL
         )
 
     # ... (keep present_login and present_error as they are) ...

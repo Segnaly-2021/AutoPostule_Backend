@@ -59,7 +59,8 @@ class UserController:
         school_type: Optional[str] = None,
         graduation_year: Optional[str] = None,
         major: Optional[str] = None,
-        study_level: Optional[str] = None
+        study_level: Optional[str] = None,
+        linkedin_url: Optional[str] = None
     ) -> OperationResult:
         try:
             request = UpdateUserRequest(
@@ -75,7 +76,8 @@ class UserController:
                 user_school_type=school_type,
                 user_graduation_year=graduation_year,
                 user_major=major,
-                user_study_level=study_level  
+                user_study_level=study_level,
+                user_linkedin_url=linkedin_url  # <-- NEW FIELD
             )
             
             result = await self.update_user_use_case.execute(request)

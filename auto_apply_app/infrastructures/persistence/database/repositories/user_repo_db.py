@@ -50,6 +50,7 @@ class UserRepoDB(UserRepository):
             lastname=user.lastname,
             email=user.email,
             resume_path=user.resume_path,
+            address=user.address,
             resume_file_name=user.resume_file_name,
             phone_number=user.phone_number,
             current_position=user.current_position,
@@ -58,6 +59,7 @@ class UserRepoDB(UserRepository):
             graduation_year=user.graduation_year,
             major=user.major,
             study_level=user.study_level,
+            linkedin_url=user.linkedIn_url if user.linkedIn_url else None,
         )
         await self.session.merge(user_db)
 
@@ -93,6 +95,7 @@ class UserRepoDB(UserRepository):
             address=user_db.address,
             current_position=user_db.current_position,
             current_company=user_db.current_company,
+            linkedin_url=user_db.linkedin_url,
             school_type=user_db.school_type,
             graduation_year=user_db.graduation_year,
             major=user_db.major,

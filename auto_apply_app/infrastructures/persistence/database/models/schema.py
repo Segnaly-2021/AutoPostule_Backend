@@ -30,6 +30,7 @@ class UserDB(Base):
     graduation_year: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
     major: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     study_level: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    linkedin_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # New field
 
     # Relationships
     subscription: Mapped["UserSubscriptionDB"] = relationship(

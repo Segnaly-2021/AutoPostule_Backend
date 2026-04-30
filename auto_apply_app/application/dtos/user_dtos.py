@@ -66,6 +66,7 @@ class UpdateUserRequest:
     user_graduation_year: Optional[str] = None
     user_major: Optional[str] = None
     user_study_level: Optional[str] = None
+    user_linkedin_url: Optional[str] = None  # <-- NEW FIELD
 
     def __post_init__(self) -> None:
         if not self.user_id.strip():
@@ -107,7 +108,8 @@ class UpdateUserRequest:
             params["major"] = self.user_major
         if self.user_study_level is not None:
             params["study_level"] = self.user_study_level
-
+        if self.user_linkedin_url is not None:
+            params["linkedin_url"] = self.user_linkedin_url
         return params
 
   
@@ -128,7 +130,7 @@ class UserResponse:
     res_graduation_year: Optional[str] = None
     res_major: Optional[str] = None
     res_study_level: Optional[str] = None
-
+    res_linkedin_url: Optional[str] = None  # <-- NEW FIELD
     @classmethod
     def from_entity(cls, user: User) -> Self:
         return cls(
@@ -139,6 +141,7 @@ class UserResponse:
             res_address=user.address if user.address else None,  # <-- NEW MAPPING
             res_resume_path=user.resume_path if user.resume_path else None, 
             res_resume_file_name=user.resume_file_name if user.resume_file_name else None,     
+            res_linkedin_url=user.linkedIn_url if user.linkedIn_url else None,  # <-- NEW MAPPING
             res_phone_number=user.phone_number if user.phone_number else None,    
             res_current_position=user.current_position if user.current_position else None,
             res_current_company=user.current_company if user.current_company else None,

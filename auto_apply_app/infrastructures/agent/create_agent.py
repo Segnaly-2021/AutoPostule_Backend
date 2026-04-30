@@ -5,6 +5,7 @@ import os
 from auto_apply_app.infrastructures.agent.master.master_agent import MasterAgent
 from auto_apply_app.infrastructures.agent.workers.apec.apec_worker import ApecWorker
 from auto_apply_app.infrastructures.agent.workers.hellowork.hw_worker import HelloWorkWorker
+from auto_apply_app.infrastructures.agent.workers.wttj.wttj_worker import WelcomeToTheJungleWorker
 from auto_apply_app.infrastructures.agent.workers.teaser.teaser_worker import JobTeaserWorker
 
 # Use Cases
@@ -70,8 +71,17 @@ def create_agent(
         file_storage=file_storage,
         get_agent_state=get_agent_state_use_case
     )
+
+    # 3. Instantiate WTTJ Worker
+    wttj_worker = WelcomeToTheJungleWorker(
+        get_ignored_hashes=get_ignored_hashes_use_case,
+        encryption_service=encryption_service,
+        file_storage=file_storage,
+        api_keys=api_keys,
+        get_agent_state=get_agent_state_use_case
+    )
     
-    # 3. Instantiate JobTeaser Worker
+    # 4. Instantiate JobTeaser Worker
     teaser_worker = JobTeaserWorker(
         get_ignored_hashes=get_ignored_hashes_use_case,
         encryption_service=encryption_service,
@@ -79,8 +89,9 @@ def create_agent(
         get_agent_state=get_agent_state_use_case
     )
     
-    # 4. Return Master Agent
+    # 5. Return Master Agent
     return MasterAgent(
+        wttj_worker=wttj_worker,
         hellowork_worker=hw_worker,
         apec_worker=apec_worker,
         jobteaser_worker=teaser_worker,
