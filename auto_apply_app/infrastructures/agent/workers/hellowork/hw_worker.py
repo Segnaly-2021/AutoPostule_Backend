@@ -370,7 +370,7 @@ class HelloWorkWorker:
 
         # 🚨 NEW: Pull identity from state
         fingerprint = state.get("user_fingerprint")
-        proxy_config = state.get("proxy_config")
+        #proxy_config = state.get("proxy_config")
 
         try:
             self.playwright = await async_playwright().start()
@@ -421,7 +421,7 @@ class HelloWorkWorker:
 
         # 🚨 NEW: Pull identity from state
         fingerprint = state.get("user_fingerprint")
-        proxy_config = state.get("proxy_config")
+        #proxy_config = state.get("proxy_config")
         
         try:
             self.playwright = await async_playwright().start()

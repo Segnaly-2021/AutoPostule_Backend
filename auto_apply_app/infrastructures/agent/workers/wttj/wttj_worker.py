@@ -327,7 +327,7 @@ class WelcomeToTheJungleWorker:
         self,
         user,
         job_title: str,
-        contract_types: list,
+        contract_types: list[ContractType],
         min_salary: int,
         location: str,
     ):
@@ -558,7 +558,7 @@ class WelcomeToTheJungleWorker:
 
         # 🚨 NEW: Pull identity from state
         fingerprint = state.get("user_fingerprint")
-        proxy_config = state.get("proxy_config")
+        #proxy_config = state.get("proxy_config")
         
         try:
             self.playwright = await async_playwright().start()
@@ -602,6 +602,7 @@ class WelcomeToTheJungleWorker:
             return {"error": "Failed to start the secure browsing session."}
 
 
+   
     # --- NODE 1 Bis: Boot & Inject Session (Submit Track) ---
     async def start_session_with_auth(self, state: JobApplicationState):
         await self._emit(state, "Initializing Secure Browser") 
@@ -610,7 +611,7 @@ class WelcomeToTheJungleWorker:
 
         # 🚨 NEW: Pull identity from state
         fingerprint = state.get("user_fingerprint")
-        proxy_config = state.get("proxy_config")
+        #proxy_config = state.get("proxy_config")
         
         try:
             self.playwright = await async_playwright().start()
@@ -660,12 +661,17 @@ class WelcomeToTheJungleWorker:
             await stealth.apply_stealth_async(self.context)
             self.page = await self.context.new_page()
 
-            # ✅ RETRY: goto + search field appearing as one unit
+            # ✅ RETRY: goto + verify logged-in state as one unit
             for attempt in range(3):
                 try:
                     await self.page.goto(self.base_url, wait_until="networkidle", timeout=120000)
                     await self._handle_cookies()
-                    await self.page.wait_for_selector('a[data-testid="menu-jobs"] p:has-text("Trouver un job")', state="visible", timeout=45000)
+                    # Confirm session is valid by looking for the logged-in "Mon espace" button
+                    await self.page.wait_for_selector(
+                        'button[data-testid="nav-my-space-button"]',
+                        state="attached",
+                        timeout=45000,
+                    )
                     break
                 except Exception as e:
                     if attempt == 2:
@@ -674,21 +680,39 @@ class WelcomeToTheJungleWorker:
                     await asyncio.sleep(2 ** attempt)
 
             await human_warmup(self.page, self.base_url)  # 🚨 NEW: human warmup
-            await human_click(self.page.locator('a[data-testid="menu-jobs"] p:has-text("Trouver un job")'))  # 🚨 NEW
+
+            # Click "Trouver un job" to land on /jobs-matches preferences form
+            await human_click(self.page.locator('a[data-testid="nav-find-a-job-button"]'))  # 🚨 NEW
+            await self.page.wait_for_load_state("networkidle")
 
             search_entity = state["job_search"]
+            user = state["user"]
             job_title = search_entity.job_title
             contract_types = getattr(search_entity, 'contract_types', [])
-            min_salary = getattr(search_entity, 'min_salary', 0)
+            min_salary = getattr(search_entity, 'min_salary', 0) or 20000
+            location = getattr(search_entity, 'location', "") or "France"
 
             print(f"--- [WTTJ] Dummy Searching for: {job_title} ---")
             try:
-                await human_type(self.page.get_by_test_id("jobs-home-search-field-query"), job_title)  # 🚨 NEW
-                
-                if contract_types or min_salary > 0:
-                    await self._apply_filters(contract_types, min_salary)
+                # Replicate the exact search_jobs flow so behavioral fingerprint
+                # looks consistent with what an organic user would do.
+                await self._apply_filters(
+                    user=user,
+                    job_title=job_title,
+                    contract_types=contract_types,
+                    min_salary=min_salary,
+                    location=location,
+                )
 
                 await self.page.wait_for_load_state("networkidle")
+
+                # Confirm results loaded — gives us a stable post-warmup state
+                try:
+                    await self.page.wait_for_selector(self.CARD_SELECTOR, state="attached", timeout=30000)
+                    print("✅ [WTTJ] Dummy search complete — session warmed up.")
+                except Exception:
+                    print("⚠️ [WTTJ] Dummy search ran but no cards found. Continuing.")
+
                 return {}
             except Exception as e:
                 print(f"⚠️ Initial search failed during session boot: {e}")
@@ -697,6 +721,7 @@ class WelcomeToTheJungleWorker:
         except Exception as e:
             print(f"Browser Auth Initialization Error: {e}")
             return {"error": f"Failed to initialize WTTJ browser with session: {str(e)}"}
+
 
 
     # --- NODE 2: Navigation ---
