@@ -227,7 +227,8 @@ async def update_my_profile(
         school_type=data.school_type,
         graduation_year=data.graduation_year,
         major=data.major,
-        study_level=data.study_level
+        study_level=data.study_level,
+        linkedin_url=data.linkedin_url
     )
     return handle_result(result)
 
