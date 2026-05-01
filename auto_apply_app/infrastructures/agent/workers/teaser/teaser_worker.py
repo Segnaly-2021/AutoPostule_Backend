@@ -9,7 +9,7 @@ from playwright_stealth import Stealth
 from playwright.async_api import Locator, async_playwright, Page, Browser, BrowserContext, Playwright
 from langchain_core.language_models import BaseChatModel
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import SystemMessage, HumanMessage
+
 
 
 # 1. imports from Domain
@@ -125,19 +125,21 @@ class JobTeaserWorker:
         return None
 
     async def _handle_cookies(self):
-        print("Checking for Axeptio cookies...")
+        print("Checking for Didomi cookies...")
         try:
-            await self.page.wait_for_selector('#axeptio_overlay', state='attached', timeout=5000)
-            count = await self.page.evaluate("""() => {
-                const overlays = document.querySelectorAll('#axeptio_overlay, .axeptio_mount');
-                let removed = 0;
-                overlays.forEach(el => {
-                    el.remove();
-                    removed++;
-                });
-                return removed;
-            }""")
-            print(f" Nuked {count} Axeptio overlay(s) from the DOM.")
+            # Target the specific agree button
+            agree_button_selector = '#didomi-notice-agree-button'
+            
+            # Wait for the button to be visible (not just attached to the DOM)
+            await self.page.wait_for_selector(agree_button_selector, state='visible', timeout=5000)
+            
+            # Click it natively
+            await self.page.click(agree_button_selector)
+            print("✓ Clicked 'Good for me' cookie button.")
+            
+            # Wait a brief moment for the banner's close animation to finish
+            await self.page.wait_for_timeout(1000)
+            
         except Exception:
             print("info: No cookie popup detected (or already gone).")
 
@@ -256,7 +258,8 @@ class JobTeaserWorker:
                         print(f"⚠️ [JOBTEASER] Pagination failed after 3 attempts: {e}")
                         return False
                     await asyncio.sleep(2 ** attempt)
-
+            
+            await self._handle_cookies() # ✅ ADDED
             return True
 
         except Exception as e:
@@ -307,6 +310,7 @@ class JobTeaserWorker:
                                 label = self.page.locator(f'ul#multi-select-container-options label[for="{cb_id}"]')
                                 await human_delay(300, 700)
                                 await label.click()
+                                await self.page.wait_for_load_state("networkidle")
                                 print(f"  ✓ Contract checked: {contract.value}")
                         except Exception as e:
                             print(f"  ⚠️ Could not check contract '{contract.value}': {e}")
@@ -331,7 +335,7 @@ class JobTeaserWorker:
                     first_suggestion = self.page.locator(
                     'div[class*="LocationFilter_main"] div[class*="Dropdown_main"] button'
                     ).first
-                    await first_suggestion.wait_for(state="visible", timeout=8000)
+                    await first_suggestion.wait_for(state="visible", timeout=30000)
                     await human_click(first_suggestion)
                     await self.page.wait_for_load_state("networkidle")
                     print(f"  ✓ Location selected: {location}")
@@ -384,6 +388,8 @@ class JobTeaserWorker:
                         print(f"⚠️ [JOBTEASER] Filter modal submit failed after 3 attempts: {e}")
                         raise
                     await asyncio.sleep(2 ** attempt)
+
+            await self._handle_cookies() # ✅ ADDED
 
         except Exception as e:
             print(f"❌ Error applying filters: {e}")
@@ -464,12 +470,12 @@ class JobTeaserWorker:
 
         # 🚨 NEW: Pull identity from state
         fingerprint = state.get("user_fingerprint")
-        proxy_config = state.get("proxy_config")
+        #proxy_config = state.get("proxy_config")
         
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless=preferences.browser_headless, 
+                headless= preferences.browser_headless, 
                 args=['--disable-blink-features=AutomationControlled']
             )
 
@@ -516,12 +522,12 @@ class JobTeaserWorker:
 
         # 🚨 NEW: Pull identity from state
         fingerprint = state.get("user_fingerprint")
-        proxy_config = state.get("proxy_config")
+        #proxy_config = state.get("proxy_config")
 
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless=state["preferences"].browser_headless,
+                headless= state["preferences"].browser_headless,
                 args=['--disable-blink-features=AutomationControlled']
             )
 
@@ -570,6 +576,7 @@ class JobTeaserWorker:
             for attempt in range(3):
                 try:
                     await self.page.goto(self.base_url, wait_until="networkidle", timeout=120000)
+                    await self._handle_cookies() # ✅ ADDED
                     # Confirm session is valid by looking for the logged-in greeting
                     # (CSS Modules hash on Greeting_firstWord — use prefix matcher)
                     await self.page.wait_for_selector(
@@ -590,7 +597,7 @@ class JobTeaserWorker:
             # Uses partial class match (Nav_app-Nav__link has a CSS Modules hash suffix)
             # combined with inner text "Offres" for stability
             offres_link = self.page.locator(
-                'a[class*="Nav_app-Nav__link"]:has_text="Offres"'
+                'a[class*="Nav_app-Nav__link"]:has-text("Offres")'
             ).first
             await offres_link.wait_for(state="visible", timeout=15000)
             await human_click(offres_link)
@@ -598,8 +605,10 @@ class JobTeaserWorker:
             await self.page.wait_for_selector(
                 'input[id="job-ads-autocomplete-keyword-search"]',
                 state="visible",
-                timeout=30000,
+                timeout=60000,
             )
+
+
             search_entity = state["job_search"]
             job_title = search_entity.job_title
             contract_types = getattr(search_entity, 'contract_types', [])
@@ -657,7 +666,7 @@ class JobTeaserWorker:
             for attempt in range(3):
                 try:
                     await self.page.goto(self.base_url, wait_until="networkidle", timeout=90000)
-                    #await self._handle_cookies()
+                    await self._handle_cookies() # ✅ UNCOMMENTED
                     await self.page.wait_for_selector('button[id="UnloggedUserDropdownButton"]', state="visible", timeout=30000)
                     break
                 except Exception as e:
@@ -682,6 +691,8 @@ class JobTeaserWorker:
         user_id = str(state["user"].id)
         
         print("--- [JOBTEASER] Requesting Login ---")
+        
+        await self._handle_cookies() # ✅ ADDED
 
         if prefs.is_full_automation and creds["jobteaser"]:
             print("🔐 [JOBTEASER] Full Automation: Attempting auto-login...")
@@ -735,6 +746,7 @@ class JobTeaserWorker:
                         # JobTeaser uses a plain submit button inside the sign-in form
                         submit_btn = self.page.locator('form[data-e2e="sign-in-form"] button[type="submit"]')
                         await submit_btn.click()
+                        await self.page.wait_for_load_state("networkidle", timeout=60000)
                         break
                     except Exception as e:
                         if attempt == 2:
@@ -742,18 +754,26 @@ class JobTeaserWorker:
                         print(f"⚠️ [JOBTEASER] Credential submission attempt {attempt+1} failed. Error: {e}. Retrying in {2 ** attempt}s...")
                         await asyncio.sleep(2 ** attempt)
 
-              # ✅ RETRY UNIT 3: Proof of login
+                # ✅ RETRY UNIT 3: Proof of login
                 for attempt in range(3):
                     try:
-                        await self.page.wait_for_load_state("networkidle", timeout=60000)
                         # Use class prefix matcher — CSS Modules hashes change on rebuild
-                        await self.page.wait_for_selector('span[class*="Greeting_firstWord"]', state="attached", timeout=30000)
+                        await self.page.wait_for_selector('span[class*="Greeting_firstWord"]', state="attached", timeout=60000)
                         break
                     except Exception as e:
                         if attempt == 2:
                             return {"error": "Login failed. Please check your JobTeaser credentials in your settings."}
                         print(f"⚠️ [JOBTEASER] Post-login verification attempt {attempt+1} failed. Error: {e}. Retrying in {2 ** attempt}s...")
                         await asyncio.sleep(2 ** attempt)
+
+                # preparing for search page — click the "Offres" nav link to reach the job search page
+
+                offres_link = self.page.locator(
+                    'a[class*="Nav_app-Nav__link"]:has-text("Offres")'
+                ).first
+                await offres_link.wait_for(state="visible", timeout=15000)
+                await human_click(offres_link)
+                await self.page.wait_for_load_state("networkidle")
 
                 print("✅ [JOBTEASER] Auto-login successful")
                 await self._save_auth_state(user_id)
@@ -762,6 +782,7 @@ class JobTeaserWorker:
             except Exception as e:
                 print(f"❌ [JOBTEASER] Auto-login failed: {e}")
                 return {"error": "Failed to log into JobTeaser. Please check your credentials."}
+              
 
             finally:
                 if login_plain is not None:
@@ -838,6 +859,7 @@ class JobTeaserWorker:
             except Exception:
                 return {"error": "No new matching jobs were found for this search today."}
 
+            await self._handle_cookies() # ✅ ADDED
             return {}
 
         except Exception as e:
@@ -979,7 +1001,7 @@ class JobTeaserWorker:
                             except Exception as e:
                                 print(f"     ⚠️ Apply click failed for {raw_title}: {e}")
                         else:
-                            print(f"     ⚠️ No internal apply button on detail page. Skipping.")
+                            print("     ⚠️    No internal apply button on detail page. Skipping.")
 
                         if not await self.nav_back(result_url):
                             break
@@ -1020,7 +1042,7 @@ class JobTeaserWorker:
 
         jobs_to_process = state.get("processed_offers", [])
         user = state["user"]
-        preferences = state["preferences"]
+        #preferences = state["preferences"]
 
         assigned_submit_limit = state.get("worker_job_limit", 5)
 
@@ -1048,6 +1070,7 @@ class JobTeaserWorker:
                     try:
                         # Navigate to the OFFER page (not form_url) — humans click through
                         await self.page.goto(offer.url, wait_until="commit", timeout=60000)
+                        await self._handle_cookies() # ✅ ADDED
                         await human_delay(1500, 3500)  # 🚨 pause after navigation
 
                         # Wait for the apply button on the detail page
@@ -1111,7 +1134,7 @@ class JobTeaserWorker:
                         await human_delay(400, 900)
                         # fill() is appropriate for long text — humans paste cover letters
                         await cover_textarea.fill(offer.cover_letter)
-                        print(f"   📝 Cover letter filled.")
+                        print("   📝  Cover letter filled.")
                     else:
                         # Form requires a cover letter but we have none — skip this offer
                         print(f"⚠️ [JOBTEASER] Form requires cover letter but none generated. Skipping {offer.job_title}.")

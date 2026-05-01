@@ -386,7 +386,7 @@ class ApecWorker():
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless=preferences.browser_headless,
+                headless= preferences.browser_headless,
                 args=['--disable-blink-features=AutomationControlled']
             )
             
@@ -438,7 +438,7 @@ class ApecWorker():
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless=state["preferences"].browser_headless,
+                headless= state["preferences"].browser_headless,
                 args=['--disable-blink-features=AutomationControlled']
             )
             
@@ -985,12 +985,11 @@ class ApecWorker():
                     anchor_sec = self.page.locator('a[aria-controls="#collapse_additionalData"]').first
                     anchor_sec_label = self.page.locator('div[id="heading_additionalData"]').first
                     
-                    await human_click(anchor_sec_label)  # 🚨 NEW
-                    await self.page.wait_for_selector('.ng-option', state="visible", timeout=20000)
+                    if  await anchor_sec.get_attribute('aria-expanded') != 'true':
+                        await human_click(anchor_sec_label)  # 🚨 NEW                        
+                        await self.page.wait_for_selector('ng-select[formcontrolname="idNiveauFormation"]', state="visible", timeout=30000)
                     
-                    if await anchor_sec.get_attribute('aria-expanded') != 'true':
-                        await anchor_sec_label.click()
-                        await self.page.wait_for_selector('.ng-option', state="visible", timeout=20000)
+                   
 
                     if hasattr(user, 'study_level') and user.study_level:
                         await self.page.locator('ng-select[formcontrolname="idNiveauFormation"]').click()

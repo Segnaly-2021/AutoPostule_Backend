@@ -37,6 +37,7 @@ if database_url:
 # 3. Import your Base and set 
 # the target_metadata so Alembic can "see" your tables
 from auto_apply_app.infrastructures.persistence.database.models.schema import Base
+from auto_apply_app.infrastructures.persistence.database.models import schema  
 target_metadata = Base.metadata
 
 # Interpret the config file for Python logging.

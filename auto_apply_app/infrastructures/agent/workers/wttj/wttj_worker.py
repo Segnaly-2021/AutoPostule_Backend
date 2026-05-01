@@ -231,10 +231,10 @@ class WelcomeToTheJungleWorker:
             print(f"    ⚠️ Could not extract company: {e}")
 
         try:
-            # Location: <span> sibling of <svg> with map-marker-alt icon
-            # The chip contains: <svg><use href="#map-marker-alt"></use></svg><span>Paris</span>
+            # Location: chip containing the map-marker-alt icon
+            # Anchor on the SVG with that specific class, then take the sibling <span>
             raw_location = await card.locator(
-                'div:has(svg use[href="#map-marker-alt"]) span'
+                'svg.name-map-marker-alt + span'
             ).first.inner_text()
         except Exception as e:
             print(f"    ⚠️ Could not extract location: {e}")
@@ -291,7 +291,7 @@ class WelcomeToTheJungleWorker:
         """Click section header to expand if collapsed. Idempotent."""
         try:
             btn = self.page.locator(
-                f'button[aria-expanded="false"]:has-text("{section_title}")'
+                f'button[aria-expanded="false"] div p:has-text("{section_title}")'
             )
             if await btn.count() > 0:
                 await human_click(btn)
@@ -322,6 +322,28 @@ class WelcomeToTheJungleWorker:
         return ["five_to_ten", "more_than_ten"]
 
 
+    # --- HELPER: Toggle a label-wrapped checkbox to a desired state ---
+    async def _set_checkbox_state(self, label_selector: str, should_be_checked: bool, name: str = ""):
+        """
+        Clicks the label only if the underlying checkbox isn't already in the desired state.
+        WTTJ checkboxes are inside <label data-testid="..."><input class="sr-only peer" type="checkbox">.
+        """
+        try:
+            label = self.page.locator(label_selector)
+            if await label.count() == 0:
+                return
+            checkbox = label.locator('input[type="checkbox"]').first
+            is_checked = await checkbox.is_checked()
+            if is_checked == should_be_checked:
+                print(f"  ⏩ {name} already {'checked' if should_be_checked else 'unchecked'}, skipping")
+                return
+            await human_delay(250, 600)
+            await label.click()
+            print(f"  ✓ {name} → {'checked' if should_be_checked else 'unchecked'}")
+        except Exception as e:
+            print(f"  ⚠️  Could not toggle '{name}': {e}")
+
+
     # --- HELPER: Apply Search Filters with Retry ---
     async def _apply_filters(
         self,
@@ -340,6 +362,16 @@ class WelcomeToTheJungleWorker:
         }
         HIDDEN_CONTRACTS = {"temporary", "internship", "apprenticeship"}
 
+        ALL_EXPERIENCE = ["zero_to_one", "one_to_three", "three_to_five", "five_to_ten", "more_than_ten"]
+        ALL_REMOTE = ["fulltime", "partial", "punctual", "no"]
+        DESIRED_REMOTE = {"partial", "punctual", "no"}
+        ALL_VISA = ["canada", "europe", "uk", "usa"]
+        ALL_CONTRACTS = [
+            "full_time", "part_time", "freelance", "temporary",
+            "internship", "apprenticeship", "graduate_program",
+            "idv", "other", "vie", "volunteer",
+        ]
+
         try:
             # ============ 1. RÔLE SECTION ============
             await self._expand_section("Rôle")
@@ -354,18 +386,28 @@ class WelcomeToTheJungleWorker:
 
             print("📝 [WTTJ] Selecting experience levels...")
             exp_values = self._map_experience_levels(user.graduation_year)
-            for value in exp_values:
-                try:
-                    label = self.page.locator(f'label[data-testid="experienceLevel-option-{value}"]')
-                    if await label.count() > 0:
-                        await human_delay(250, 600)
-                        await label.click()
-                        print(f"  ✓ Experience: {value}")
-                except Exception as e:
-                    print(f"  ⚠️  Could not select experience '{value}': {e}")
+            for value in ALL_EXPERIENCE:
+                await self._set_checkbox_state(
+                    f'label[data-testid="experienceLevel-option-{value}"]',
+                    should_be_checked=(value in exp_values),
+                    name=f"Experience: {value}",
+                )
 
             # ============ 2. LOCALISATION SECTION ============
             await self._expand_section("Localisation")
+
+            # Clear any previously saved location chips
+            try:
+                existing_chips = self.page.locator('button[aria-label="remove tag"]')
+                chip_count = await existing_chips.count()
+                for _ in range(chip_count):
+                    # Always click .first because each removal re-indexes the list
+                    await self.page.locator('button[aria-label="remove tag"]').first.click()
+                    await human_delay(200, 400)
+                if chip_count > 0:
+                    print(f"  ✓ Cleared {chip_count} existing location chips")
+            except Exception as e:
+                print(f"  ⚠️  Could not clear location chips: {e}")
 
             print(f"📝 [WTTJ] Filling location: {location}...")
             loc_input = self.page.locator('input[data-testid="location-search-input"]')
@@ -390,24 +432,20 @@ class WelcomeToTheJungleWorker:
             await human_delay(400, 800)
 
             print("📝 [WTTJ] Selecting remote preferences...")
-            for value in ["partial", "punctual", "no"]:
-                try:
-                    label = self.page.locator(f'label[data-testid="remote-option-{value}"]')
-                    if await label.count() > 0:
-                        await human_delay(250, 600)
-                        await label.click()
-                        print(f"  ✓ Remote: {value}")
-                except Exception as e:
-                    print(f"  ⚠️  Could not select remote '{value}': {e}")
+            for value in ALL_REMOTE:
+                await self._set_checkbox_state(
+                    f'label[data-testid="remote-option-{value}"]',
+                    should_be_checked=(value in DESIRED_REMOTE),
+                    name=f"Remote: {value}",
+                )
 
             print("📝 [WTTJ] Selecting visa: europe...")
-            try:
-                visa_label = self.page.locator('label[data-testid="visa-option-europe"]')
-                if await visa_label.count() > 0:
-                    await human_delay(250, 600)
-                    await visa_label.click()
-            except Exception as e:
-                print(f"  ⚠️  Could not select visa 'europe': {e}")
+            for value in ALL_VISA:
+                await self._set_checkbox_state(
+                    f'label[data-testid="visa-option-{value}"]',
+                    should_be_checked=(value == "europe"),
+                    name=f"Visa: {value}",
+                )
 
             # ============ 3. CONTRAT ET SALAIRE SECTION ============
             await self._expand_section("Contrat et salaire")
@@ -433,15 +471,12 @@ class WelcomeToTheJungleWorker:
                     print(f"  ⚠️  Could not expand 'Voir plus': {e}")
 
             print(f"📝 [WTTJ] Selecting contract types: {wttj_values}")
-            for value in wttj_values:
-                try:
-                    label = self.page.locator(f'label[data-testid="contractType-option-{value}"]')
-                    if await label.count() > 0:
-                        await human_delay(250, 600)
-                        await label.click()
-                        print(f"  ✓ Contract: {value}")
-                except Exception as e:
-                    print(f"  ⚠️  Could not select contract '{value}': {e}")
+            for value in ALL_CONTRACTS:
+                await self._set_checkbox_state(
+                    f'label[data-testid="contractType-option-{value}"]',
+                    should_be_checked=(value in wttj_values),
+                    name=f"Contract: {value}",
+                )
 
             print(f"📝 [WTTJ] Filling salary: {min_salary}...")
             try:
@@ -486,38 +521,25 @@ class WelcomeToTheJungleWorker:
 
     # --- HELPER: Nav Back with Retry + Verification ---
     async def nav_back(self, url: str) -> bool:
-        try:
-            if await self.page.locator('a[title="Retourner aux résultats"]').count() > 0:
-                await self.page.locator('a[title="Retourner aux résultats"]').click()
-                await self.page.wait_for_load_state("networkidle")
-                await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=15000)
-                await self._handle_cookies()
-                await human_delay(800, 2000)  # 🚨 NEW: pause to "read" results
-                return True
-        except Exception:
-            pass
-
-        for attempt in range(3):
+        for i in range(3):
             try:
-                await self.page.goto(url, wait_until="networkidle")
-                await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=15000)
-                await self._handle_cookies()
-                await human_delay(800, 2000)  # 🚨 NEW
-                return True
-            except Exception as e:
-                if attempt == 2:
-                    print(f"    ⚠️ Could not return to search results after 3 attempts: {e}")
-                    try:
-                        await self.page.reload(wait_until="networkidle")
-                        await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=10000)
-                        await self._handle_cookies()
-                        return True
-                    except Exception:
-                        return False
-                print(f"    ⚠️ Nav back attempt {attempt+1} failed. Retrying...")
-                await asyncio.sleep(2 ** attempt)
-        return False
+                await self.page.wait_for_selector('a[title="Retourner aux résultats"]', state="visible", timeout=30000)  
+                break                  
+            except Exception:
+                if i == 2:
+                    print("⚠️ Nav back failed after 3 attempts")
+                    return False
+        try:       
+            await self.page.locator('a[title="Retourner aux résultats"]').click()
+            await self.page.wait_for_load_state("networkidle")
+            await self._handle_cookies()
+            await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=60000)
+            await human_delay(800, 2000)  # 🚨 NEW: pause to "read" results
+            return True  
+        except Exception:
+            return False    
 
+        
 
     async def route_node_exit(self, state: JobApplicationState) -> str:
         if state.get("error"):
@@ -563,7 +585,7 @@ class WelcomeToTheJungleWorker:
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless=preferences.browser_headless, 
+                headless= not preferences.browser_headless, 
                 args=['--disable-blink-features=AutomationControlled']
             )
 
@@ -616,7 +638,7 @@ class WelcomeToTheJungleWorker:
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless=state["preferences"].browser_headless,
+                headless= not state["preferences"].browser_headless,
                 args=['--disable-blink-features=AutomationControlled']
             )
             
@@ -878,6 +900,7 @@ class WelcomeToTheJungleWorker:
 
         try:
             await human_warmup(self.page, self.base_url)  # 🚨 NEW
+            await self._handle_cookies()
 
             # ✅ RETRY UNIT 1: Click "Trouver un job" → land on /jobs-matches → preferences form visible
             for attempt in range(3):
@@ -885,7 +908,7 @@ class WelcomeToTheJungleWorker:
                     await human_click(self.page.locator('a[data-testid="nav-find-a-job-button"]'))  # 🚨 NEW
                     await self.page.wait_for_load_state("networkidle")
                     await self.page.wait_for_selector(
-                        'input[name="futureRole"]',
+                        'button[aria-expanded="false"] div p:has-text("Rôle")',
                         state="visible",
                         timeout=30000,
                     )
@@ -987,9 +1010,10 @@ class WelcomeToTheJungleWorker:
                         click_success = False
                         for attempt in range(3):
                             try:
-                                card = self.page.get_by_test_id("search-results-list-item-wrapper").nth(i)
+                                card =  self.page.locator(self.CARD_SELECTOR).nth(i)
                                 await human_click(card)  # 🚨 NEW
                                 await self.page.wait_for_load_state("networkidle")
+                                await self._handle_cookies()
                                 await self.page.wait_for_selector('[data-testid="job_bottom-button-apply"]', state="attached", timeout=40000)
                                 click_success = True
                                 break
@@ -1014,12 +1038,12 @@ class WelcomeToTheJungleWorker:
                         except Exception:
                             job_desc = ""
 
-                        apply_btn = self.page.locator('[data-testid="job_bottom-button-apply"]').first
+                        apply_btn = self.page.locator('[data-testid="job_header-button-apply"]')
                         
                         if await apply_btn.count() > 0:
                             try:
                                 try:
-                                    await self.page.wait_for_selector('a[data-testid="job_bottom-button-apply"] svg[alt="ExternalLink"]', timeout=3000)
+                                    await self.page.wait_for_selector('a[data-testid="job_header-button-apply"] svg[alt="ExternalLink"]', state="visible", timeout=3000)
                                     print(f"     ❌ External form detected (Ignoring): {current_url}")
                                     if not await self.nav_back(result_url):
                                         break

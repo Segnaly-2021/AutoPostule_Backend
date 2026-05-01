@@ -16,7 +16,7 @@ class GCSFileStorageAdapter(FileStoragePort):
         if creds_json:
             # 💻 LOCAL DEV MODE: Parse the JSON string from your local .env file
             try:
-                creds_dict = json.loads(creds_json)                
+                creds_dict = json.loads(creds_json)
                 self.client = storage.Client.from_service_account_info(creds_dict)
                 print("☁️ GCS Adapter initialized using local JSON credentials.")
             except json.JSONDecodeError as e:

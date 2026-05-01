@@ -22,6 +22,7 @@ class UserDB(Base):
     is_active: Mapped[bool] = mapped_column(default=True)
     address: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # New field
     resume_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    linkedin_url: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     resume_file_name: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     phone_number: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
     current_position: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
@@ -30,7 +31,7 @@ class UserDB(Base):
     graduation_year: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
     major: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     study_level: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    linkedin_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # New field
+   
 
     # Relationships
     subscription: Mapped["UserSubscriptionDB"] = relationship(
