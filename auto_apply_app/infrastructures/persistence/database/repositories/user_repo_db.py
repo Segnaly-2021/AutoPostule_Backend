@@ -59,7 +59,7 @@ class UserRepoDB(UserRepository):
             graduation_year=user.graduation_year,
             major=user.major,
             study_level=user.study_level,
-            linkedin_url=user.linkedIn_url if user.linkedIn_url else None,
+            linkedin_url=user.linkedin_url if user.linkedin_url else None,
         )
         await self.session.merge(user_db)
 
