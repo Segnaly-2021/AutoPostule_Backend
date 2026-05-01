@@ -86,4 +86,5 @@ class UserUpdateSchema(BaseModel):
     graduation_year: Optional[str] = None
     major: Optional[str] = None
     study_level: Optional[str] = None
+    linkedin_url: Optional[str] = None
  
