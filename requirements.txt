@@ -22,6 +22,7 @@ bcrypt
 PyJWT==2.12.1
 argon2-cffi==23.1.0
 cryptography==46.0.5
+slowapi==0.1.9
 
 # --- AI, LangChain & Embeddings ---
 langchain-core==1.2.19

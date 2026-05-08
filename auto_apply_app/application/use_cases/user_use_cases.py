@@ -44,27 +44,24 @@ from auto_apply_app.domain.value_objects import ClientType
 
 logger = logging.getLogger(__name__)
 
+
 @dataclass
 class RegisterUserUseCase:
-    
     uow: UnitOfWork
     password_service: PasswordServicePort
+    token_provider: TokenProviderPort                  # NEW
+    email_service: EmailServicePort                    # NEW
 
     async def execute(self, request: RegisterUserRequest) -> Result:
         try:
-            
             params = request.to_execution_params()
 
-            # Start the Atomic Transaction
             async with self.uow:
-                
-                # 1. Validation (Using the repo inside the UoW)
                 existing_auth = await self.uow.auth_repo.get_by_email(params["email"])
                 if existing_auth:
                     return Result.failure(Error.conflict("User with this email already exists"))
 
-                              
-                user = User(                    
+                user = User(
                     firstname=params["firstname"],
                     lastname=params["lastname"],
                     email=params["email"],
@@ -73,60 +70,63 @@ class RegisterUserUseCase:
                     school_type=None,
                     graduation_year=None,
                     major=None,
-                    study_level=None
+                    study_level=None,
                 )
 
                 raw_password = params.pop("password")
                 hashed_password = self.password_service.get_password_hash(raw_password)
                 user_id = user.id
-                print(f"[RegisterUserUseCase] Generated user_id: {user_id} for email: {params['email']}")
 
                 auth_user = AuthUser(
                     user_id=user_id,
                     email=params["email"],
-                    password_hash=hashed_password
+                    password_hash=hashed_password,
                 )
-
 
                 sub_user = UserSubscription(
                     user_id=user_id,
-                    email=params["email"], 
-                    # Just For Testing
-                    account_type=ClientType.BASIC, 
+                    email=params["email"],
+                    account_type=ClientType.BASIC,
                     is_active=True,
                     ai_credits_balance=1500,
                     current_period_start=datetime.datetime.now(datetime.timezone.utc),
                     next_billing_date=datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=7),
-                    current_period_end=datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=7), # 30-day trial for new users                 
-                    
+                    current_period_end=datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=7),
                 )
 
+                user_prefs = UserPreferences(user_id=user.id)
 
-                user_prefs = UserPreferences(
-                    user_id=user.id,
-                )
-
-                # 3. Persistence (Staged in the session)
                 await self.uow.user_repo.save(user)
                 await self.uow.auth_repo.save(auth_user)
                 await self.uow.subscription_repo.save(sub_user)
-                await self.uow.user_pref_repo.save(user_prefs)               
-               
+                await self.uow.user_pref_repo.save(user_prefs)
+
+            # 4. Generate verification token + send email (outside UoW — non-critical)
+            try:
+                verification_token = self.token_provider.encode_token(
+                    user_id=user_id,
+                    claims={"email": params["email"], "purpose": "email_verification"},
+                    expires_delta=datetime.timedelta(hours=24),
+                )
+                await self.email_service.send_verification_email(
+                    to_email=params["email"],
+                    verification_token=verification_token,
+                )
+            except Exception:
+                # Don't fail registration if email fails — user can request resend.
+                logger.exception("Failed to send verification email to %s", params["email"])
 
             return Result.success(UserResponse.from_entity(user))
 
         except ValidationError as e:
             return Result.failure(Error.validation_error(str(e)))
-        except Exception as e:
-            # 🚨 ADD THIS LINE to expose the real error in GCP logs!
-            logger.exception(f"CRITICAL: Failed to register user {request.auth_email}")
-            return Result.failure(Error.system_error(str(e)))
-
+        except Exception:
+            logger.exception("CRITICAL: Failed to register user")
+            return Result.failure(Error.system_error("Could not complete registration."))
 
 
 @dataclass
 class LoginUserUseCase:
-
     password_service: PasswordServicePort
     token_provider: TokenProviderPort
     uow: UnitOfWork
@@ -136,37 +136,37 @@ class LoginUserUseCase:
             params = request.to_execution_params()
 
             async with self.uow:
-                # 1. Fetch User Credentials
                 auth_user = await self.uow.auth_repo.get_by_email(params["email"])
                 
-                # 2. Verify Existence and Password
-                # Note: We return "Invalid credentials" for both cases to avoid leaking user existence
                 if not auth_user:
-                    return Result.failure(Error.not_found("User"))
+                    # Same generic response for "not found" vs "wrong password" — anti-enumeration
+                    return Result.failure(Error.unauthorized("Invalid credentials"))
 
                 if not self.password_service.verify(params["password"], auth_user.password_hash):
                     return Result.failure(Error.unauthorized("Invalid credentials"))
 
-                # 3. Domain Logic: Record Login (Optional)
+                # NEW: block unverified accounts
+                if not auth_user.is_verified:
+                    return Result.failure(Error.unauthorized(
+                        "Please verify your email before logging in. "
+                        "Check your inbox for the verification link."
+                    ))
+
                 auth_user.record_login()
                 await self.uow.auth_repo.save(auth_user)
 
-                # 4. Generate Token
                 token = self.token_provider.encode_token(
-                    user_id=auth_user.user_id, 
-                    claims={"email": auth_user.email}
+                    user_id=auth_user.user_id,
+                    claims={"email": auth_user.email},
                 )
 
-            # 5. Response
             return Result.success(LoginResponse(access_token=token, token_type="Bearer"))
 
         except ValueError as e:
             return Result.failure(Error.validation_error(str(e)))
-            
-        except Exception as e:
-            # 🚨 ADD THIS LINE to expose the real error in GCP logs!
-            logger.exception(f"CRITICAL: Failed to Loginuser {request.auth_email}")
-            return Result.failure(Error.system_error(str(e)))
+        except Exception:
+            logger.exception("CRITICAL: Failed to login user")
+            return Result.failure(Error.system_error("Could not complete login."))
 
 
 
@@ -456,6 +456,89 @@ class DeleteUserUseCase:
     except UserNotFoundError:
       return Result.failure(Error.not_found("User", str(params["user_id"])))
 
+
+@dataclass
+class VerifyEmailUseCase:
+    """Verifies an email using the token sent during registration."""
+    uow: UnitOfWork
+    token_provider: TokenProviderPort
+
+    async def execute(self, token: str) -> Result:
+        try:
+            payload = self.token_provider.decode_token(token)
+
+            if payload.get("purpose") != "email_verification":
+                return Result.failure(Error.unauthorized("Invalid token type."))
+
+            user_id = payload.get("sub")
+            if not user_id:
+                return Result.failure(Error.unauthorized("Invalid token payload."))
+
+            async with self.uow as uow:
+                auth_user = await uow.auth_repo.get_by_id(UUID(user_id))
+                if not auth_user:
+                    return Result.failure(Error.not_found("User", str(user_id)))
+
+                if auth_user.is_verified:
+                    return Result.success({"message": "Email already verified."})
+
+                auth_user.is_verified = True
+                await uow.auth_repo.save(auth_user)
+
+            return Result.success({"message": "Email verified successfully."})
+
+        except InvalidTokenException:
+            return Result.failure(Error.unauthorized("Verification link is invalid or has expired."))
+        except Exception:
+            logger.exception("CRITICAL: Failed to verify email")
+            return Result.failure(Error.system_error("Could not verify email."))
+
+
+@dataclass
+class ResendVerificationEmailUseCase:
+    """Resends the verification email if the user hasn't verified yet."""
+    uow: UnitOfWork
+    token_provider: TokenProviderPort
+    email_service: EmailServicePort
+
+    async def execute(self, email: str) -> Result:
+        try:
+            async with self.uow:
+                auth_user = await self.uow.auth_repo.get_by_email(email)
+
+                # Anti-enumeration: same response whether or not email exists
+                if not auth_user:
+                    return Result.success({
+                        "message": "If an account exists and is not yet verified, a new email has been sent."
+                    })
+
+                if auth_user.is_verified:
+                    return Result.success({
+                        "message": "If an account exists and is not yet verified, a new email has been sent."
+                    })
+
+                verification_token = self.token_provider.encode_token(
+                    user_id=auth_user.user_id,
+                    claims={"email": auth_user.email, "purpose": "email_verification"},
+                    expires_delta=datetime.timedelta(hours=24),
+                )
+
+            # Send outside UoW
+            try:
+                await self.email_service.send_verification_email(
+                    to_email=auth_user.email,
+                    verification_token=verification_token,
+                )
+            except Exception:
+                logger.exception("Failed to resend verification email to %s", email)
+
+            return Result.success({
+                "message": "If an account exists and is not yet verified, a new email has been sent."
+            })
+
+        except Exception:
+            logger.exception("CRITICAL: Failed to resend verification email")
+            return Result.failure(Error.system_error("Could not resend verification email."))
 
 
 

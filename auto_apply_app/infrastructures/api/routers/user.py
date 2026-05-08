@@ -1,5 +1,9 @@
 from fastapi import APIRouter, UploadFile, File, Depends, status
 from typing import Annotated
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from fastapi import Request
+
 
 from auto_apply_app.infrastructures.api.dependencies.result import handle_result
 from auto_apply_app.infrastructures.configuration.container import Application
@@ -19,7 +23,10 @@ from auto_apply_app.infrastructures.api.schema.user_schema import (
     ResetPasswordConfirmSchema    
 )
 
+
+limiter = Limiter(key_func=get_remote_address)
 router = APIRouter()
+
 
 # This dependency function acts as the "bridge" to your assembly line
 def get_auth_controller(
@@ -47,7 +54,9 @@ AuthControllerDep = Annotated[AuthController, Depends(get_auth_controller)]
         response_model=UserViewModel, 
         status_code=status.HTTP_201_CREATED
 )
+@limiter.limit("3/hour")
 async def register(
+    request: Request,
     data: RegisterSchema,  
     auth_controller: AuthControllerDep
 ):
@@ -67,7 +76,9 @@ async def register(
     summary="Login user",
     description="Authenticate user and receive JWT access token"
 )
+@limiter.limit("5/minute")
 async def login(
+    request: Request,
     data: LoginSchema,
     auth_controller: AuthControllerDep
 ):
@@ -88,7 +99,9 @@ async def login(
     summary="Request password reset",
     description="Sends a password reset email if the account exists"
 )
+@limiter.limit("3/hour")
 async def forgot_password(
+    request: Request,
     data: ForgotPasswordRequestSchema,
     auth_controller: AuthControllerDep
 ):
@@ -107,7 +120,9 @@ async def forgot_password(
     summary="Reset password",
     description="Sets a new password using the token received via email"
 )
+@limiter.limit("5/hour")
 async def reset_password(
+    request: Request,
     data: ResetPasswordConfirmSchema,
     auth_controller: AuthControllerDep
 ):
@@ -128,7 +143,9 @@ async def reset_password(
     summary="Change password",
     description="Change the authenticated user's password"
 )
+@limiter.limit("5/hour")
 async def change_password(
+    request: Request,
     data: ChangePasswordSchema,
     current_user_id: CurrentUserId,  
     auth_controller: AuthControllerDep

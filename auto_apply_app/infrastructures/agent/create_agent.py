@@ -1,5 +1,4 @@
 # auto_apply_app/infrastructures/agent/create_agent.py
-
 import os
 
 from auto_apply_app.infrastructures.agent.master.master_agent import MasterAgent
@@ -8,22 +7,26 @@ from auto_apply_app.infrastructures.agent.workers.hellowork.hw_worker import Hel
 from auto_apply_app.infrastructures.agent.workers.wttj.wttj_worker import WelcomeToTheJungleWorker
 from auto_apply_app.infrastructures.agent.workers.teaser.teaser_worker import JobTeaserWorker
 
-# Use Cases
 from auto_apply_app.application.use_cases.agent_use_cases import (
     SaveJobApplicationsUseCase,
     ConsumeAiCreditsUseCase,
-    GetIgnoredHashesUseCase
+    GetIgnoredHashesUseCase,
 )
-from auto_apply_app.application.use_cases.job_offer_use_cases import CleanupUnsubmittedJobsUseCase, GetDailyStatsUseCase
-from auto_apply_app.application.use_cases.agent_state_use_cases import GetAgentStateUseCase, ResetAgentUseCase
-from auto_apply_app.application.use_cases.fingerprint_use_cases import GetOrCreateUserFingerprintUseCase  # 🚨 NEW
+from auto_apply_app.application.use_cases.job_offer_use_cases import (
+    CleanupUnsubmittedJobsUseCase,
+    GetDailyStatsUseCase,
+)
+from auto_apply_app.application.use_cases.agent_state_use_cases import (
+    GetAgentStateUseCase,
+    BindAgentToSearchUseCase,
+    IsAgentKilledForSearchUseCase,
+)
+from auto_apply_app.application.use_cases.agent_usage_use_cases import CompleteAgentRunUseCase
+from auto_apply_app.application.use_cases.fingerprint_use_cases import GetOrCreateUserFingerprintUseCase
 
-# Ports
 from auto_apply_app.application.service_ports.encryption_port import EncryptionServicePort
 from auto_apply_app.application.service_ports.file_storage_port import FileStoragePort
-from auto_apply_app.application.service_ports.proxy_service_port import ProxyServicePort  # 🚨 NEW
-
-
+from auto_apply_app.application.service_ports.proxy_service_port import ProxyServicePort
 
 
 def create_agent(
@@ -33,22 +36,14 @@ def create_agent(
     file_storage: FileStoragePort,
     get_ignored_hashes_use_case: GetIgnoredHashesUseCase,
     get_agent_state_use_case: GetAgentStateUseCase,
-    reset_agent_state_use_case: ResetAgentUseCase,
+    bind_agent_to_search_use_case: BindAgentToSearchUseCase,           # NEW
+    is_agent_killed_for_search_use_case: IsAgentKilledForSearchUseCase, # NEW
+    complete_agent_run_use_case: CompleteAgentRunUseCase,               # NEW
     cleanup_unsubmitted_use_case: CleanupUnsubmittedJobsUseCase,
     get_daily_stats_use_case: GetDailyStatsUseCase,
-    # 🚨 NEW
     get_or_create_fingerprint_use_case: GetOrCreateUserFingerprintUseCase,
     proxy_service: ProxyServicePort,
 ) -> MasterAgent:
-    """
-    Factory function to create the MasterAgent Singleton.
-    
-    This builds the infrastructure layer. User-specific settings (like 
-    headless mode, temperature, and active boards) are NOT injected here.
-    They are passed at runtime via the JobApplicationState.
-    """
-    
-    print("[Agent Factory] Initializing Worker Infrastructure...")
 
     api_keys = {
         "gemini": os.getenv("GEMINI_API_KEY"),
@@ -56,40 +51,36 @@ def create_agent(
         "anthropic": os.getenv("ANTHROPIC_API_KEY"),
     }
 
-    # 1. Instantiate Apec Worker
+    # Workers — pass the new IsAgentKilledForSearchUseCase instead of GetAgentStateUseCase
     apec_worker = ApecWorker(
        get_ignored_hashes=get_ignored_hashes_use_case,
        encryption_service=encryption_service,
        file_storage=file_storage,
-       get_agent_state=get_agent_state_use_case
+       is_agent_killed_for_search=is_agent_killed_for_search_use_case,  # CHANGED
     )
     
-    # 2. Instantiate HelloWork Worker
     hw_worker = HelloWorkWorker(
         get_ignored_hashes=get_ignored_hashes_use_case,
         encryption_service=encryption_service,
         file_storage=file_storage,
-        get_agent_state=get_agent_state_use_case
+        is_agent_killed_for_search=is_agent_killed_for_search_use_case,  # CHANGED
     )
 
-    # 3. Instantiate WTTJ Worker
     wttj_worker = WelcomeToTheJungleWorker(
         get_ignored_hashes=get_ignored_hashes_use_case,
         encryption_service=encryption_service,
         file_storage=file_storage,
         api_keys=api_keys,
-        get_agent_state=get_agent_state_use_case
+        is_agent_killed_for_search=is_agent_killed_for_search_use_case,  # CHANGED
     )
     
-    # 4. Instantiate JobTeaser Worker
     teaser_worker = JobTeaserWorker(
         get_ignored_hashes=get_ignored_hashes_use_case,
         encryption_service=encryption_service,
         file_storage=file_storage,
-        get_agent_state=get_agent_state_use_case
+        is_agent_killed_for_search=is_agent_killed_for_search_use_case,  # CHANGED
     )
     
-    # 5. Return Master Agent
     return MasterAgent(
         wttj_worker=wttj_worker,
         hellowork_worker=hw_worker,
@@ -101,9 +92,10 @@ def create_agent(
         save_applications_use_case=results_saver,
         cleanup_unsubmitted_use_case=cleanup_unsubmitted_use_case,
         get_agent_state=get_agent_state_use_case,
-        reset_agent_state=reset_agent_state_use_case,
+        bind_agent_to_search=bind_agent_to_search_use_case,
+        is_agent_killed_for_search=is_agent_killed_for_search_use_case,
+        complete_agent_run=complete_agent_run_use_case,
         get_daily_stats=get_daily_stats_use_case,
-        # 🚨 NEW
         get_or_create_fingerprint=get_or_create_fingerprint_use_case,
         proxy_service=proxy_service,
     )

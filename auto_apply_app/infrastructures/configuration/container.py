@@ -17,8 +17,9 @@ from auto_apply_app.application.service_ports.token_provider_port import TokenPr
 from auto_apply_app.application.service_ports.payment_port import PaymentPort
 from auto_apply_app.application.service_ports.encryption_port import EncryptionServicePort
 from auto_apply_app.application.service_ports.email_service_port import EmailServicePort
+from auto_apply_app.application.service_ports.captcha_service_port import CaptchaServicePort
 
-# 🚨 NEW: Proxy adapters + fingerprint generator
+# Proxy / fingerprint
 from auto_apply_app.infrastructures.proxy.iproyal_proxy_adapter import IPRoyalProxyAdapter
 from auto_apply_app.infrastructures.proxy.no_proxy_adapter import NoProxyAdapter
 from auto_apply_app.infrastructures.agent.fingerprint_generator import FingerprintGenerator
@@ -32,7 +33,7 @@ from auto_apply_app.interfaces.presenters.base_presenter import (
     SubPresenter,
     PreferencesPresenter,
     FreeSearchPresenter,
-    AgentStatePresenter
+    AgentStatePresenter,
 )
 
 # Use Cases
@@ -46,7 +47,9 @@ from auto_apply_app.application.use_cases.user_use_cases import (
     ChangePasswordUseCase,
     UploadUserResumeUseCase,
     RequestPasswordResetUseCase,
-    ConfirmPasswordResetUseCase
+    ConfirmPasswordResetUseCase,
+    ResendVerificationEmailUseCase,
+    VerifyEmailUseCase,
 )
 from auto_apply_app.application.use_cases.agent_use_cases import (
     ApproveJobUseCase,
@@ -72,18 +75,25 @@ from auto_apply_app.application.use_cases.job_offer_use_cases import (
     ToggleInterviewStatusUseCase,
     ToggleResponseStatusUseCase,
     CleanupUnsubmittedJobsUseCase,
-    GetDailyStatsUseCase
+    GetDailyStatsUseCase,
 )
 from auto_apply_app.application.use_cases.preferences_use_cases import (
     GetUserPreferencesUseCase,
-    UpdateUserPreferencesUseCase
+    UpdateUserPreferencesUseCase,
 )
+
+# NEW: agent state use cases (replaced ShutdownAgentUseCase + ResetAgentUseCase)
 from auto_apply_app.application.use_cases.agent_state_use_cases import (
     GetAgentStateUseCase,
-    ShutdownAgentUseCase,
-    ResetAgentUseCase,
+    BindAgentToSearchUseCase,
+    RequestAgentShutdownUseCase,
+    IsAgentKilledForSearchUseCase,
 )
-# 🚨 NEW
+
+# NEW: completion + free-search use cases
+from auto_apply_app.application.use_cases.agent_usage_use_cases import CompleteAgentRunUseCase
+from auto_apply_app.application.use_cases.free_search_use_cases import FreeSearchUseCase
+
 from auto_apply_app.application.use_cases.fingerprint_use_cases import (
     GetOrCreateUserFingerprintUseCase,
 )
@@ -97,14 +107,13 @@ from auto_apply_app.interfaces.controllers.job_offer_controllers import JobOffer
 from auto_apply_app.interfaces.controllers.preference_controllers import PreferencesController
 from auto_apply_app.interfaces.controllers.agent_state_controllers import AgentStateController
 from auto_apply_app.interfaces.controllers.free_search_controller import FreeSearchController
+
+# Free-search infra
 from auto_apply_app.infrastructures.agent.fake_agent.create_fake_agent import create_fake_agent
 
 
 def _resolve_proxy_service():
-    """
-    Resolves the proxy adapter based on the PROXY_PROVIDER env var.
-    Defaults to NoProxyAdapter (safe for local dev / when not configured).
-    """
+    """Resolves the proxy adapter based on the PROXY_PROVIDER env var."""
     provider = os.getenv("PROXY_PROVIDER", "none").lower()
     if provider == "iproyal":
         return IPRoyalProxyAdapter()
@@ -125,7 +134,8 @@ def create_application(
     payment_port: PaymentPort,
     encryption_port: EncryptionServicePort,
     email_service_port: EmailServicePort,
-    free_search_presenter: FreeSearchPresenter
+    captcha_port: CaptchaServicePort,
+    free_search_presenter: FreeSearchPresenter,
 ) -> "Application":
 
     token_repo, uow_factory = create_repositories()
@@ -145,8 +155,9 @@ def create_application(
         file_storage_port=file_storage_port,
         payment_port=payment_port,
         encryption_port=encryption_port,
+        captcha_port=captcha_port,
         email_service_port=email_service_port,
-        free_search_presenter=free_search_presenter
+        free_search_presenter=free_search_presenter,
     )
 
 
@@ -163,7 +174,7 @@ class Application:
     payment_port: PaymentPort
     encryption_port: EncryptionServicePort
     email_service_port: EmailServicePort
-
+    captcha_port: CaptchaServicePort
     # Presenters
     user_presenter: UserPresenter
     job_presenter: JobPresenter
@@ -186,28 +197,42 @@ class Application:
             update_user_use_case=UpdateUserUseCase(uow),
             delete_user_use_case=DeleteUserUseCase(uow),
             upload_resume_use_case=UploadUserResumeUseCase(uow, self.file_storage_port),
-            presenter=self.user_presenter
+            presenter=self.user_presenter,
         )
 
     @property
     def auth_controller(self) -> AuthController:
         uow = self.uow_factory()
         return AuthController(
-            register_use_case=RegisterUserUseCase(uow, self.password_service),
+            register_use_case=RegisterUserUseCase(
+                uow=uow,
+                password_service=self.password_service,
+                token_provider=self.token_provider,            # NEW
+                email_service=self.email_service_port,         # NEW
+            ),
             login_use_case=LoginUserUseCase(self.password_service, self.token_provider, uow),
             logout_use_case=LogoutUseCase(self.token_provider, self.token_repo),
             change_password_use_case=ChangePasswordUseCase(self.password_service, uow),
             request_password_reset_use_case=RequestPasswordResetUseCase(
                 uow=uow,
                 token_provider=self.token_provider,
-                email_service=self.email_service_port
+                email_service=self.email_service_port,
             ),
             confirm_password_reset_use_case=ConfirmPasswordResetUseCase(
                 uow=uow,
                 token_provider=self.token_provider,
-                password_service=self.password_service
+                password_service=self.password_service,
             ),
-            presenter=self.user_presenter
+            verify_email_use_case=VerifyEmailUseCase(            # NEW
+                uow=uow,
+                token_provider=self.token_provider,
+            ),
+            resend_verification_use_case=ResendVerificationEmailUseCase(  # NEW
+                uow=uow,
+                token_provider=self.token_provider,
+                email_service=self.email_service_port,
+            ),
+            presenter=self.user_presenter,
         )
 
     @property
@@ -218,19 +243,23 @@ class Application:
             create_checkout_use_case=CreateCheckoutSessionUseCase(uow, self.payment_port),
             handle_webhook_use_case=HandlePaymentWebhookUseCase(uow, self.payment_port),
             get_portal_use_case=GetManagementPortalUseCase(uow, self.payment_port),
-            presenter=self.sub_presenter
+            presenter=self.sub_presenter,
         )
 
     @property
     def agent_controller(self) -> AgentController:
         uow = self.uow_factory()
 
-        # 🚨 NEW: Resolve proxy adapter and build fingerprint use case
         proxy_service = _resolve_proxy_service()
         get_or_create_fingerprint_uc = GetOrCreateUserFingerprintUseCase(
             uow=uow,
             generator=FingerprintGenerator(),
         )
+
+        # NEW: build the use cases the master agent needs
+        bind_agent_to_search_uc = BindAgentToSearchUseCase(uow)
+        is_agent_killed_uc = IsAgentKilledForSearchUseCase(uow)
+        complete_agent_run_uc = CompleteAgentRunUseCase(uow)
 
         agent_service = create_agent(
             results_saver=SaveJobApplicationsUseCase(uow),
@@ -238,12 +267,12 @@ class Application:
             get_ignored_hashes_use_case=GetIgnoredHashesUseCase(uow),
             file_storage=self.file_storage_port,
             encryption_service=self.encryption_port,
-            
             get_agent_state_use_case=GetAgentStateUseCase(uow),
-            reset_agent_state_use_case=ResetAgentUseCase(uow),
+            bind_agent_to_search_use_case=bind_agent_to_search_uc,
+            is_agent_killed_for_search_use_case=is_agent_killed_uc,
+            complete_agent_run_use_case=complete_agent_run_uc,
             get_daily_stats_use_case=GetDailyStatsUseCase(uow),
             cleanup_unsubmitted_use_case=CleanupUnsubmittedJobsUseCase(uow),
-            # 🚨 NEW
             get_or_create_fingerprint_use_case=get_or_create_fingerprint_uc,
             proxy_service=proxy_service,
         )
@@ -257,7 +286,7 @@ class Application:
             approve_job_use_case=ApproveJobUseCase(uow),
             discard_job_use_case=DiscardJobUseCase(uow),
             presenter=self.agent_presenter,
-            job_presenter=self.job_presenter
+            job_presenter=self.job_presenter,
         )
 
     @property
@@ -269,7 +298,7 @@ class Application:
             toggle_interview_status_use_case=ToggleInterviewStatusUseCase(uow),
             toggle_response_status_use_case=ToggleResponseStatusUseCase(uow),
             get_daily_stats_use_case=GetDailyStatsUseCase(uow),
-            job_offer_presenter=self.job_presenter
+            job_offer_presenter=self.job_presenter,
         )
 
     @property
@@ -278,7 +307,7 @@ class Application:
         return PreferencesController(
             get_prefs_use_case=GetUserPreferencesUseCase(uow),
             update_prefs_use_case=UpdateUserPreferencesUseCase(uow, self.encryption_port),
-            presenter=self.preference_presenter
+            presenter=self.preference_presenter,
         )
 
     @property
@@ -286,14 +315,17 @@ class Application:
         uow = self.uow_factory()
         return AgentStateController(
             get_agent_state_use_case=GetAgentStateUseCase(uow),
-            shutdown_agent_use_case=ShutdownAgentUseCase(uow),
-            reset_agent_use_case=ResetAgentUseCase(uow),
-            presenter=self.agent_state_presenter
+            request_shutdown_use_case=RequestAgentShutdownUseCase(uow),
+            presenter=self.agent_state_presenter,
         )
 
     @property
     def free_search_controller(self) -> FreeSearchController:
+        uow = self.uow_factory()
         return FreeSearchController(
-            fake_agent=create_fake_agent(),
-            presenter=self.free_search_presenter
+            free_search_use_case=FreeSearchUseCase(
+                uow=uow,
+                fake_agent=create_fake_agent(),
+            ),
+            presenter=self.free_search_presenter,
         )

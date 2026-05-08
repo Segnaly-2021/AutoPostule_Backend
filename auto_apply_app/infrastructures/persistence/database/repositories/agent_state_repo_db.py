@@ -9,8 +9,6 @@ from auto_apply_app.application.repositories.agent_state_repo import AgentStateR
 from auto_apply_app.infrastructures.persistence.database.models.schema import AgentStateDB
 
 
-
-
 class AgentStateRepoDB(AgentStateRepository):
 
     def __init__(self, session: AsyncSession):
@@ -27,7 +25,9 @@ class AgentStateRepoDB(AgentStateRepository):
 
     async def save(self, agent_state: AgentState) -> None:
         agent_state_db = AgentStateDB(
+            id=agent_state.id,
             user_id=agent_state.user_id,
+            search_id=agent_state.search_id,
             is_shutdown=agent_state.is_shutdown,
         )
         await self.session.merge(agent_state_db)
@@ -42,5 +42,7 @@ class AgentStateRepoDB(AgentStateRepository):
 
     def _map_to_entity(self, agent_state_db: AgentStateDB) -> AgentState:
         state = AgentState(user_id=agent_state_db.user_id)
+        state.id = agent_state_db.id
+        state.search_id = agent_state_db.search_id
         state.is_shutdown = agent_state_db.is_shutdown
         return state

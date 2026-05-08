@@ -3,15 +3,24 @@ from typing import Dict, Any, Optional
 from datetime import datetime, timedelta, timezone
 import jwt
 import os
+import logging
 
 from auto_apply_app.application.service_ports.token_provider_port import TokenProviderPort
 from auto_apply_app.domain.exceptions import InvalidTokenException
 
+
+logger = logging.getLogger(__name__)
+
+
 class JwtTokenProvider(TokenProviderPort):
     def __init__(self):
         self.secret = os.getenv("JWT_SECRET")
+        if not self.secret:
+            raise ValueError("JWT_SECRET environment variable is not set")
+        if len(self.secret) < 32:
+            raise ValueError(f"JWT_SECRET must be at least 32 bytes (current: {len(self.secret)} bytes)")
         self.algo = "HS256"
-        self.token_lifespan_minutes = 240
+        self.token_lifespan_minutes = 60
 
     def encode_token(self, user_id: UUID, claims: Optional[Dict[str, Any]] = None, expires_delta: Optional[timedelta] = None) -> str:
         # Determine the expiration time dynamically
@@ -22,9 +31,11 @@ class JwtTokenProvider(TokenProviderPort):
 
         # 1. Prepare base payload
         payload = {
+            "iss": "autopostule-api",
+            "aud": "autopostule-frontend",
             "iat": datetime.now(timezone.utc),
             "exp": expire,
-            "sub": str(user_id),  # CRITICAL: Convert UUID to string
+            "sub": str(user_id),
             "jti": str(uuid4())
         }
 
@@ -40,13 +51,20 @@ class JwtTokenProvider(TokenProviderPort):
             payload = jwt.decode(
                 token,
                 key=self.secret,
-                algorithms=[self.algo]
+                algorithms=[self.algo],
+                issuer="autopostule-api",
+                audience="autopostule-frontend",
+                leeway=10  # Allow 10 seconds of clock skew
             )
             return payload
             
-        except (jwt.ExpiredSignatureError, jwt.InvalidTokenError) as e:
-            raise InvalidTokenException(str(e))
-        
+        except jwt.ExpiredSignatureError:
+            logger.info("Token expired")
+            raise InvalidTokenException("Token expired or invalid")
+        except jwt.InvalidTokenError as e:
+            logger.warning(f"Invalid token: {e}")
+            raise InvalidTokenException("Token expired or invalid")
+                
     def get_token_id(self, token: str) -> str:
         payload = self.decode_token(token)
         return payload.get("jti")

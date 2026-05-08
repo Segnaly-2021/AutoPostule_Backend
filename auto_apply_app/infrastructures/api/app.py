@@ -1,7 +1,11 @@
 from contextlib import asynccontextmanager
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import logging
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 from auto_apply_app.infrastructures.config import Config
 from auto_apply_app.infrastructures.configuration.container import create_application
@@ -18,6 +22,8 @@ from auto_apply_app.infrastructures.authentication.token_provider import JwtToke
 from auto_apply_app.infrastructures.payment.stripe_payment import StripePaymentAdapter
 from auto_apply_app.infrastructures.board_credentials_encryption.encryption import EncryptionService
 from auto_apply_app.infrastructures.emailing_service.resend_email_service import ResendEmailService
+from auto_apply_app.infrastructures.captcha.turnstile_adapter import TurnstileCaptchaAdapter
+
 
 # Import presenters
 from auto_apply_app.interfaces.presenters.web import (
@@ -71,6 +77,7 @@ async def lifespan(app: FastAPI):
         file_storage_port=GCSFileStorageAdapter(),
         payment_port=StripePaymentAdapter(),
         sub_presenter=WebSubPresenter(),
+        captcha_port=TurnstileCaptchaAdapter(),
         email_service_port=ResendEmailService(),
         free_search_presenter=WebFreeSearchPresenter()
     )
@@ -95,16 +102,27 @@ def create_fastapi_app() -> FastAPI:
     """
     Factory function to create and configure the FastAPI application.
     """
+    is_production = os.getenv("ENV", "development") == "production"
+    
     app = FastAPI(
         title="Auto Apply API",
         description="Job application automation service",
         version="1.0.0",
+        openapi_url=None if is_production else "/openapi.json",
+        docs_url=None if is_production else "/docs",
+        redoc_url=None if is_production else "/redoc",
         lifespan=lifespan
     )
+
+    limiter = Limiter(key_func=get_remote_address)
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
     # 🚨 Register global exception handlers BEFORE anything else
     # This ensures no raw error (SQL, asyncpg, etc.) ever reaches the frontend
     register_exception_handlers(app)
+
+    
 
     app.add_middleware(
         CORSMiddleware,

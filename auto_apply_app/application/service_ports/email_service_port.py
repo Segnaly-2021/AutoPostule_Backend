@@ -5,5 +5,9 @@ class EmailServicePort(ABC):
     
     @abstractmethod
     async def send_password_reset_email(self, to_email: str, reset_token: str) -> None:
-        """Sends an email containing the password reset link."""
+        pass
+
+    @abstractmethod
+    async def send_verification_email(self, to_email: str, verification_token: str) -> None:
+        """Sends an email containing the email-verification link."""
         pass

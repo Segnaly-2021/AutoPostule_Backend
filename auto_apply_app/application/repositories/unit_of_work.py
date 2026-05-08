@@ -8,7 +8,9 @@ from auto_apply_app.application.repositories.job_search_repo import JobSearchRep
 from auto_apply_app.application.repositories.board_credentials_repo import BoardCredentialsRepository
 from auto_apply_app.application.repositories.preferences_repo import UserPreferencesRepository
 from auto_apply_app.application.repositories.user_fingerprint_repo import UserFingerprintRepository
-
+from auto_apply_app.application.repositories.agent_state_repo import AgentStateRepository
+from auto_apply_app.application.repositories.agent_usage_repo import AgentUsageRepository
+from auto_apply_app.application.repositories.free_search_usage_repo import FreeSearchUsageRepository
 
 
 class UnitOfWork(ABC):
@@ -25,6 +27,9 @@ class UnitOfWork(ABC):
     user_pref_repo: UserPreferencesRepository
     board_cred_repo: BoardCredentialsRepository
     user_fingerprint_repo: UserFingerprintRepository
+    agent_state_repo: AgentStateRepository
+    agent_usage_repo: AgentUsageRepository
+    free_search_usage_repo: FreeSearchUsageRepository
     
     async def __aenter__(self):
         return self

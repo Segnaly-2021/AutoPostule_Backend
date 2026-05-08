@@ -3,7 +3,7 @@
 import io
 import json
 import asyncio
-import traceback
+import logging
 import dataclasses
 from typing import Any
 from uuid import UUID
@@ -40,9 +40,14 @@ from auto_apply_app.infrastructures.agent.workers.teaser.teaser_worker import Jo
 from auto_apply_app.infrastructures.config import Config
 from auto_apply_app.application.dtos.job_offer_dtos import GetDailyStatsRequest
 from auto_apply_app.application.use_cases.job_offer_use_cases import GetDailyStatsUseCase
-from auto_apply_app.application.use_cases.agent_state_use_cases import GetAgentStateUseCase, ResetAgentUseCase
+from auto_apply_app.application.use_cases.agent_state_use_cases import (
+    GetAgentStateUseCase,
+    BindAgentToSearchUseCase,
+    IsAgentKilledForSearchUseCase,
+)
+from auto_apply_app.application.use_cases.agent_usage_use_cases import CompleteAgentRunUseCase
 
-
+logger = logging.getLogger(__name__)
 
 # --- Update __init__ ---
 class MasterAgent(AgentServicePort):
@@ -312,9 +317,10 @@ class MasterAgent(AgentServicePort):
         save_applications_use_case: SaveJobApplicationsUseCase,
         cleanup_unsubmitted_use_case: CleanupUnsubmittedJobsUseCase,
         get_agent_state: GetAgentStateUseCase,
-        reset_agent_state: ResetAgentUseCase,
+        bind_agent_to_search: BindAgentToSearchUseCase,           # NEW (replaces reset_agent_state)
+        is_agent_killed_for_search: IsAgentKilledForSearchUseCase, # NEW
+        complete_agent_run: CompleteAgentRunUseCase,               # NEW
         get_daily_stats: GetDailyStatsUseCase,
-        # 🚨 NEW
         get_or_create_fingerprint: GetOrCreateUserFingerprintUseCase,
         proxy_service: ProxyServicePort,
     ):
@@ -332,11 +338,12 @@ class MasterAgent(AgentServicePort):
         self.save_applications = save_applications_use_case
         self.cleanup_unsubmitted = cleanup_unsubmitted_use_case
         self.get_agent_state = get_agent_state
-        self.reset_agent_state = reset_agent_state
+        self.bind_agent_to_search = bind_agent_to_search           # NEW
+        self.is_agent_killed_for_search = is_agent_killed_for_search # NEW
+        self.complete_agent_run = complete_agent_run               # NEW
         self.get_daily_stats = get_daily_stats
         self._checkpointer = None
 
-        # 🚨 NEW
         self.get_or_create_fingerprint = get_or_create_fingerprint
         self.proxy_service = proxy_service
         
@@ -634,89 +641,69 @@ class MasterAgent(AgentServicePort):
     
 
 
-    # --- NODE 5: The Final Save ---
     async def finalize_batch(self, state: JobApplicationState):
         """Final cleanup and state synchronization."""
-
         await self._emit(state, "Saving Final Results")
-        print("--- [Master] Finalizing Batch ---")
         
         user_id = state["user"].id
-        
-        is_killed = False
-        try:
-            state_result = await self.get_agent_state.execute(user_id)
-            if state_result.is_success and state_result.value.is_shutdown:
-                is_killed = True
-        except Exception:
-            pass
-
-        await self.reset_agent_state.execute(user_id)
-        
-        submitted_offers = state.get("submitted_offers", [])
-        if submitted_offers:
-            print(f"💾 Persisting {len(submitted_offers)} submitted applications...")
-            save_result = await self.save_applications.execute(submitted_offers)
-            if not save_result.is_success:
-                print(f"⚠ Error updating DB with final statuses: {save_result.error.message}")
-        else:
-             print("⚠️ No applications were successfully submitted.")
-
         search_id = state["job_search"].id
         
-        print(f"🧹 Sweeping database for leftover APPROVED (failed) jobs for search {search_id}...")
-        
+        # Check if killed (status determines what 'finished' means)
+        is_killed = False
+        killed_result = await self.is_agent_killed_for_search.execute(user_id, search_id)
+        if killed_result.is_success and killed_result.value:
+            is_killed = True
+
+        submitted_offers = state.get("submitted_offers", [])
+        if submitted_offers:
+            save_result = await self.save_applications.execute(submitted_offers)
+            if not save_result.is_success:
+                logger.warning("Error updating DB with final statuses: %s", save_result.error.message)
+
         cleanup_result = await self.cleanup_unsubmitted.execute(search_id)
-        
         if cleanup_result.is_success:
             deleted = cleanup_result.value.get("deleted_count", 0)
-            print(f"✅ Cleanup complete. Deleted {deleted} zombie job offers.")
+            logger.info("Cleanup complete. Deleted %s zombie job offers.", deleted)
         else:
-            print(f"⚠ Database cleanup failed: {cleanup_result.error.message}")
+            logger.warning("Database cleanup failed: %s", cleanup_result.error.message)
 
         return {"status": "killed" if is_killed else "finished_successfully"}
-    
+        
 
     
     async def worker_return_router(self, state: JobApplicationState):
         """Catches returning workers and routes them to the correct Master phase."""
-        try:
-            state_result = await self.get_agent_state.execute(state["user"].id)
-            if state_result.is_success and state_result.value.is_shutdown:
-                print("🛑 [Master] Kill switch detected! Aborting orchestrator and routing to Finalize.")
-                return "finalize"
-        except Exception:
-            pass
+        user_id = state["user"].id
+        search_id = state["job_search"].id
+        
+        killed_result = await self.is_agent_killed_for_search.execute(user_id, search_id)
+        if killed_result.is_success and killed_result.value:
+            logger.info("Kill switch detected for search %s. Routing to finalize.", search_id)
+            return "finalize"
 
         intent = state.get("action_intent", "SCRAPE")
         if intent == "SUBMIT":
-            print("🛬 [Master] Workers returned from SUBMIT. Routing to Finalize.")
             return "finalize"
-            
-        print("🛬 [Master] Workers returned from SCRAPE. Routing to Analyze.")
         return "analyze"
-    
+        
 
-    async def route_review(self, state: JobApplicationState):       
+    async def route_review(self, state: JobApplicationState):
         """Routes to human review if Premium, else bypasses straight to submit."""
-        try:
-            state_result = await self.get_agent_state.execute(state["user"].id)
-            if state_result.is_success and state_result.value.is_shutdown:
-                print("🛑 [Master] Kill switch detected! Skipping review/submission. Routing to Finalize.")
-                return "finalize"
-        except Exception:
-            pass
+        user_id = state["user"].id
+        search_id = state["job_search"].id
+        
+        killed_result = await self.is_agent_killed_for_search.execute(user_id, search_id)
+        if killed_result.is_success and killed_result.value:
+            logger.info("Kill switch detected for search %s. Skipping review/submission.", search_id)
+            return "finalize"
 
         if state.get("status") == "no_jobs_found":
-            print("📭 [Master] No jobs found today. Routing to Finalize.")
             return "finalize"
 
         subscription = state.get("subscription")
         if subscription and subscription.account_type == ClientType.PREMIUM:
-            print("⏸️ Premium User: Routing to manual review node.")
             return "human_review"
-            
-        print("▶️ Basic User: Auto-approved. Bypassing review.")
+        
         return "prepare_submit"
 
     async def human_review(self, state: JobApplicationState):
@@ -740,12 +727,27 @@ class MasterAgent(AgentServicePort):
     
 
     async def completion_notification(self, state: JobApplicationState):
-        """Dummy node to notify the frontend to hit 100% and close the overlay."""
-        print("🎉 [Master] Emitting final completion signal.")
+        """
+        The search has truly finished successfully.
+        This is where we mark the search COMPLETED and record the run for quotas.
+        """
+        user_id = state["user"].id
+        search_id = state["job_search"].id
+        
+        # NEW: Mark search complete + record usage atomically
+        completion_result = await self.complete_agent_run.execute(
+            user_id=user_id,
+            search_id=search_id,
+        )
+        if not completion_result.is_success:
+            logger.error(
+                "Failed to record agent run completion for search %s: %s",
+                search_id,
+                completion_result.error.message,
+            )
+        
         await self._emit(state, stage="Job Search Complete", status="finished")
         return {"status": "finished"}
-
-
 
     async def stop_agent_notification(self, state: JobApplicationState):
         """Dummy node to notify the frontend that the 90s spinner can be safely cleared."""
@@ -850,25 +852,23 @@ class MasterAgent(AgentServicePort):
         credentials: Optional[Dict[str, BoardCredential]] = None,
         progress_callback: Optional[Callable] = None
     ) -> None:
-        print(f"🤖 Master Agent waking up for user: {user.email}")
+        logger.info("Master Agent waking up for user %s, search %s", user.id, search.id)
 
-        await self.reset_agent_state.execute(user.id)
+        # NEW: Bind kill-switch to this specific search (replaces reset_agent_state)
+        bind_result = await self.bind_agent_to_search.execute(user.id, search.id)
+        if not bind_result.is_success:
+            logger.error("Failed to bind agent state for user %s: %s", 
+                        user.id, bind_result.error.message)
+            # Don't abort — bind failure shouldn't kill the run, but log loudly
 
-        print("🪪 Resolving user fingerprint...")
         fingerprint_result = await self.get_or_create_fingerprint.execute(user.id)
-        if not fingerprint_result.is_success:
-            print(f"⚠️  Fingerprint resolution failed: {fingerprint_result.error.message}")
-            fingerprint = None
-        else:
-            fingerprint = fingerprint_result.value
-            print(f"   ✓ Fingerprint loaded — UA: {fingerprint.user_agent[:50]}...")
+        fingerprint = fingerprint_result.value if fingerprint_result.is_success else None
+        if not fingerprint:
+            logger.warning("Fingerprint resolution failed for user %s", user.id)
 
-        print("🌐 Resolving proxy for user...")
         proxy_config = self.proxy_service.get_proxy_for_user(str(user.id))
-        if proxy_config:
-            print(f"   ✓ Proxy assigned: {proxy_config['server']}")
-        else:
-            print("   ⚠️  No proxy configured — running with direct connection")
+        if not proxy_config:
+            logger.info("No proxy configured for user %s — direct connection", user.id)
 
         initial_state = JobApplicationState(
             user=user,
@@ -887,8 +887,6 @@ class MasterAgent(AgentServicePort):
             user_fingerprint=fingerprint,
             proxy_config=proxy_config,
         )
-        
-        print(f"📊 Initial State prepared with user preferences and subscription details {initial_state}.")
 
         active_instances = []
         for board, is_active in preferences.active_boards.items():
@@ -898,9 +896,8 @@ class MasterAgent(AgentServicePort):
                     active_instances.append(worker)
 
         self._active_workers[str(search.id)] = active_instances
-        print(f"🚀 Registered {len(active_instances)} active workers for search {search.id}: {[type(w).__name__ for w in active_instances]}")
-    
-        # Set callback on all workers for this run
+
+        # Set callback on all workers
         self._progress_callback = progress_callback
         self._wttj._progress_callback = progress_callback
         self._hw._progress_callback = progress_callback
@@ -910,14 +907,12 @@ class MasterAgent(AgentServicePort):
         try:
             await self._execute_with_progress(initial_state, search.id)
         finally:
-            # Clear callbacks after run — prevents stale references
             self._progress_callback = None
             self._wttj._progress_callback = None
             self._hw._progress_callback = None
             self._apec._progress_callback = None
             self._teaser._progress_callback = None
             self._active_workers.pop(str(search.id), None)
-
 
 
 
@@ -972,9 +967,7 @@ class MasterAgent(AgentServicePort):
                 pass 
 
         except Exception:
-            print("🚨 FATAL GRAPH ERROR:")
-            traceback.print_exc()
-
+            logger.exception("Fatal graph error during agent execution")
 
     def _clone_domain_entity(self, obj: Any) -> Any:
             """
@@ -1015,7 +1008,9 @@ class MasterAgent(AgentServicePort):
     ) -> None:
         print(f"🔄 Resuming job search {search.id} for user: {user.email}")
 
-        await self.reset_agent_state.execute(user.id)
+        bind_result = await self.bind_agent_to_search.execute(user.id, search.id)
+        if not bind_result.is_success:
+            logger.error("Failed to bind agent state for resume: %s", bind_result.error.message)
 
         fingerprint_result = await self.get_or_create_fingerprint.execute(user.id)
         fingerprint = fingerprint_result.value if fingerprint_result.is_success else None

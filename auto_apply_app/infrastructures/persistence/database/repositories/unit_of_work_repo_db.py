@@ -10,8 +10,8 @@ from auto_apply_app.infrastructures.persistence.database.repositories.user_prefe
 from auto_apply_app.infrastructures.persistence.database.repositories.board_credentials_repo_db import BoardCredentialRepoDB
 from auto_apply_app.infrastructures.persistence.database.repositories.agent_state_repo_db import AgentStateRepoDB
 from auto_apply_app.infrastructures.persistence.database.repositories.user_fingerprint_repo_db import UserFingerprintRepoDB
-
-
+from auto_apply_app.infrastructures.persistence.database.repositories.agent_usage_repo_db import AgentUsageRepoDB
+from auto_apply_app.infrastructures.persistence.database.repositories.free_search_usage_repo_db import FreeSearchUsageRepoDB
 
 
 class SqlAlchemyUnitOfWork(UnitOfWork):
@@ -20,7 +20,7 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
 
     async def __aenter__(self):
         self.session = self.session_factory()
-        await self.session.begin()  # ← explicitly start ONE transaction here
+        await self.session.begin()
         
         self.user_repo = UserRepoDB(self.session)
         self.auth_repo = AuthRepoDB(self.session)
@@ -31,6 +31,10 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         self.board_cred_repo = BoardCredentialRepoDB(self.session)
         self.agent_state_repo = AgentStateRepoDB(self.session)
         self.user_fingerprint_repo = UserFingerprintRepoDB(self.session)
+        
+        # NEW
+        self.agent_usage_repo = AgentUsageRepoDB(self.session)
+        self.free_search_usage_repo = FreeSearchUsageRepoDB(self.session)
         
         return self
 

@@ -53,11 +53,15 @@ class ChangePasswordSchema(BaseModel):
         return validate_secure_password(v)
 
 
+
 # --- Forgot / Reset Password (NEW) ---
 class ForgotPasswordRequestSchema(BaseModel):
     """Schema for requesting a password reset email."""
     email: EmailStr
 
+
+class ResendVerificationSchema(BaseModel):
+    email: EmailStr
 
 class ResetPasswordConfirmSchema(BaseModel):
     """Schema for submitting a new password using an email token."""

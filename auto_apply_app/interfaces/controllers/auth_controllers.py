@@ -10,7 +10,9 @@ from auto_apply_app.application.use_cases.user_use_cases import (
     LogoutUseCase,
     ChangePasswordUseCase,
     RequestPasswordResetUseCase,    # ✅ Added
-    ConfirmPasswordResetUseCase     # ✅ Added
+    ConfirmPasswordResetUseCase,
+    ResendVerificationEmailUseCase,
+    VerifyEmailUseCase     # ✅ Added
 )
 from auto_apply_app.application.dtos.auth_user_dtos import (
     RegisterUserRequest,
@@ -26,6 +28,8 @@ class AuthController:
     login_use_case: LoginUserUseCase
     logout_use_case: LogoutUseCase
     change_password_use_case: ChangePasswordUseCase
+    verify_email_use_case: VerifyEmailUseCase                    # NEW
+    resend_verification_use_case: ResendVerificationEmailUseCase # NEW
     request_password_reset_use_case: RequestPasswordResetUseCase  # ✅ Added
     confirm_password_reset_use_case: ConfirmPasswordResetUseCase  # ✅ Added
     presenter: UserPresenter

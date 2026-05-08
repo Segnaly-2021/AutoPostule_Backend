@@ -1,5 +1,6 @@
 # auto_apply_app/infrastructures/agent/workers/wttj/wttj_worker.py
 import hashlib
+import logging
 import os
 import json
 import asyncio
@@ -21,12 +22,12 @@ from auto_apply_app.domain.entities.user_preferences import UserPreferences
 
 # 2. Imports from Infrastructure
 from auto_apply_app.infrastructures.agent.state import JobApplicationState
-from auto_apply_app.application.use_cases.agent_state_use_cases import GetAgentStateUseCase
-from auto_apply_app.application.service_ports.encryption_port import EncryptionServicePort 
-from auto_apply_app.application.service_ports.file_storage_port import FileStoragePort 
+from auto_apply_app.application.use_cases.agent_state_use_cases import IsAgentKilledForSearchUseCase
+from auto_apply_app.application.service_ports.encryption_port import EncryptionServicePort
+from auto_apply_app.application.service_ports.file_storage_port import FileStoragePort
 from auto_apply_app.application.use_cases.agent_use_cases import GetIgnoredHashesUseCase
 
-# 🚨 NEW: Human behavior helpers
+# Human behavior helpers
 from auto_apply_app.infrastructures.agent.human_behavior import (
     human_delay,
     human_type,
@@ -34,38 +35,35 @@ from auto_apply_app.infrastructures.agent.human_behavior import (
     human_warmup,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class WelcomeToTheJungleWorker:
 
-    # 🚨 CLASS CONSTANT: Single source of truth for the job card selector
     CARD_SELECTOR = 'a.no-underline[href*="/fr/companies/"][href*="/jobs/"]'
 
-    def __init__(self, 
-                 get_ignored_hashes: GetIgnoredHashesUseCase,
-                 encryption_service: EncryptionServicePort,
-                 file_storage: FileStoragePort,
-                 api_keys: dict,
-                 get_agent_state: GetAgentStateUseCase
-                ):
-        
-        # Static Dependencies
-        self.get_ignored_hashes = get_ignored_hashes       
+    def __init__(
+        self,
+        get_ignored_hashes: GetIgnoredHashesUseCase,
+        encryption_service: EncryptionServicePort,
+        file_storage: FileStoragePort,
+        api_keys: dict,
+        is_agent_killed_for_search: IsAgentKilledForSearchUseCase,
+    ):
+        self.get_ignored_hashes = get_ignored_hashes
         self.encryption_service = encryption_service
         self.base_url = "https://www.welcometothejungle.com/fr"
         self.file_storage = file_storage
-        self.get_agent_state = get_agent_state
+        self.is_agent_killed_for_search = is_agent_killed_for_search
         self.api_keys = api_keys
-        
-        # Runtime State (Lazy Initialization)
+
         self.playwright: Optional[Playwright] = None
         self.browser: Optional[Browser] = None
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
 
-        # Progress callback (set per-run by master)
         self._progress_callback = None
         self._source_name = "WTTJ"
-
 
     # =========================================================================
     # HELPERS
@@ -75,7 +73,7 @@ class WelcomeToTheJungleWorker:
         return ChatGoogleGenerativeAI(
             api_key=self.api_keys.get("gemini"),
             model="gemini-3-pro-preview",
-            temperature=preferences.llm_temperature
+            temperature=preferences.llm_temperature,
         )
 
     async def _emit(self, state: JobApplicationState, stage: str, status: str = "in_progress", error: str = None):
@@ -89,10 +87,10 @@ class WelcomeToTheJungleWorker:
                 "node": self._source_name.lower(),
                 "status": "error" if error else status,
                 "error": error,
-                "search_id": search_id
+                "search_id": search_id,
             })
         except Exception:
-            pass
+            logger.exception("[WTTJ] Progress emit failed")
 
     def _generate_fast_hash(self, company_name: str, job_title: str, user_id: str) -> str:
         c = str(company_name).replace(" ", "").lower().strip()
@@ -111,7 +109,7 @@ class WelcomeToTheJungleWorker:
         if self.context:
             path = self._get_session_file_path(user_id)
             await self.context.storage_state(path=path)
-            print(f"🔒 [WTTJ] Session saved securely for user {user_id}")
+            logger.info("[WTTJ] Session saved for user %s", user_id)
 
     def _get_auth_state_path(self, user_id: str) -> str | None:
         path = self._get_session_file_path(user_id)
@@ -120,7 +118,6 @@ class WelcomeToTheJungleWorker:
         return None
 
     async def _handle_cookies(self):
-        print("Checking for Axeptio cookies...")
         try:
             await self.page.wait_for_selector('#axeptio_overlay', state='attached', timeout=5000)
             count = await self.page.evaluate("""() => {
@@ -132,64 +129,59 @@ class WelcomeToTheJungleWorker:
                 });
                 return removed;
             }""")
-            print(f" Nuked {count} Axeptio overlay(s) from the DOM.")
+            logger.debug("[WTTJ] Removed %s Axeptio overlay(s)", count)
         except Exception:
-            print("info: No cookie popup detected (or already gone).")
+            logger.debug("[WTTJ] No cookie popup detected")
 
     async def _handle_wttj_application_modal(self):
         try:
             modal = self.page.locator('[data-testid="modals"]')
             if not await modal.is_visible():
                 return
-            
+
             later_button = modal.get_by_text("Peut-être plus tard", exact=True)
             if await later_button.is_visible():
-                await human_click(later_button)  # 🚨 NEW
+                await human_click(later_button)
                 await modal.wait_for(state="hidden", timeout=5000)
-                print("✅ [WTTJ] Dismissed application modal.")
+                logger.info("[WTTJ] Dismissed application modal")
             else:
                 await self.page.evaluate("""
                     const portal = document.getElementById('portal/:rcm:');
                     if (portal) portal.remove();
                 """)
-                print("✅ [WTTJ] Removed application modal via DOM.")
-        except Exception as e:
-            print(f"⚠️ [WTTJ] Could not dismiss application modal: {e}")
-
+                logger.info("[WTTJ] Removed application modal via DOM")
+        except Exception:
+            logger.warning("[WTTJ] Could not dismiss application modal")
 
     async def force_cleanup(self):
-        print("🛑 Force cleanup initiated")
+        logger.info("[WTTJ] Force cleanup initiated")
         try:
             if self.page:
                 await self.page.close()
-                print("  ✓ Page closed")
-        except Exception as e:
-            print(f"  ⚠️ Page close error: {e}")
+        except Exception:
+            logger.exception("[WTTJ] Page close error")
         try:
             if self.context:
                 await self.context.close()
-                print("  ✓ Context closed")
-        except Exception as e:
-            print(f"  ⚠️ Context close error: {e}")
+        except Exception:
+            logger.exception("[WTTJ] Context close error")
         try:
             if self.browser:
                 await self.browser.close()
-                print("  ✓ Browser closed")
-        except Exception as e:
-            print(f"  ⚠️ Browser close error: {e}")
+        except Exception:
+            logger.exception("[WTTJ] Browser close error")
         try:
             if self.playwright:
                 await self.playwright.stop()
-                print("  ✓ Playwright stopped")
-        except Exception as e:
-            print(f"  ⚠️ Playwright stop error: {e}")
-        print("✅ Force cleanup complete")
+        except Exception:
+            logger.exception("[WTTJ] Playwright stop error")
+        logger.info("[WTTJ] Force cleanup complete")
 
     async def _get_job_attribute(self, selector: str, default_value: str = None):
         try:
             await self.page.wait_for_selector(selector, state='attached', timeout=5000)
             text = await self.page.locator(selector).first.inner_text()
-            return text.strip() 
+            return text.strip()
         except Exception:
             return default_value
 
@@ -199,54 +191,45 @@ class WelcomeToTheJungleWorker:
             with pdfplumber.open(resume_path) as pdf:
                 for p in pdf.pages:
                     text += p.extract_text() + "\n"
-        except Exception as e:
-            print(f"Error reading resume: {e}")
+        except Exception:
+            logger.exception("[WTTJ] Error reading resume")
         return text
 
-
-    # --- HELPER: Get Raw Job Data (dissociated try/except per field) ---
     async def get_raw_job_data(self, card: Locator):
         raw_title = None
         raw_company = None
         raw_location = None
 
         try:
-            # Wait for the desktop title block to be ready
             await card.locator('div.hidden.lg\\:flex p').first.wait_for(state="attached", timeout=10000)
-        except Exception as e:
-            print(f"    ⚠️ Card content not ready: {e}")
+        except Exception:
+            logger.warning("[WTTJ] Card content not ready")
             return "No Name", None, None
 
         try:
-            # Title: first <p> with heading-md-strong inside the desktop block
             raw_title = await card.locator('p[class*="heading-md-strong"]').first.inner_text()
-        except Exception as e:
-            print(f"    ⚠️ Could not extract title: {e}")
+        except Exception:
+            logger.warning("[WTTJ] Could not extract title")
 
         try:
-            # Company: <p> with body-lg-strong (sibling of title)
             raw_company = await card.locator('p[class*="body-lg-strong"]').first.inner_text()
-        except Exception as e:
+        except Exception:
             raw_company = "No Name"
-            print(f"    ⚠️ Could not extract company: {e}")
+            logger.warning("[WTTJ] Could not extract company")
 
         try:
-            # Location: chip containing the map-marker-alt icon
-            # Anchor on the SVG with that specific class, then take the sibling <span>
             raw_location = await card.locator(
                 'svg.name-map-marker-alt + span'
             ).first.inner_text()
-        except Exception as e:
-            print(f"    ⚠️ Could not extract location: {e}")
+        except Exception:
+            logger.warning("[WTTJ] Could not extract location")
 
         return (
             raw_company.strip() if raw_company else None,
             raw_title.strip() if raw_title else None,
-            raw_location.strip() if raw_location else None
+            raw_location.strip() if raw_location else None,
         )
 
-
-    # --- HELPER: Handle Pagination with Retry ---
     async def _handle_wttj_pagination(self, page_number: int) -> bool:
         try:
             next_button = self.page.locator(
@@ -254,17 +237,16 @@ class WelcomeToTheJungleWorker:
             )
 
             if await next_button.count() == 0:
-                print("🔚 [WTTJ] No next button found. Reached last page.")
+                logger.info("[WTTJ] No next button found. Reached last page.")
                 return False
 
-            # Disabled = last page
             is_disabled = await next_button.is_disabled()
             if is_disabled:
-                print("🔚 [WTTJ] Next button disabled. Reached last page.")
+                logger.info("[WTTJ] Next button disabled. Reached last page.")
                 return False
 
-            print(f"➡️ [WTTJ] Moving to page {page_number + 1}...")
-            await human_delay(1500, 3500)  # 🚨 NEW: pause before pagination
+            logger.info("[WTTJ] Moving to page %s", page_number + 1)
+            await human_delay(1500, 3500)
 
             for attempt in range(3):
                 try:
@@ -272,23 +254,20 @@ class WelcomeToTheJungleWorker:
                     await self.page.wait_for_load_state("networkidle")
                     await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=10000)
                     break
-                except Exception as e:
+                except Exception:
                     if attempt == 2:
-                        print(f"⚠️ [WTTJ] Pagination failed after 3 attempts: {e}")
+                        logger.exception("[WTTJ] Pagination failed after 3 attempts")
                         return False
                     await asyncio.sleep(2 ** attempt)
 
             await self._handle_cookies()
             return True
 
-        except Exception as e:
-            print(f"⚠️ [WTTJ] Pagination error: {e}")
+        except Exception:
+            logger.exception("[WTTJ] Pagination error")
             return False
 
-
-   # --- HELPER: Expand a collapsible form section by its title ---
     async def _expand_section(self, section_title: str):
-        """Click section header to expand if collapsed. Idempotent."""
         try:
             btn = self.page.locator(
                 f'button[aria-expanded="false"] div p:has-text("{section_title}")'
@@ -296,16 +275,10 @@ class WelcomeToTheJungleWorker:
             if await btn.count() > 0:
                 await human_click(btn)
                 await human_delay(400, 800)
-                print(f"  ✓ Expanded section: {section_title}")
-            else:
-                print(f"  ℹ️  Section '{section_title}' already open or not found.")
-        except Exception as e:
-            print(f"  ⚠️  Could not expand '{section_title}': {e}")
+        except Exception:
+            logger.warning("[WTTJ] Could not expand section '%s'", section_title)
 
-
-    # --- HELPER: Map graduation year diff → experience checkboxes ---
     def _map_experience_levels(self, graduation_year: Optional[str]) -> list[str]:
-        """Returns list of experience-level testid values (e.g. ['zero_to_one', 'one_to_three'])."""
         if not graduation_year:
             return ["zero_to_one", "one_to_three"]
         try:
@@ -321,13 +294,7 @@ class WelcomeToTheJungleWorker:
             return ["three_to_five", "five_to_ten"]
         return ["five_to_ten", "more_than_ten"]
 
-
-    # --- HELPER: Toggle a label-wrapped checkbox to a desired state ---
     async def _set_checkbox_state(self, label_selector: str, should_be_checked: bool, name: str = ""):
-        """
-        Clicks the label only if the underlying checkbox isn't already in the desired state.
-        WTTJ checkboxes are inside <label data-testid="..."><input class="sr-only peer" type="checkbox">.
-        """
         try:
             label = self.page.locator(label_selector)
             if await label.count() == 0:
@@ -335,16 +302,12 @@ class WelcomeToTheJungleWorker:
             checkbox = label.locator('input[type="checkbox"]').first
             is_checked = await checkbox.is_checked()
             if is_checked == should_be_checked:
-                print(f"  ⏩ {name} already {'checked' if should_be_checked else 'unchecked'}, skipping")
                 return
             await human_delay(250, 600)
             await label.click()
-            print(f"  ✓ {name} → {'checked' if should_be_checked else 'unchecked'}")
-        except Exception as e:
-            print(f"  ⚠️  Could not toggle '{name}': {e}")
+        except Exception:
+            logger.warning("[WTTJ] Could not toggle '%s'", name)
 
-
-    # --- HELPER: Apply Search Filters with Retry ---
     async def _apply_filters(
         self,
         user,
@@ -376,7 +339,6 @@ class WelcomeToTheJungleWorker:
             # ============ 1. RÔLE SECTION ============
             await self._expand_section("Rôle")
 
-            print("📝 [WTTJ] Filling role...")
             role_input = self.page.locator('input[name="futureRole"]')
             await role_input.wait_for(state="visible", timeout=10000)
             await role_input.clear()
@@ -384,7 +346,6 @@ class WelcomeToTheJungleWorker:
             await human_type(role_input, job_title)
             await human_delay(400, 900)
 
-            print("📝 [WTTJ] Selecting experience levels...")
             exp_values = self._map_experience_levels(user.graduation_year)
             for value in ALL_EXPERIENCE:
                 await self._set_checkbox_state(
@@ -396,26 +357,21 @@ class WelcomeToTheJungleWorker:
             # ============ 2. LOCALISATION SECTION ============
             await self._expand_section("Localisation")
 
-            # Clear any previously saved location chips
             try:
                 existing_chips = self.page.locator('button[aria-label="remove tag"]')
                 chip_count = await existing_chips.count()
                 for _ in range(chip_count):
-                    # Always click .first because each removal re-indexes the list
                     await self.page.locator('button[aria-label="remove tag"]').first.click()
                     await human_delay(200, 400)
-                if chip_count > 0:
-                    print(f"  ✓ Cleared {chip_count} existing location chips")
-            except Exception as e:
-                print(f"  ⚠️  Could not clear location chips: {e}")
+            except Exception:
+                logger.warning("[WTTJ] Could not clear location chips")
 
-            print(f"📝 [WTTJ] Filling location: {location}...")
             loc_input = self.page.locator('input[data-testid="location-search-input"]')
             await loc_input.wait_for(state="visible", timeout=10000)
             await loc_input.clear()
             await human_delay(200, 500)
             await human_type(loc_input, location)
-            await human_delay(800, 1500)  # let suggestions render
+            await human_delay(800, 1500)
 
             try:
                 await self.page.wait_for_selector(
@@ -425,13 +381,11 @@ class WelcomeToTheJungleWorker:
                 )
                 first_suggestion = self.page.locator('ul[role="listbox"] li[role="option"]').first
                 await human_click(first_suggestion)
-                print("  ✓ Location suggestion selected")
-            except Exception as e:
-                print(f"  ⚠️  Could not select location suggestion: {e}")
+            except Exception:
+                logger.warning("[WTTJ] Could not select location suggestion")
 
             await human_delay(400, 800)
 
-            print("📝 [WTTJ] Selecting remote preferences...")
             for value in ALL_REMOTE:
                 await self._set_checkbox_state(
                     f'label[data-testid="remote-option-{value}"]',
@@ -439,7 +393,6 @@ class WelcomeToTheJungleWorker:
                     name=f"Remote: {value}",
                 )
 
-            print("📝 [WTTJ] Selecting visa: europe...")
             for value in ALL_VISA:
                 await self._set_checkbox_state(
                     f'label[data-testid="visa-option-{value}"]',
@@ -456,7 +409,6 @@ class WelcomeToTheJungleWorker:
                 if mapped:
                     wttj_values.append(mapped)
 
-            # Expand "Voir plus" if any selected contract is hidden
             needs_voir_plus = any(v in HIDDEN_CONTRACTS for v in wttj_values)
             if needs_voir_plus:
                 try:
@@ -466,11 +418,9 @@ class WelcomeToTheJungleWorker:
                         if "plus" in btn_text.lower():
                             await human_click(voir_plus)
                             await human_delay(400, 800)
-                            print("  ✓ Expanded 'Voir plus' for contract types")
-                except Exception as e:
-                    print(f"  ⚠️  Could not expand 'Voir plus': {e}")
+                except Exception:
+                    logger.warning("[WTTJ] Could not expand 'Voir plus'")
 
-            print(f"📝 [WTTJ] Selecting contract types: {wttj_values}")
             for value in ALL_CONTRACTS:
                 await self._set_checkbox_state(
                     f'label[data-testid="contractType-option-{value}"]',
@@ -478,20 +428,18 @@ class WelcomeToTheJungleWorker:
                     name=f"Contract: {value}",
                 )
 
-            print(f"📝 [WTTJ] Filling salary: {min_salary}...")
             try:
                 salary_input = self.page.locator('input[data-testid="salary-field-value-input"]')
                 await salary_input.wait_for(state="visible", timeout=10000)
                 await salary_input.clear()
                 await human_delay(200, 500)
                 await human_type(salary_input, str(min_salary))
-            except Exception as e:
-                print(f"  ⚠️  Could not fill salary: {e}")
+            except Exception:
+                logger.warning("[WTTJ] Could not fill salary")
 
             await human_delay(800, 1800)
 
             # ============ 4. SUBMIT ============
-            print("📝 [WTTJ] Submitting preferences...")
             save_btn = self.page.locator('button[data-testid="filters-save-button"]')
 
             for attempt in range(3):
@@ -505,95 +453,80 @@ class WelcomeToTheJungleWorker:
                     await self.page.wait_for_load_state("networkidle")
                     await self.page.wait_for_selector(self.CARD_SELECTOR, state="attached", timeout=15000)
                     break
-                except Exception as e:
+                except Exception:
                     if attempt == 2:
-                        print(f"⚠️ [WTTJ] Filter submit failed after 3 attempts: {e}")
+                        logger.exception("[WTTJ] Filter submit failed after 3 attempts")
                         raise
-                    print(f"⚠️ [WTTJ] Submit attempt {attempt+1} failed: {e}")
                     await asyncio.sleep(2 ** attempt)
 
             await self._handle_cookies()
 
-        except Exception as e:
-            print(f"❌ Error applying filters: {e}")
+        except Exception:
+            logger.exception("[WTTJ] Error applying filters")
             raise
 
-
-    # --- HELPER: Nav Back with Retry + Verification ---
     async def nav_back(self, url: str) -> bool:
         for i in range(3):
             try:
-                await self.page.wait_for_selector('a[title="Retourner aux résultats"]', state="visible", timeout=30000)  
-                break                  
+                await self.page.wait_for_selector('a[title="Retourner aux résultats"]', state="visible", timeout=30000)
+                break
             except Exception:
                 if i == 2:
-                    print("⚠️ Nav back failed after 3 attempts")
+                    logger.warning("[WTTJ] Nav back failed after 3 attempts")
                     return False
-        try:       
+        try:
             await self.page.locator('a[title="Retourner aux résultats"]').click()
             await self.page.wait_for_load_state("networkidle")
             await self._handle_cookies()
             await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=60000)
-            await human_delay(800, 2000)  # 🚨 NEW: pause to "read" results
-            return True  
+            await human_delay(800, 2000)
+            return True
         except Exception:
-            return False    
-
-        
+            return False
 
     async def route_node_exit(self, state: JobApplicationState) -> str:
         if state.get("error"):
-            print(f"🛑 [WTTJ Worker] Circuit Breaker Tripped: {state['error']}")
+            logger.warning("[WTTJ] Circuit breaker tripped: %s", state["error"])
             return "error"
 
-        try:
-            user_id = state["user"].id
-            state_result = await self.get_agent_state.execute(user_id)
-            if state_result.is_success and state_result.value.is_shutdown:
-                print("🛑 [WTTJ Worker] User Kill Switch Detected! Aborting gracefully...")
-                return "error"
-        except Exception as e:
-            print(f"⚠️ [WTTJ Worker] Failed to check DB for agent state: {e}")
-            pass
+        user_id = state["user"].id
+        search_id = state["job_search"].id
+
+        killed_result = await self.is_agent_killed_for_search.execute(user_id, search_id)
+        if killed_result.is_success and killed_result.value:
+            logger.info("[WTTJ] Kill switch detected for search %s. Aborting gracefully.", search_id)
+            return "error"
 
         return "continue"
 
     def route_action_intent(self, state: JobApplicationState):
-        intent = state.get("action_intent", "SCRAPE") 
+        intent = state.get("action_intent", "SCRAPE")
         if intent == "SUBMIT":
-            print("🛤️ [WTTJ] Routing to SUBMIT track...")
             return "start_with_session"
-        print("🛤️ [WTTJ] Routing to SCRAPE track...")
         return "start"
-
 
     # =========================================================================
     # NODES
     # =========================================================================
 
-    # --- NODE 1: Start Session ---
     async def start_session(self, state: JobApplicationState):
-        await self._emit(state, "Initializing Browser") 
-        print(f"--- [WTTJ] Starting session for {state['user'].firstname} ---")
-        
+        await self._emit(state, "Initializing Browser")
+        logger.info("[WTTJ] Starting session")
+
         preferences = state["preferences"]
 
-        # 🚨 NEW: Pull identity from state
         fingerprint = state.get("user_fingerprint")
-        #proxy_config = state.get("proxy_config")
-        
+
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless= not preferences.browser_headless, 
-                args=['--disable-blink-features=AutomationControlled']
+                headless=not preferences.browser_headless,
+                args=['--disable-blink-features=AutomationControlled'],
             )
 
-            # 🚨 NEW: Build context kwargs from fingerprint + proxy
             context_kwargs = {}
             if fingerprint:
                 context_kwargs.update(fingerprint.to_playwright_context_args())
-                print(f"   🪪 Applying fingerprint: {fingerprint.platform} / {fingerprint.viewport_width}x{fingerprint.viewport_height}")
             else:
                 context_kwargs["user_agent"] = (
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -606,45 +539,37 @@ class WelcomeToTheJungleWorker:
             #         "username": proxy_config["username"],
             #         "password": proxy_config["password"],
             #     }
-            #     print(f"   🌐 Routing through proxy: {proxy_config['server']}")
 
             self.context = await self.browser.new_context(**context_kwargs)
 
-            # 🚨 NEW: Inject fingerprint init script BEFORE any page loads
             if fingerprint:
                 await self.context.add_init_script(fingerprint.to_init_script())
-            
+
             stealth = Stealth()
             await stealth.apply_stealth_async(self.context)
             self.page = await self.context.new_page()
-            
+
             return {}
-        except Exception as e:
-            print(f"Session Error: {e}")
+        except Exception:
+            logger.exception("[WTTJ] Session error")
             return {"error": "Failed to start the secure browsing session."}
 
-
-   
-    # --- NODE 1 Bis: Boot & Inject Session (Submit Track) ---
     async def start_session_with_auth(self, state: JobApplicationState):
-        await self._emit(state, "Initializing Secure Browser") 
-        print("--- [WTTJ] Booting Browser (Session Injection) ---")
+        await self._emit(state, "Initializing Secure Browser")
+        logger.info("[WTTJ] Booting browser (session injection)")
         user_id = str(state["user"].id)
 
-        # 🚨 NEW: Pull identity from state
         fingerprint = state.get("user_fingerprint")
-        #proxy_config = state.get("proxy_config")
-        
+
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless= not state["preferences"].browser_headless,
-                args=['--disable-blink-features=AutomationControlled']
+                headless=not state["preferences"].browser_headless,
+                args=['--disable-blink-features=AutomationControlled'],
             )
-            
+
             session_path = self._get_auth_state_path(user_id)
 
-            # 🚨 NEW: Build context kwargs from fingerprint + proxy + saved session
             context_kwargs = {}
             if fingerprint:
                 context_kwargs.update(fingerprint.to_playwright_context_args())
@@ -660,10 +585,7 @@ class WelcomeToTheJungleWorker:
                 )
 
             if session_path:
-                print(f"🔓 Found saved session for user {user_id}. Injecting cookies...")
                 context_kwargs["storage_state"] = session_path
-            else:
-                print("⚠ No session found. Booting fresh context...")
 
             # if proxy_config:
             #     context_kwargs["proxy"] = {
@@ -671,11 +593,9 @@ class WelcomeToTheJungleWorker:
             #         "username": proxy_config["username"],
             #         "password": proxy_config["password"],
             #     }
-            #     print(f"   🌐 Routing through proxy: {proxy_config['server']}")
 
             self.context = await self.browser.new_context(**context_kwargs)
 
-            # 🚨 NEW: Inject fingerprint init script
             if fingerprint:
                 await self.context.add_init_script(fingerprint.to_init_script())
 
@@ -683,28 +603,25 @@ class WelcomeToTheJungleWorker:
             await stealth.apply_stealth_async(self.context)
             self.page = await self.context.new_page()
 
-            # ✅ RETRY: goto + verify logged-in state as one unit
             for attempt in range(3):
                 try:
                     await self.page.goto(self.base_url, wait_until="networkidle", timeout=120000)
                     await self._handle_cookies()
-                    # Confirm session is valid by looking for the logged-in "Mon espace" button
                     await self.page.wait_for_selector(
                         'button[data-testid="nav-my-space-button"]',
                         state="attached",
                         timeout=45000,
                     )
                     break
-                except Exception as e:
+                except Exception:
                     if attempt == 2:
-                        return {"error": f"Failed to reach WTTJ after 3 attempts: {str(e)}"}
-                    print(f"⚠️ [WTTJ] Auth boot attempt {attempt+1} failed. Retrying in {2 ** attempt}s...")
+                        logger.exception("[WTTJ] Auth boot failed after 3 attempts")
+                        return {"error": "Failed to reach WTTJ after multiple attempts."}
                     await asyncio.sleep(2 ** attempt)
 
-            await human_warmup(self.page, self.base_url)  # 🚨 NEW: human warmup
+            await human_warmup(self.page, self.base_url)
 
-            # Click "Trouver un job" to land on /jobs-matches preferences form
-            await human_click(self.page.locator('a[data-testid="nav-find-a-job-button"]'))  # 🚨 NEW
+            await human_click(self.page.locator('a[data-testid="nav-find-a-job-button"]'))
             await self.page.wait_for_load_state("networkidle")
 
             search_entity = state["job_search"]
@@ -714,10 +631,7 @@ class WelcomeToTheJungleWorker:
             min_salary = getattr(search_entity, 'min_salary', 0) or 20000
             location = getattr(search_entity, 'location', "") or "France"
 
-            print(f"--- [WTTJ] Dummy Searching for: {job_title} ---")
             try:
-                # Replicate the exact search_jobs flow so behavioral fingerprint
-                # looks consistent with what an organic user would do.
                 await self._apply_filters(
                     user=user,
                     job_title=job_title,
@@ -728,28 +642,24 @@ class WelcomeToTheJungleWorker:
 
                 await self.page.wait_for_load_state("networkidle")
 
-                # Confirm results loaded — gives us a stable post-warmup state
                 try:
                     await self.page.wait_for_selector(self.CARD_SELECTOR, state="attached", timeout=30000)
-                    print("✅ [WTTJ] Dummy search complete — session warmed up.")
+                    logger.info("[WTTJ] Dummy search complete — session warmed up")
                 except Exception:
-                    print("⚠️ [WTTJ] Dummy search ran but no cards found. Continuing.")
+                    logger.info("[WTTJ] Dummy search ran but no cards found. Continuing.")
 
                 return {}
-            except Exception as e:
-                print(f"⚠️ Initial search failed during session boot: {e}")
+            except Exception:
+                logger.exception("[WTTJ] Initial search failed during session boot")
                 return {}
-            
-        except Exception as e:
-            print(f"Browser Auth Initialization Error: {e}")
-            return {"error": f"Failed to initialize WTTJ browser with session: {str(e)}"}
 
+        except Exception:
+            logger.exception("[WTTJ] Browser auth init error")
+            return {"error": "Failed to initialize WTTJ browser with session."}
 
-
-    # --- NODE 2: Navigation ---
     async def go_to_job_board(self, state: JobApplicationState):
         await self._emit(state, "Navigating to Job Board")
-        print("--- [WTTJ] Navigating ---")
+        logger.info("[WTTJ] Navigating")
         try:
             for attempt in range(3):
                 try:
@@ -757,42 +667,36 @@ class WelcomeToTheJungleWorker:
                     await self._handle_cookies()
                     await self.page.wait_for_selector('a[data-testid="nav-sign-in-button"]', state="visible", timeout=30000)
                     break
-                except Exception as e:
+                except Exception:
                     if attempt == 2:
                         return {"error": "Could not reach Welcome to the Jungle. The job board might be down or undergoing maintenance."}
-                    print(f"⚠️ [WTTJ] Navigation attempt {attempt+1} failed. Error: {e}. Retrying in {2 ** attempt}s...")
                     await asyncio.sleep(2 ** attempt)
 
-            await human_warmup(self.page, self.base_url)  # 🚨 NEW: warmup after navigation
-            return {}        
-        except Exception as e:
-            print(f"🚨 Navigation Error: {e}")
-            return {"error": f"Navigation failed: {e}"}
+            await human_warmup(self.page, self.base_url)
+            return {}
+        except Exception:
+            logger.exception("[WTTJ] Navigation error")
+            return {"error": "Navigation failed."}
 
-
-    # --- NODE 3: Login ---
     async def request_login(self, state: JobApplicationState):
         await self._emit(state, "Authenticating")
 
         prefs = state["preferences"]
         creds = state.get("credentials")
         user_id = str(state["user"].id)
-        
-        print("--- [WTTJ] Requesting Login ---")
 
-        await self._handle_cookies() 
-        
+        logger.info("[WTTJ] Login phase")
+
+        await self._handle_cookies()
+
         if prefs.is_full_automation and creds["wttj"]:
-            print("🔐 [WTTJ] Full Automation: Attempting auto-login...")
-
             login_plain = None
             pass_plain = None
 
             try:
-                # ✅ RETRY UNIT 1: Click "Se connecter" → land on sign-in page → verify email input
                 for attempt in range(3):
                     try:
-                        await human_click(self.page.locator('a[data-testid="nav-sign-in-button"]'))  # 🚨 NEW
+                        await human_click(self.page.locator('a[data-testid="nav-sign-in-button"]'))
                         await self.page.wait_for_load_state("networkidle")
                         await self.page.wait_for_selector(
                             'input[data-testid="sign-in-form-email-input"]',
@@ -800,45 +704,41 @@ class WelcomeToTheJungleWorker:
                             timeout=15000,
                         )
                         break
-                    except Exception as e:
+                    except Exception:
                         if attempt == 2:
                             return {"error": "Login failed. Could not open the sign-in page."}
-                        print(f"⚠️ [WTTJ] Sign-in page attempt {attempt+1} failed. Error: {e}. Reloading...")
                         await self.page.reload(wait_until="networkidle")
                         await asyncio.sleep(2 ** attempt)
 
                 login_plain = await self.encryption_service.decrypt(creds["wttj"].login_encrypted)
                 pass_plain = await self.encryption_service.decrypt(creds["wttj"].password_encrypted)
 
-                # ✅ RETRY UNIT 2: Fill credentials with HUMAN typing + submit
                 for attempt in range(3):
                     try:
                         email_input = self.page.locator('input[data-testid="sign-in-form-email-input"]')
                         await email_input.clear()
-                        await human_delay(300, 700)  # 🚨 NEW
-                        await human_type(email_input, login_plain)  # 🚨 NEW
+                        await human_delay(300, 700)
+                        await human_type(email_input, login_plain)
 
-                        await human_delay(400, 900)  # 🚨 NEW: pause between fields
+                        await human_delay(400, 900)
 
                         pass_input = self.page.locator('input[data-testid="sign-in-form-password-input"]')
                         await pass_input.clear()
-                        await human_delay(200, 500)  # 🚨 NEW
-                        await human_type(pass_input, pass_plain)  # 🚨 NEW
+                        await human_delay(200, 500)
+                        await human_type(pass_input, pass_plain)
 
-                        await human_delay(600, 1500)  # 🚨 NEW: review before submit
+                        await human_delay(600, 1500)
 
                         submit_btn = self.page.locator('button[data-testid="sign-in-form-submit-button"]')
                         if await submit_btn.count() == 0:
                             submit_btn = self.page.locator('button[type="submit"]')
                         await submit_btn.click()
                         break
-                    except Exception as e:
+                    except Exception:
                         if attempt == 2:
                             return {"error": "Login failed. Could not submit credentials."}
-                        print(f"⚠️ [WTTJ] Credential submission attempt {attempt+1} failed. Error: {e}. Retrying in {2 ** attempt}s...")
                         await asyncio.sleep(2 ** attempt)
 
-                # ✅ RETRY UNIT 3: Proof of login = "Mon espace" button visible
                 for attempt in range(3):
                     try:
                         await self.page.wait_for_selector(
@@ -847,19 +747,18 @@ class WelcomeToTheJungleWorker:
                             timeout=30000,
                         )
                         break
-                    except Exception as e:
+                    except Exception:
                         if attempt == 2:
                             return {"error": "Login failed. Please check your WTTJ credentials in your settings."}
-                        print(f"⚠️ [WTTJ] Login proof attempt {attempt+1} failed. Error: {e}. Retrying in {2 ** attempt}s...")
                         await asyncio.sleep(2 ** attempt)
 
                 await self._handle_cookies()
-                print("✅ [WTTJ] Auto-login successful")
+                logger.info("[WTTJ] Auto-login successful")
                 await self._save_auth_state(user_id)
                 return {}
 
-            except Exception as e:
-                print(f"❌ [WTTJ] Auto-login failed: {e}")
+            except Exception:
+                logger.exception("[WTTJ] Auto-login failed")
                 return {"error": "Failed to log into Welcome to the Jungle. Please check your credentials."}
 
             finally:
@@ -871,7 +770,7 @@ class WelcomeToTheJungleWorker:
         else:
             try:
                 await self.page.locator('a[data-testid="nav-sign-in-button"]').click()
-                print("⚠ ACTION REQUIRED: Manual login required (waiting 90s)...")
+                logger.info("[WTTJ] ACTION REQUIRED: Manual login required (waiting 90s)")
                 await asyncio.sleep(90)
                 await self.page.wait_for_selector(
                     'button[data-testid="nav-my-space-button"]',
@@ -880,12 +779,10 @@ class WelcomeToTheJungleWorker:
                 )
                 await self._save_auth_state(user_id)
                 return {}
-            except Exception as e:
-                print(f"Login Error: {e}")
-                return {"error": "Manual login timed out. We didn't detect a successful login."}
+            except Exception:
+                logger.exception("[WTTJ] Manual login error")
+                return {"error": "Manual login timed out."}
 
-
-    # --- NODE 4: Search ---
     async def search_jobs(self, state: JobApplicationState):
         await self._emit(state, "Searching for Jobs")
 
@@ -896,16 +793,15 @@ class WelcomeToTheJungleWorker:
         min_salary = getattr(search_entity, 'min_salary', 0) or 20000
         location = getattr(search_entity, 'location', "") or "France"
 
-        print(f"--- [WTTJ] Searching for: {job_title} ---")
+        logger.info("[WTTJ] Starting search")
 
         try:
-            await human_warmup(self.page, self.base_url)  # 🚨 NEW
+            await human_warmup(self.page, self.base_url)
             await self._handle_cookies()
 
-            # ✅ RETRY UNIT 1: Click "Trouver un job" → land on /jobs-matches → preferences form visible
             for attempt in range(3):
                 try:
-                    await human_click(self.page.locator('a[data-testid="nav-find-a-job-button"]'))  # 🚨 NEW
+                    await human_click(self.page.locator('a[data-testid="nav-find-a-job-button"]'))
                     await self.page.wait_for_load_state("networkidle")
                     await self.page.wait_for_selector(
                         'button[aria-expanded="false"] div p:has-text("Rôle")',
@@ -913,13 +809,11 @@ class WelcomeToTheJungleWorker:
                         timeout=30000,
                     )
                     break
-                except Exception as e:
+                except Exception:
                     if attempt == 2:
                         return {"error": f"Could not reach the WTTJ preferences form for '{job_title}'."}
-                    print(f"⚠️ [WTTJ] Preferences form attempt {attempt+1} failed. Error: {e}. Retrying...")
                     await asyncio.sleep(2 ** attempt)
 
-            # Fill the preferences form (role, experience, location, remote, visa, contract, salary)
             await self._apply_filters(
                 user=user,
                 job_title=job_title,
@@ -928,131 +822,119 @@ class WelcomeToTheJungleWorker:
                 location=location,
             )
 
-            # Wait for the job listings to render — proof of search success
             try:
                 await self.page.wait_for_selector(self.CARD_SELECTOR, state="attached", timeout=60000)
-                print("✅ Search results loaded successfully.")
+                logger.info("[WTTJ] Search results loaded")
             except Exception:
                 return {"error": "No new matching jobs were found for this search today."}
 
             await self._handle_cookies()
             return {}
 
-        except Exception as e:
-            print(f"Search Error: {e}")
+        except Exception:
+            logger.exception("[WTTJ] Search error")
             return {"error": f"Failed to execute search for '{job_title}' on Welcome to the Jungle."}
 
-
-    # --- NODE 5: Scrape Jobs ---
     async def get_matched_jobs(self, state: JobApplicationState):
         await self._emit(state, "Extracting Job Data")
-        print("--- [WTTJ] Scraping Jobs ---")
-        
+        logger.info("[WTTJ] Scraping jobs")
+
         user_id = state["user"].id
         search_id = state["job_search"].id
         found_job_entities = []
-        
-        worker_job_limit = 1 or state.get("worker_job_limit", 5) 
-        
+
+        worker_job_limit = 1 or state.get("worker_job_limit", 5)
+
         hash_result = await self.get_ignored_hashes.execute(user_id=user_id, days=30)
         if not hash_result.is_success:
-            print(f"⚠️ Warning: Could not fetch ignored hashes: {hash_result.error.message}")
+            logger.warning("[WTTJ] Could not fetch ignored hashes: %s", hash_result.error.message)
             ignored_hashes = set()
         else:
             ignored_hashes = hash_result.value
-            
-        print(f"🛡️ Loaded {len(ignored_hashes)} ignored job hashes to prevent duplicates.")
-        print(f"🎯 Target: Scraping up to {worker_job_limit} new WTTJ jobs.")
+
+        logger.info("[WTTJ] Target: %s jobs. Ignored hashes: %s", worker_job_limit, len(ignored_hashes))
 
         page_number = 1
-        max_pages = 20  
-        
+        max_pages = 20
+
         try:
             while len(found_job_entities) < worker_job_limit and page_number <= max_pages:
-                print(f"📄 [WTTJ] Processing Page {page_number}...")
-                
+                logger.info("[WTTJ] Processing page %s", page_number)
+
                 try:
                     await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=45000)
                 except Exception:
-                    print(f"⚠️  No results found on page {page_number}.")
                     if page_number == 1:
+                        logger.info("[WTTJ] No results found on page 1")
                         return {"found_raw_offers": []}
                     break
 
                 cards = self.page.locator(self.CARD_SELECTOR)
                 count = await cards.count()
-                result_url = self.page.url 
-                
+                result_url = self.page.url
+
                 for i in range(count):
                     if len(found_job_entities) >= worker_job_limit:
                         break
-                    
-                    print(f"  -> Processing card {i+1}/{count} (Page {page_number})")
-                    
+
                     try:
                         card = self.page.locator(self.CARD_SELECTOR).nth(i)
 
                         await card.scroll_into_view_if_needed()
-                        await human_delay(400, 1000)  # 🚨 NEW: pause to "look at" the card
+                        await human_delay(400, 1000)
 
                         raw_company, raw_title, raw_location = await self.get_raw_job_data(card)
-                        print(f"---[WTTJ WORKER] RAW DATA---\n[WTTJ Company]: {raw_company},\n[WTTJ Title]: {raw_title},\n[WTTJ Location]: {raw_location}")
+
                         if not raw_title:
-                            print("     ⚠️ Missing title, skipping card.")
                             continue
 
                         fast_hash = self._generate_fast_hash(raw_company, raw_title, str(user_id))
                         if fast_hash in ignored_hashes:
-                            print(f"     ⏩ Skipping duplicate: {raw_title} at {raw_company}")
                             continue
-                        
-                        # ✅ RETRY: card.click() + networkidle as one unit
+
                         click_success = False
                         for attempt in range(3):
                             try:
-                                card =  self.page.locator(self.CARD_SELECTOR).nth(i)
-                                await human_click(card)  # 🚨 NEW
+                                card = self.page.locator(self.CARD_SELECTOR).nth(i)
+                                await human_click(card)
                                 await self.page.wait_for_load_state("networkidle")
                                 await self._handle_cookies()
                                 await self.page.wait_for_selector('[data-testid="job_bottom-button-apply"]', state="attached", timeout=40000)
                                 click_success = True
                                 break
-                            except Exception as e:
+                            except Exception:
                                 if attempt == 2:
-                                    print(f"    ⚠️ Card click failed after 3 attempts. Skipping. Error: {e}")
+                                    logger.warning("[WTTJ] Card click failed after 3 attempts. Skipping.")
                                     break
                                 await asyncio.sleep(2 ** attempt)
 
                         if not click_success:
                             continue
-                        
-                        current_url = self.page.url           
 
-                        await human_delay(1500, 3500)  # 🚨 NEW: pause to "read" the job description
+                        current_url = self.page.url
+
+                        await human_delay(1500, 3500)
 
                         try:
                             desc_el = self.page.locator("div#the-position-section")
-                            if await desc_el.count() == 0: 
+                            if await desc_el.count() == 0:
                                 desc_el = self.page.locator("main")
                             job_desc = await desc_el.inner_text()
                         except Exception:
                             job_desc = ""
 
                         apply_btn = self.page.locator('[data-testid="job_header-button-apply"]')
-                        
+
                         if await apply_btn.count() > 0:
                             try:
                                 try:
                                     await self.page.wait_for_selector('a[data-testid="job_header-button-apply"] svg[alt="ExternalLink"]', state="visible", timeout=3000)
-                                    print(f"     ❌ External form detected (Ignoring): {current_url}")
                                     if not await self.nav_back(result_url):
                                         break
-                                    continue                                    
+                                    continue
                                 except Exception:
                                     raise
                             except Exception:
-                                print(f"     ✅ Internal form confirmed: {raw_title}")
-                                
                                 offer = JobOffer(
                                     url=current_url,
                                     form_url=current_url,
@@ -1062,43 +944,39 @@ class WelcomeToTheJungleWorker:
                                     job_title=raw_title,
                                     location=raw_location,
                                     job_board=JobBoard.WTTJ,
-                                    status=ApplicationStatus.FOUND,                                
-                                    job_desc=job_desc
-                                )                                
+                                    status=ApplicationStatus.FOUND,
+                                    job_desc=job_desc,
+                                )
                                 found_job_entities.append(offer)
-                                
-                                print(f"     📦 Current batch size: {len(found_job_entities)}/{worker_job_limit}")
 
                         if not await self.nav_back(result_url):
                             break
-                        
-                    except Exception as e:
-                        print(f"     ⚠️ Error on card {i}: {e}")
+
+                    except Exception:
+                        logger.exception("[WTTJ] Error on card %s", i)
                         try:
                             if not await self.nav_back(result_url):
                                 break
                         except Exception:
                             pass
                         continue
-                
+
                 if len(found_job_entities) >= worker_job_limit:
                     break
-                    
+
                 if not await self._handle_wttj_pagination(page_number):
                     break
                 page_number += 1
-        
-        except Exception as e:
-            print(f"Fatal Scraping Error: {e}")
+
+        except Exception:
+            logger.exception("[WTTJ] Fatal scraping error")
             return {"error": "A critical error occurred while scanning Welcome to the Jungle."}
-        
+
         if not found_job_entities:
-            print("⚠️ Scanned jobs, but none were valid internal applications.")
             return {"found_raw_offers": []}
 
-        print(f"🎉 WTTJ Scraping Complete! Handing {len(found_job_entities)} jobs back to Master.")
+        logger.info("[WTTJ] Scraping complete. Returning %s jobs.", len(found_job_entities))
         return {"found_raw_offers": found_job_entities}
-
 
     # Helper for dynamic questions
     async def _handle_dynamic_questions(self, user, preferences, resume_bytes: bytes) -> dict:
@@ -1111,8 +989,8 @@ class WelcomeToTheJungleWorker:
                 resume_text = "\n".join(
                     page.extract_text() for page in pdf.pages if page.extract_text()
                 )
-        except Exception as e:
-            print(f"⚠️ [WTTJ] Could not extract resume text: {e}")
+        except Exception:
+            logger.exception("[WTTJ] Could not extract resume text")
             resume_text = ""
 
         QUESTION_LEGEND_VARIANTS = [
@@ -1128,7 +1006,6 @@ class WelcomeToTheJungleWorker:
             locator = self.page.locator(f'fieldset:has(legend:text-is("{variant}"))')
             if await locator.count() > 0:
                 fieldset_html = await locator.first.inner_html()
-                print(f"✅ [WTTJ] Found dynamic questions fieldset: '{variant}'")
                 break
 
         if not fieldset_html:
@@ -1138,11 +1015,9 @@ class WelcomeToTheJungleWorker:
                 legend_text = await locator.nth(i).locator('legend').inner_text()
                 if "question" in legend_text.lower():
                     fieldset_html = await locator.nth(i).inner_html()
-                    print(f"✅ [WTTJ] Found dynamic questions fieldset via fallback: '{legend_text.strip()}'")
                     break
 
         if not fieldset_html:
-            print("ℹ️ [WTTJ] No dynamic questions fieldset found. Skipping.")
             return {}
 
         provider = getattr(preferences, "ai_model", "gemini").lower()
@@ -1216,60 +1091,55 @@ class WelcomeToTheJungleWorker:
                 if raw.startswith("json"):
                     raw = raw[4:]
             return json.loads(raw.strip())
-        except Exception as e:
-            print(f"⚠️ [WTTJ] LLM question parsing failed: {e}")
+        except Exception:
+            logger.exception("[WTTJ] LLM question parsing failed")
             return {}
 
-
-    # --- NODE 7: Submit ---
     async def submit_applications(self, state: JobApplicationState):
         await self._emit(state, "Submitting Applications")
-        print("--- [WTTJ] Submitting Applications ---")
-        
+        logger.info("[WTTJ] Submitting applications")
+
         jobs_to_process = state.get("processed_offers", [])
-        user = state["user"] 
+        user = state["user"]
         preferences = state["preferences"]
 
-        assigned_submit_limit = state.get("worker_job_limit", 5) 
+        assigned_submit_limit = state.get("worker_job_limit", 5)
 
         wttj_jobs = [job for job in jobs_to_process if job.job_board == JobBoard.WTTJ and job.status == ApplicationStatus.APPROVED]
 
         if not wttj_jobs:
-            print("No approved WTTJ jobs in submission queue.")
+            logger.info("[WTTJ] No approved WTTJ jobs in submission queue")
             return {"status": "no_wttj_jobs_to_submit"}
 
         successful_submissions = []
         i = 0
         for offer in wttj_jobs:
             if len(successful_submissions) >= assigned_submit_limit:
-                print(f"🛑 [WTTJ] Reached assigned submission limit ({assigned_submit_limit}). Halting further submissions.")
+                logger.info("[WTTJ] Reached assigned submission limit (%s)", assigned_submit_limit)
                 break
 
-            print(f"📝 [WTTJ] Applying to: {offer.job_title} ({i+1}/{len(wttj_jobs)})")
             try:
-                # ✅ RETRY: form entry as one critical unit
                 form_opened = False
                 for attempt in range(3):
                     try:
                         await self.page.goto(offer.url, wait_until="commit", timeout=60000)
                         await self._handle_cookies()
-                        await human_delay(1500, 3500)  # 🚨 NEW: pause after navigation
-                        
+                        await human_delay(1500, 3500)
+
                         await self.page.wait_for_selector('[data-testid="job_bottom-button-apply"]', state="attached", timeout=30000)
                         apply_btn = self.page.locator('[data-testid="job_bottom-button-apply"]').first
-                        
+
                         if await apply_btn.count() == 0:
                             raise Exception("Apply button not found")
-                        
-                        await human_click(apply_btn)  # 🚨 NEW
+
+                        await human_click(apply_btn)
                         await self.page.wait_for_selector('[data-testid="apply-form-field-firstname"]', state="visible", timeout=15000)
                         form_opened = True
                         break
-                    except Exception as e:
+                    except Exception:
                         if attempt == 2:
-                            print(f"⚠ Form failed to load after 3 attempts for {offer.url}. Skipping. Error: {e}")
+                            logger.warning("[WTTJ] Form failed to load after 3 attempts. Skipping.")
                             break
-                        print(f"⚠ Form load attempt {attempt+1} failed. Retrying in {2 ** attempt}s...")
                         await asyncio.sleep(2 ** attempt)
 
                 if not form_opened:
@@ -1277,40 +1147,34 @@ class WelcomeToTheJungleWorker:
                     continue
 
                 await self._handle_cookies()
-                
-                # Fill Form with HUMAN typing for short fields
-                await human_type(self.page.get_by_test_id("apply-form-field-firstname"), user.firstname)  # 🚨 NEW
-                await human_delay(200, 500)  # 🚨 NEW
-                await human_type(self.page.get_by_test_id("apply-form-field-lastname"), user.lastname)  # 🚨 NEW
-                
-                if user.phone_number: 
-                    await human_delay(200, 500)  # 🚨 NEW
-                    await human_type(self.page.get_by_test_id("apply-form-field-phone"), user.phone_number)  # 🚨 NEW
-                
+
+                await human_type(self.page.get_by_test_id("apply-form-field-firstname"), user.firstname)
+                await human_delay(200, 500)
+                await human_type(self.page.get_by_test_id("apply-form-field-lastname"), user.lastname)
+
+                if user.phone_number:
+                    await human_delay(200, 500)
+                    await human_type(self.page.get_by_test_id("apply-form-field-phone"), user.phone_number)
+
                 current_pos = getattr(user, 'current_position', "")
                 if current_pos:
-                    await human_delay(200, 500)  # 🚨 NEW
-                    await human_type(self.page.get_by_test_id("apply-form-field-subtitle"), current_pos)  # 🚨 NEW
+                    await human_delay(200, 500)
+                    await human_type(self.page.get_by_test_id("apply-form-field-subtitle"), current_pos)
 
-                # File Upload
                 resume_bytes = None
                 if user.resume_path:
-                    print("⬇️ Downloading resume from cloud to RAM...")
                     resume_bytes = await self.file_storage.download_file(user.resume_path)
                     human_name = user.resume_file_name or f"{user.firstname}_{user.lastname}_CV.pdf"
                     await self.page.get_by_test_id("apply-form-field-resume").set_input_files({
                         "name": human_name,
                         "mimeType": "application/pdf",
-                        "buffer": resume_bytes
+                        "buffer": resume_bytes,
                     })
-                    await human_delay(1000, 2000)  # 🚨 NEW: wait for upload to register
+                    await human_delay(1000, 2000)
 
-                # Dynamic Questions
                 if resume_bytes:
                     questions = await self._handle_dynamic_questions(user, preferences, resume_bytes)
-                    if not questions:
-                        print("No dynamic questions detected or failed to parse.")
-                    else:
+                    if questions:
                         for testid, field in questions.items():
                             if field.get("skip"):
                                 continue
@@ -1330,59 +1194,52 @@ class WelcomeToTheJungleWorker:
                                         await self.page.locator('[role="listbox"] li').filter(has_text=field["value"]).click()
                                     case "checkbox":
                                         await self.page.locator(f'[data-testid="{testid}-input"]').check()
-                                await human_delay(300, 700)  # 🚨 NEW: between dynamic questions
-                            except Exception as e:
-                                print(f"⚠️ [WTTJ] Could not fill question {testid}: {e}")
+                                await human_delay(300, 700)
+                            except Exception:
+                                logger.warning("[WTTJ] Could not fill question %s", testid)
                                 continue
-                    
-                # Cover Letter — fill is fine, humans paste cover letters
+
                 if offer.cover_letter:
                     await self.page.get_by_test_id("apply-form-field-cover_letter").fill(offer.cover_letter)
-                
-                # Consent Checkbox
+
                 checkbox = self.page.locator('input[id="consent"]')
                 if await checkbox.count() > 0 and not await checkbox.is_checked():
-                    await human_delay(300, 700)  # 🚨 NEW
+                    await human_delay(300, 700)
                     await self.page.locator('label[for="consent"]').click()
-                
-                # ✅ NO RETRY on submit click — would cause duplicate submission risk
-                await human_delay(1500, 3500)  # 🚨 NEW: review before submitting
+
+                await human_delay(1500, 3500)
                 await self.page.wait_for_selector('[data-testid="apply-form-submit"]', state="attached")
                 submit_btn = self.page.locator('[data-testid="apply-form-submit"]')
-                
+
                 if await submit_btn.is_visible():
                     await submit_btn.click()
 
                     try:
                         await self.page.wait_for_selector('svg[alt="Paperplane"]', state="visible", timeout=45000)
-                        print(f"✅ [WTTJ] Application submitted for {offer.job_title}")                    
+                        logger.info("[WTTJ] Application submitted for %s", offer.job_title)
                         offer.status = ApplicationStatus.SUBMITTED
                         successful_submissions.append(offer)
                     except Exception:
-                        print(f"⚠️ Submission of {offer.url} failed — confirmation not received.")
+                        logger.warning("[WTTJ] Submission of %s failed — confirmation not received", offer.url)
                         continue
                 else:
-                    print(f"❌ [WTTJ] Submit button not visible for {offer.job_title}.")
+                    logger.warning("[WTTJ] Submit button not visible for %s", offer.job_title)
 
-            except Exception as e:
-                print(f"❌ [WTTJ] Submission failed for {offer.url}: {e}")
-            
-            i += 1 
+            except Exception:
+                logger.exception("[WTTJ] Submission failed for %s", offer.url)
+
+            i += 1
 
         if not successful_submissions:
             return {"error": "All WTTJ application attempts failed. Forms may have changed."}
 
-        print(f"✅ [WTTJ] Successfully submitted {len(successful_submissions)} applications. Handing back to Master...")
+        logger.info("[WTTJ] Successfully submitted %s applications", len(successful_submissions))
         return {"submitted_offers": successful_submissions}
 
-
-    # --- NODE 8: Cleanup ---
     async def cleanup(self, state: JobApplicationState):
         await self._emit(state, "Cleaning Up")
-        print("--- [WTTJ] Cleanup ---")
         await self.force_cleanup()
         return {}
-
 
     # =========================================================================
     # GRAPH
@@ -1390,35 +1247,32 @@ class WelcomeToTheJungleWorker:
 
     def get_graph(self):
         workflow = StateGraph(JobApplicationState)
-        
+
         workflow.add_node("start", self.start_session)
         workflow.add_node("nav", self.go_to_job_board)
         workflow.add_node("login", self.request_login)
         workflow.add_node("search", self.search_jobs)
         workflow.add_node("scrape", self.get_matched_jobs)
-        
-        workflow.add_node("start_with_session", self.start_session_with_auth) 
+
+        workflow.add_node("start_with_session", self.start_session_with_auth)
         workflow.add_node("submit", self.submit_applications)
-        
+
         workflow.add_node("cleanup", self.cleanup)
 
         workflow.set_conditional_entry_point(
             self.route_action_intent,
-            {
-                "start": "start",
-                "start_with_session": "start_with_session"
-            }
+            {"start": "start", "start_with_session": "start_with_session"},
         )
-        
+
         workflow.add_conditional_edges("start", self.route_node_exit, {"error": "cleanup", "continue": "nav"})
         workflow.add_conditional_edges("nav", self.route_node_exit, {"error": "cleanup", "continue": "login"})
         workflow.add_conditional_edges("login", self.route_node_exit, {"error": "cleanup", "continue": "search"})
         workflow.add_conditional_edges("search", self.route_node_exit, {"error": "cleanup", "continue": "scrape"})
-        workflow.add_conditional_edges("scrape", self.route_node_exit, {"error": "cleanup", "continue": "cleanup"}) 
+        workflow.add_conditional_edges("scrape", self.route_node_exit, {"error": "cleanup", "continue": "cleanup"})
 
         workflow.add_conditional_edges("start_with_session", self.route_node_exit, {"error": "cleanup", "continue": "submit"})
         workflow.add_conditional_edges("submit", self.route_node_exit, {"error": "cleanup", "continue": "cleanup"})
-        
+
         workflow.add_edge("cleanup", END)
-        
+
         return workflow.compile()

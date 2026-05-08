@@ -97,6 +97,9 @@ class Result(Generic[T]):
     _value: Optional[T] = None
     _error: Optional[Error] = None
 
+    # Add to ErrorCode enum:
+    TOO_MANY_REQUESTS = "TOO_MANY_REQUESTS"
+
     def __post_init__(self):
         if (self._value is None and self._error is None) or \
            (self._value is not None and self._error is not None):
@@ -130,3 +133,9 @@ class Result(Generic[T]):
     def failure(cls, error: Error) -> 'Result[T]':
         """Create a failed result with the given error."""
         return cls(_error=error)
+
+    # Add to Error class:
+    @classmethod
+    def too_many_requests(cls, message: str) -> Self:
+        """Create a TOO_MANY_REQUESTS error (rate limit / quota / cooldown)."""
+        return cls(code=ErrorCode.TOO_MANY_REQUESTS, message=message)

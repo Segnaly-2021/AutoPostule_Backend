@@ -77,4 +77,5 @@ jobs:
             IPROYAL_USERNAME=${{ secrets.IPROYAL_USERNAME }}
             IPROYAL_PASSWORD_TEMPLATE=${{ secrets.IPROYAL_PASSWORD_TEMPLATE }}
             PROXY_PROVIDER=${{ secrets.PROXY_PROVIDER }}
+            ENV=${{ secrets.ENV }}
             

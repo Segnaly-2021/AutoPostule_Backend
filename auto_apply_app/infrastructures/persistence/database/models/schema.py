@@ -1,6 +1,8 @@
 from uuid import uuid4, UUID
 from typing import List, Optional
 from datetime import datetime, timezone, UTC
+from sqlalchemy import Date, UniqueConstraint
+from datetime import date as Date_t
 from sqlalchemy import ForeignKey, Boolean, String, DateTime, Integer, Text, Enum as SQLEnum
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
@@ -251,20 +253,56 @@ class JobOfferDB(Base):
     search: Mapped["JobSearchDB"] = relationship("JobSearchDB", back_populates="job_offers")
 
 
-
 class AgentStateDB(Base):
     __tablename__ = "agent_states"
 
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     user_id: Mapped[UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"),
-        primary_key=True
+        unique=True,
+        index=True,
+    )
+    search_id: Mapped[Optional[UUID]] = mapped_column(
+        nullable=True,
+        index=True,
     )
     is_shutdown: Mapped[bool] = mapped_column(Boolean, default=False)
 
-    # Relationship
     user: Mapped["UserDB"] = relationship("UserDB", back_populates="agent_state")
 
 
+class AgentUsageDB(Base):
+    __tablename__ = "agent_usages"
+    __table_args__ = (
+        UniqueConstraint("user_id", "usage_date", name="uq_agent_usage_user_date"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+    )
+    usage_date: Mapped[Date_t] = mapped_column(Date, index=True)
+    runs_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_completed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+
+class FreeSearchUsageDB(Base):
+    __tablename__ = "free_search_usages"
+    __table_args__ = (
+        UniqueConstraint("user_id", "usage_date", name="uq_free_search_usage_user_date"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+    )
+    usage_date: Mapped[Date_t] = mapped_column(Date, index=True)
+    searches_count: Mapped[int] = mapped_column(Integer, default=0)
 
 class UserFingerprintDB(Base):
     __tablename__ = "user_fingerprints"

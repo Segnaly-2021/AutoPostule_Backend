@@ -110,3 +110,25 @@ class UserSubscription(Entity):
         self.ai_credits_balance = self.allocated_ai_credits
 
 
+    # ── Agent run limits (new) ──────────────────────────────────
+    @property
+    def agent_daily_limit(self) -> int:
+        """Max successful agent runs per day."""
+        if self.account_type == ClientType.PREMIUM:
+            return 10
+        if self.account_type == ClientType.BASIC:
+            return 5
+        return 0  # FREE: no agent access
+
+    @property
+    def agent_cooldown_base_minutes(self) -> int:
+        """Base cooldown after a successful run (compounds exponentially)."""
+        if self.account_type == ClientType.PREMIUM:
+            return 15
+        if self.account_type == ClientType.BASIC:
+            return 30
+        return 0
+
+
+
+   
