@@ -27,29 +27,33 @@ AgentStateControllerDep = Annotated[AgentStateController, Depends(get_agent_stat
 )
 async def get_agent_state(
     current_user_id: CurrentUserId,
-    controller: AgentStateControllerDep,
+    controller: AgentStateControllerDep
 ):
     result = await controller.handle_get(user_id=current_user_id)
     return handle_result(result)
 
 
 @router.post(
-    "/shutdown/{search_id}",
+    "/shutdown",
     status_code=status.HTTP_200_OK,
-    summary="Request shutdown for a specific running search",
-    description=(
-        "Stops the agent for the specified search_id only. "
-        "If the search is no longer the active one (e.g., a newer search has started), "
-        "the request is rejected with 409 Conflict."
-    ),
+    summary="Shutdown agent — sets is_shutdown to True",
 )
-async def request_shutdown(
-    search_id: str,
+async def shutdown_agent(
     current_user_id: CurrentUserId,
-    controller: AgentStateControllerDep,
+    controller: AgentStateControllerDep
 ):
-    result = await controller.handle_request_shutdown(
-        user_id=current_user_id,
-        search_id=search_id,
-    )
+    result = await controller.handle_shutdown(user_id=current_user_id)
+    return handle_result(result)
+
+
+@router.post(
+    "/reset",
+    status_code=status.HTTP_200_OK,
+    summary="Reset agent state — sets is_shutdown to False",
+)
+async def reset_agent(
+    current_user_id: CurrentUserId,
+    controller: AgentStateControllerDep
+):
+    result = await controller.handle_reset(user_id=current_user_id)
     return handle_result(result)

@@ -30,7 +30,8 @@ class StartAgentRequest:
         boards = {
             "apec": JobBoard.APEC, 
             "hellowork": JobBoard.HELLOWORK, 
-            "wttj": JobBoard.WTTJ
+            "wttj": JobBoard.WTTJ,
+            "jobteaser": JobBoard.JOBTEASER
         }
         return {
             "user_id": self.user_id,

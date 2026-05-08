@@ -12,6 +12,7 @@ from auto_apply_app.interfaces.controllers.user_controllers import UserControlle
 from auto_apply_app.interfaces.viewmodels.user_vm import UserViewModel, LoginViewModel, UploadResumeViewModel 
 from auto_apply_app.infrastructures.api.dependencies.container_dep import get_container
 from auto_apply_app.infrastructures.api.dependencies.auth_deps import CurrentUserId, CurrentToken
+from auto_apply_app.infrastructures.api.dependencies.captcha_dep import verify_captcha
 
 # 🚨 NEW: Added ForgotPasswordRequestSchema and ResetPasswordConfirmSchema to imports
 from auto_apply_app.infrastructures.api.schema.user_schema import (
@@ -20,7 +21,8 @@ from auto_apply_app.infrastructures.api.schema.user_schema import (
     RegisterSchema,
     UserUpdateSchema,
     ForgotPasswordRequestSchema,  
-    ResetPasswordConfirmSchema    
+    ResetPasswordConfirmSchema,
+    ResendVerificationSchema,   
 )
 
 
@@ -58,7 +60,8 @@ AuthControllerDep = Annotated[AuthController, Depends(get_auth_controller)]
 async def register(
     request: Request,
     data: RegisterSchema,  
-    auth_controller: AuthControllerDep
+    auth_controller: AuthControllerDep,
+    _: None = Depends(verify_captcha),
 ):
     result = await auth_controller.handle_register(
         email=data.email, 
@@ -80,7 +83,8 @@ async def register(
 async def login(
     request: Request,
     data: LoginSchema,
-    auth_controller: AuthControllerDep
+    auth_controller: AuthControllerDep,
+    _: None = Depends(verify_captcha)
 ):
     """
     Authenticate user and return JWT access token.
@@ -103,7 +107,8 @@ async def login(
 async def forgot_password(
     request: Request,
     data: ForgotPasswordRequestSchema,
-    auth_controller: AuthControllerDep
+    auth_controller: AuthControllerDep,
+    _: None = Depends(verify_captcha)
 ):
     """
     Initiates the password reset flow. 
@@ -158,6 +163,38 @@ async def change_password(
         old_password=data.old_password,
         new_password=data.new_password
     )
+    return handle_result(result)
+
+@router.get(
+    "/verify-email",
+    status_code=status.HTTP_200_OK,
+    summary="Verify email address",
+    description="Confirms the user's email using the token from the verification link.",
+)
+@limiter.limit("10/hour")
+async def verify_email(
+    request: Request,
+    token: str,
+    auth_controller: AuthControllerDep,
+):
+    result = await auth_controller.handle_verify_email(token=token)
+    return handle_result(result)
+
+
+@router.post(
+    "/resend-verification",
+    status_code=status.HTTP_200_OK,
+    summary="Resend verification email",
+    description="Resends the verification email if the account is not yet verified.",
+)
+@limiter.limit("3/hour")
+async def resend_verification(
+    request: Request,
+    data: ResendVerificationSchema,
+    auth_controller: AuthControllerDep,
+    _: None = Depends(verify_captcha)
+):
+    result = await auth_controller.handle_resend_verification(email=data.email)
     return handle_result(result)
 
 
