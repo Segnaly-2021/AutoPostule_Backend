@@ -85,13 +85,7 @@ class RegisterUserUseCase:
 
                 sub_user = UserSubscription(
                     user_id=user_id,
-                    email=params["email"],
-                    account_type=ClientType.BASIC,
-                    is_active=True,
-                    ai_credits_balance=1500,
-                    current_period_start=datetime.datetime.now(datetime.timezone.utc),
-                    next_billing_date=datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=7),
-                    current_period_end=datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=7),
+                    email=params["email"],                    
                 )
 
                 user_prefs = UserPreferences(user_id=user.id)

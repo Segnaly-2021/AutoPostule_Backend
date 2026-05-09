@@ -14,7 +14,7 @@ class UserSubscription(Entity):
     is_past_due: bool = False
     grace_days: int = 0
     ai_credits_balance: int = 0
-    current_period_end: datetime = field(default_factory=lambda: datetime.now(timezone.utc))    
+    current_period_end: datetime = None
     current_period_start: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     cancel_at: datetime | None = None
     next_billing_date: datetime | None = None
