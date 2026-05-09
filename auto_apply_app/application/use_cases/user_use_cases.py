@@ -45,6 +45,45 @@ from auto_apply_app.domain.value_objects import ClientType
 logger = logging.getLogger(__name__)
 
 
+# Helper function for resume upload use case
+# Magic bytes for a real PDF: %PDF-1.x
+_PDF_MAGIC = b"%PDF-"
+_MAX_RESUME_SIZE = 5 * 1024 * 1024   # 5MB hard cap on backend
+_ALLOWED_CONTENT_TYPES = {"application/pdf"}
+_FILENAME_MAX_LEN = 100
+
+
+def _sanitize_filename(filename: str) -> str:
+    """
+    Strip any path components and disallow weird characters.
+    Returns a safe filename like 'My_Resume.pdf' or 'resume.pdf' as fallback.
+    """
+    if not filename:
+        return "resume.pdf"
+
+    # Take only the basename — drops '../', '/', '\', etc.
+    base = filename.replace("\\", "/").split("/")[-1]
+
+    # Allow only alphanumerics, dots, dashes, underscores, spaces. Replace the rest.
+    base = re.sub(r"[^A-Za-z0-9._\- ]", "_", base)
+
+    # Collapse repeated underscores
+    base = re.sub(r"_{2,}", "_", base).strip()
+
+    # Force .pdf extension
+    if not base.lower().endswith(".pdf"):
+        base = f"{base}.pdf"
+
+    # Cap length
+    if len(base) > _FILENAME_MAX_LEN:
+        base = base[-_FILENAME_MAX_LEN:]
+
+    return base or "resume.pdf"
+
+
+
+    
+
 @dataclass
 class RegisterUserUseCase:
     uow: UnitOfWork
@@ -356,46 +395,66 @@ class UploadUserResumeUseCase:
     uow: UnitOfWork
     storage_port: FileStoragePort
 
-    async def execute(self, user_id: str, file_bytes: bytes, content_type: str, original_filename: str) -> Result:
+    async def execute(
+        self,
+        user_id: str,
+        file_bytes: bytes,
+        content_type: str,
+        original_filename: str,
+    ) -> Result:
         try:
-            # 1. Validation
-            if content_type != "application/pdf" and not original_filename.lower().endswith(".pdf"):
-                return Result.failure(Error.validation_error("Only PDF resumes are accepted."))
+            # 1. Size cap (5MB)
+            if len(file_bytes) == 0:
+                return Result.failure(Error.validation_error("Empty file."))
+            if len(file_bytes) > _MAX_RESUME_SIZE:
+                return Result.failure(
+                    Error.validation_error("Resume file size must be under 5MB.")
+                )
 
-            # 2MB Limit check (optional but recommended for LLM context windows)
-            if len(file_bytes) > 2 * 1024 * 1024:
-                return Result.failure(Error.validation_error("Resume file size must be under 2MB."))
+            # 2. Content-Type whitelist
+            if content_type not in _ALLOWED_CONTENT_TYPES:
+                return Result.failure(
+                    Error.validation_error("Only PDF resumes are accepted.")
+                )
+
+            # 3. Magic-byte check — confirms it's actually a PDF, not a renamed file
+            if not file_bytes.startswith(_PDF_MAGIC):
+                logger.warning(
+                    "Resume upload rejected: invalid PDF magic bytes for user_id=%s", user_id
+                )
+                return Result.failure(
+                    Error.validation_error("File is not a valid PDF.")
+                )
+
+            # 4. Filename sanitization
+            safe_filename = _sanitize_filename(original_filename)
 
             async with self.uow as uow:
-                # 2. Fetch User
                 user = await uow.user_repo.get(UUID(user_id.strip()))
                 if not user:
                     return Result.failure(Error.not_found("User", str(user_id)))
 
-                # 3. Upload to Cloud (Machine Naming logic)
-                # This automatically overwrites any existing resume for this user in the bucket
                 storage_path = await self.storage_port.upload_file(
                     user_id=str(user.id),
                     file_bytes=file_bytes,
-                    content_type=content_type,
-                    extension="pdf"
+                    content_type="application/pdf",   # force, ignore client-supplied
+                    extension="pdf",
                 )
 
-                # 4. Update Domain Entity (Human Naming logic)
                 user.resume_path = storage_path
-                user.resume_file_name = original_filename
-                
+                user.resume_file_name = safe_filename
                 await uow.user_repo.save(user)
                 await uow.commit()
 
             return Result.success({
                 "message": "Resume uploaded successfully",
                 "resume_path": storage_path,
-                "resume_file_name": original_filename
+                "resume_file_name": safe_filename,
             })
 
-        except Exception as e:
-            return Result.failure(Error.system_error(f"Failed to process resume: {str(e)}"))
+        except Exception:
+            logger.exception("Failed to process resume upload for user_id=%s", user_id)
+            return Result.failure(Error.system_error("Failed to process resume."))
 
 
 

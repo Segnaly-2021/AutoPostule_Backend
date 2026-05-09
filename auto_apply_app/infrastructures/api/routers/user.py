@@ -1,8 +1,7 @@
-from fastapi import APIRouter, UploadFile, File, Depends, status
+from fastapi import APIRouter, UploadFile, File, Depends, status, HTTPException, Request
 from typing import Annotated
 from slowapi import Limiter
 from slowapi.util import get_remote_address
-from fastapi import Request
 
 
 from auto_apply_app.infrastructures.api.dependencies.result import handle_result
@@ -237,22 +236,33 @@ async def get_my_profile(
 @router.post(
     "/update/me/resume",
     status_code=status.HTTP_200_OK,
-    response_model=UploadResumeViewModel, 
+    response_model=UploadResumeViewModel,
     summary="Upload user resume",
-    description="Uploads a PDF resume to Cloud Storage and updates the user profile with the human-readable filename."
+    description="Uploads a PDF resume to Cloud Storage and updates the user profile.",
 )
+@limiter.limit("5/hour")   # NEW: prevent abuse — 5 uploads/hour per IP
 async def upload_my_resume(
+    request: Request,
     current_user_id: CurrentUserId,
     user_controller: UserControllerDep,
-    resume_file: UploadFile = File(...)
+    resume_file: UploadFile = File(...),
 ):
+    # Early size check — reject before reading the whole file into memory
+    MAX_BYTES = 5 * 1024 * 1024
+    if resume_file.size is not None and resume_file.size > MAX_BYTES:
+        raise HTTPException(status_code=413, detail="File too large (max 5MB).")
+
     file_bytes = await resume_file.read()
-    
+
+    # Belt-and-suspenders — re-check after read, in case `size` was missing
+    if len(file_bytes) > MAX_BYTES:
+        raise HTTPException(status_code=413, detail="File too large (max 5MB).")
+
     result = await user_controller.handle_upload_resume(
         user_id=current_user_id,
         file_bytes=file_bytes,
         content_type=resume_file.content_type,
-        filename=resume_file.filename
+        filename=resume_file.filename,
     )
     return handle_result(result)
 
