@@ -118,6 +118,8 @@ class AuthController:
             
         except ValueError as e:
             return self._present_validation_exception(e)
+        
+        
 
     async def handle_reset_password(self, token: str, new_password: str) -> OperationResult:
         try:
@@ -132,6 +134,30 @@ class AuthController:
             
         except ValueError as e:
             return self._present_validation_exception(e)
+    
+
+    async def handle_verify_email(self, token: str) -> OperationResult:
+        try:
+            result = await self.verify_email_use_case.execute(token)
+            if result.is_success:
+                view_model = self.presenter.present_message(result.value)
+                return OperationResult.succeed(value=view_model)
+            return self._present_error(result)
+        except ValueError as e:
+            return self._present_validation_exception(e)
+
+
+    async def handle_resend_verification(self, email: str) -> OperationResult:
+        try:
+            result = await self.resend_verification_use_case.execute(email)
+            if result.is_success:
+                view_model = self.presenter.present_message(result.value)
+                return OperationResult.succeed(value=view_model)
+            return self._present_error(result)
+        except ValueError as e:
+            return self._present_validation_exception(e)
+
+        
 
     # --- Private Error Mapping Helpers ---
 
