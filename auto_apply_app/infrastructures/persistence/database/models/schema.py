@@ -51,8 +51,10 @@ class UserDB(Base):
     job_offers: Mapped[List["JobOfferDB"]] = relationship(
         "JobOfferDB", back_populates="user", cascade="all, delete-orphan"
     )
-    agent_state: Mapped[Optional["AgentStateDB"]] = relationship(
-        "AgentStateDB", back_populates="user", cascade="all, delete-orphan"
+    agent_states: Mapped[List["AgentStateDB"]] = relationship(
+        "AgentStateDB",
+        back_populates="user",
+        cascade="all, delete-orphan",
     )
 
      # 🚨 ADD THIS:
