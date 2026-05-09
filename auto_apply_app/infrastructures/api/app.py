@@ -45,6 +45,7 @@ from auto_apply_app.infrastructures.api.routers import (
   application,
   preferences,
   free_search,
+  agent_state,
 ) 
 
 logger = logging.getLogger(__name__)
@@ -153,6 +154,12 @@ def create_fastapi_app() -> FastAPI:
         agent.router,
         prefix="/api/v1/agent",
         tags=["agent"]
+    )
+
+    app.include_router(
+        agent_state.router,
+        prefix="/api/v1/agent-state",
+        tags=["Agent State"]
     )
 
     app.include_router(

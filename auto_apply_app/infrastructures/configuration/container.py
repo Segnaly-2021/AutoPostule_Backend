@@ -85,7 +85,7 @@ from auto_apply_app.application.use_cases.preferences_use_cases import (
 # NEW: agent state use cases (replaced ShutdownAgentUseCase + ResetAgentUseCase)
 from auto_apply_app.application.use_cases.agent_state_use_cases import (
     GetAgentStateUseCase,
-    BindAgentToSearchUseCase,
+    CreateAgentStateForSearchUseCase,
     RequestAgentShutdownUseCase,
     IsAgentKilledForSearchUseCase,
 )
@@ -257,7 +257,6 @@ class Application:
         )
 
         # NEW: build the use cases the master agent needs
-        bind_agent_to_search_uc = BindAgentToSearchUseCase(uow)
         is_agent_killed_uc = IsAgentKilledForSearchUseCase(uow)
         complete_agent_run_uc = CompleteAgentRunUseCase(uow)
 
@@ -268,7 +267,7 @@ class Application:
             file_storage=self.file_storage_port,
             encryption_service=self.encryption_port,
             get_agent_state_use_case=GetAgentStateUseCase(uow),
-            bind_agent_to_search_use_case=bind_agent_to_search_uc,
+            create_agent_state_use_case=CreateAgentStateForSearchUseCase(uow),
             is_agent_killed_for_search_use_case=is_agent_killed_uc,
             complete_agent_run_use_case=complete_agent_run_uc,
             get_daily_stats_use_case=GetDailyStatsUseCase(uow),

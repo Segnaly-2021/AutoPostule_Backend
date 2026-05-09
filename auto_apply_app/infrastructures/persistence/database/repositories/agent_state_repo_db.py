@@ -14,9 +14,9 @@ class AgentStateRepoDB(AgentStateRepository):
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def get_by_user_id(self, user_id: UUID) -> Optional[AgentState]:
+    async def get_by_search_id(self, search_id: UUID) -> Optional[AgentState]:
         result = await self.session.execute(
-            select(AgentStateDB).where(AgentStateDB.user_id == user_id)
+            select(AgentStateDB).where(AgentStateDB.search_id == search_id)
         )
         agent_state_db = result.scalar_one_or_none()
         if agent_state_db is None:
@@ -32,17 +32,11 @@ class AgentStateRepoDB(AgentStateRepository):
         )
         await self.session.merge(agent_state_db)
 
-    async def delete(self, user_id: UUID) -> None:
-        result = await self.session.execute(
-            select(AgentStateDB).where(AgentStateDB.user_id == user_id)
-        )
-        agent_state_db = result.scalar_one_or_none()
-        if agent_state_db:
-            await self.session.delete(agent_state_db)
-
     def _map_to_entity(self, agent_state_db: AgentStateDB) -> AgentState:
-        state = AgentState(user_id=agent_state_db.user_id)
+        state = AgentState(
+            user_id=agent_state_db.user_id,
+            search_id=agent_state_db.search_id,
+        )
         state.id = agent_state_db.id
-        state.search_id = agent_state_db.search_id
         state.is_shutdown = agent_state_db.is_shutdown
         return state

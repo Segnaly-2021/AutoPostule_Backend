@@ -8,20 +8,16 @@ from auto_apply_app.domain.entities.agent_state import AgentState
 
 class AgentStateRepository(ABC):
     """
-    Repository for managing agent state.
+    Repository for managing per-search agent kill-switch state.
+    One row per (user_id, search_id) — search_id is unique.
     """
 
     @abstractmethod
-    async def get_by_user_id(self, user_id: UUID) -> Optional[AgentState]:
-        """Retrieve agent state for a specific user."""
+    async def get_by_search_id(self, search_id: UUID) -> Optional[AgentState]:
+        """Retrieve the kill-switch state for a specific search."""
         pass
 
     @abstractmethod
     async def save(self, agent_state: AgentState) -> None:
-        """Save or update agent state."""
-        pass
-
-    @abstractmethod
-    async def delete(self, user_id: UUID) -> None:
-        """Delete agent state (e.g., when user is deleted)."""
+        """Save or update an agent state row."""
         pass

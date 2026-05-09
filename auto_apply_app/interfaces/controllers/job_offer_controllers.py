@@ -11,13 +11,13 @@ from auto_apply_app.application.use_cases.job_offer_use_cases import (
     GetUserApplicationsUseCase,
     ToggleInterviewStatusUseCase,
     ToggleResponseStatusUseCase,
-    GetDailyStatsUseCase  # <-- NEW IMPORT
+    GetDailyStatsUseCase,
 )
 from auto_apply_app.application.dtos.job_offer_dtos import (
     GetUserApplicationsRequest,
     GetAnalyticsRequest,
     ToggleStatusRequest,
-    GetDailyStatsRequest  
+    GetDailyStatsRequest,
 )
 
 
@@ -28,8 +28,10 @@ class JobOfferController:
     toggle_response_status_use_case: ToggleResponseStatusUseCase
     toggle_interview_status_use_case: ToggleInterviewStatusUseCase
     get_analytics_use_case: GetApplicationAnalyticsUseCase
-    get_daily_stats_use_case: GetDailyStatsUseCase  # <-- NEW DEPENDENCY
+    get_daily_stats_use_case: GetDailyStatsUseCase
     job_offer_presenter: JobPresenter
+
+
 
     # ---------- SEARCH / LIST ----------
     async def handle_get_list(
@@ -48,8 +50,6 @@ class JobOfferController:
     ) -> OperationResult:
         
         try:
-            # 1. Construct the Internal DTO from raw inputs
-            # The Controller acts as the factory for Application DTOs
             request_dto = GetUserApplicationsRequest(
                 user_id=user_id,
                 page=page,
@@ -64,19 +64,15 @@ class JobOfferController:
                 has_interview=has_interview
             )
 
-            # 2. Await Use Case (Async)
             result = await self.get_user_applications_use_case.execute(request_dto)
 
-            # 3. Present Result
             if result.is_success:
                 dashboardView = self.job_offer_presenter.present_dashboard(result.value)
                 return OperationResult.succeed(value=dashboardView)
 
-            # 4. Handle Errors
             return self._handle_error(result)
 
         except ValueError as e:
-            # Catch DTO validation errors (e.g. invalid date formats that slipped through)
             error_vm = self.job_offer_presenter.present_error(str(e), "VALIDATION_ERROR")
             return OperationResult.fail(error_vm.message, error_vm.code)
 
@@ -88,7 +84,6 @@ class JobOfferController:
             result = await self.toggle_response_status_use_case.execute(request_dto)
             
             if result.is_success:
-                # Return simple confirmation object
                 return OperationResult.succeed({"id": job_id, "has_response": status})
                 
             return self._handle_error(result)    
@@ -97,10 +92,23 @@ class JobOfferController:
             return OperationResult.fail(error_vm.message, error_vm.code)      
 
 
-    # ---------- ANALYTICS ----------
+    async def handle_toggle_interview(self, job_id: str, status: bool) -> OperationResult:
+        try:
+            request_dto = ToggleStatusRequest(job_offer_id=job_id, status=status)        
+            result = await self.toggle_interview_status_use_case.execute(request_dto)
+            
+            if result.is_success:
+                return OperationResult.succeed({"id": job_id, "has_interview": status})
+                
+            return self._handle_error(result)    
+        except ValueError as e:
+            error_vm = self.job_offer_presenter.present_error(str(e), "VALIDATION_ERROR")
+            return OperationResult.fail(error_vm.message, error_vm.code)
+
+
+    # ---------- ANALYTICS & STATS ----------
     async def handle_analytics(self, user_id: str, period: str) -> OperationResult:
         try:
-
             request_dto = GetAnalyticsRequest(user_id=str(user_id), period=period)        
             result = await self.get_analytics_use_case.execute(request_dto)
             
@@ -113,8 +121,6 @@ class JobOfferController:
             return OperationResult.fail(error_vm.message, error_vm.code)
         
 
-
-    # ---------- DAILY STATS ----------
     async def handle_get_daily_stats(self, user_id: str) -> OperationResult:
         try:
             request_dto = GetDailyStatsRequest(user_id=str(user_id))        
@@ -136,5 +142,3 @@ class JobOfferController:
             str(result.error.code.name)
         )
         return OperationResult.fail(error_vm.message, error_vm.code)
-
- 

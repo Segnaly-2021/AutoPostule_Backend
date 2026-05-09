@@ -201,48 +201,6 @@ class GetJobOfferUseCase:
                 Error.not_found("JobOffer", str(params["job_offer_id"]))
             )
 
-@dataclass
-class ApplyToJobOfferUseCase:
-
-    job_offer_repository: JobOfferRepository
-    
-    def execute(self, request: ApplyToJobOfferRequest) -> Result:
-        """
-        Apply to a job offer.
-        """
-        try:
-            params = request.to_execution_params()
-
-            job_offer = self.job_offer_repository.get(params["job_offer_id"])
-
-            # Start application (FOUND → IN_PROGRESS)
-            job_offer.start_application()
-
-            self.submit_app_port.fill_form(job_offer)
-            self.submit_app_port.submit(job_offer)
-
-            # Set posting id (companyName_offerId_userId)
-            if params.get("user_id") is not None:
-                job_offer.set_job_posting_id(params["user_id"])
-
-            # Complete application
-            job_offer.complete_application()
-
-            self.job_offer_repository.save(job_offer)
-            return Result.success(JobOfferResponse.from_entity(job_offer))
-
-        except JobNotFoundError:
-            return Result.failure(
-                Error.not_found("JobOffer", str(params["job_offer_id"]))
-            )
-        except ValidationError as e:
-            return Result.failure(Error.validation_error(str(e)))
-        except BusinessRuleViolation as e:
-            return Result.failure(Error.business_rule_violation(str(e)))
-        except ValueError as e:
-            # for domain-level status change errors
-            return Result.failure(Error.business_rule_violation(str(e)))
-
 
 @dataclass
 class DeleteJobOfferUseCase:

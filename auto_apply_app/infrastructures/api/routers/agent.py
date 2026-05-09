@@ -33,10 +33,6 @@ def get_agent_state_controller(
 ) -> AgentStateController:
     return container.agent_state_controller
 
-
-AgentStateControllerDep = Annotated[AgentStateController, Depends(get_agent_state_controller)]
-
-
 AgentControllerDep = Annotated[AgentController, Depends(get_agent_controller)]
 
 
@@ -204,24 +200,6 @@ async def resume_job_search_agent_stream(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"}
     )
-
-# ============================================================================
-# KILL AGENT ENDPOINT (Emergency Stop)
-# ============================================================================
-
-
-@router.delete(
-    "/kill",
-    status_code=status.HTTP_200_OK,
-    summary="Kill running agent (emergency stop)",
-    description="Immediately terminate a running job search and clean up resources"
-)
-async def kill_job_search_agent(
-    current_user_id: CurrentUserId,
-    controller: AgentStateControllerDep
-):
-    result = await controller.handle_shutdown(user_id=current_user_id)
-    return handle_result(result)
 
 # ============================================================================
 # PREMIUM REVIEW ENDPOINTS

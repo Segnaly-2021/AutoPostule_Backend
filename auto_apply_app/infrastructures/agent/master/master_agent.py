@@ -42,7 +42,7 @@ from auto_apply_app.application.dtos.job_offer_dtos import GetDailyStatsRequest
 from auto_apply_app.application.use_cases.job_offer_use_cases import GetDailyStatsUseCase
 from auto_apply_app.application.use_cases.agent_state_use_cases import (
     GetAgentStateUseCase,
-    BindAgentToSearchUseCase,
+    CreateAgentStateForSearchUseCase,
     IsAgentKilledForSearchUseCase,
 )
 from auto_apply_app.application.use_cases.agent_usage_use_cases import CompleteAgentRunUseCase
@@ -317,7 +317,7 @@ class MasterAgent(AgentServicePort):
         save_applications_use_case: SaveJobApplicationsUseCase,
         cleanup_unsubmitted_use_case: CleanupUnsubmittedJobsUseCase,
         get_agent_state: GetAgentStateUseCase,
-        bind_agent_to_search: BindAgentToSearchUseCase,           # NEW (replaces reset_agent_state)
+        create_agent_state: CreateAgentStateForSearchUseCase,           # NEW (replaces reset_agent_state)
         is_agent_killed_for_search: IsAgentKilledForSearchUseCase, # NEW
         complete_agent_run: CompleteAgentRunUseCase,               # NEW
         get_daily_stats: GetDailyStatsUseCase,
@@ -338,7 +338,7 @@ class MasterAgent(AgentServicePort):
         self.save_applications = save_applications_use_case
         self.cleanup_unsubmitted = cleanup_unsubmitted_use_case
         self.get_agent_state = get_agent_state
-        self.bind_agent_to_search = bind_agent_to_search           # NEW
+        self.create_agent_state = create_agent_state           # NEW
         self.is_agent_killed_for_search = is_agent_killed_for_search # NEW
         self.complete_agent_run = complete_agent_run               # NEW
         self.get_daily_stats = get_daily_stats
@@ -855,10 +855,10 @@ class MasterAgent(AgentServicePort):
         logger.info("Master Agent waking up for user %s, search %s", user.id, search.id)
 
         # NEW: Bind kill-switch to this specific search (replaces reset_agent_state)
-        bind_result = await self.bind_agent_to_search.execute(user.id, search.id)
-        if not bind_result.is_success:
-            logger.error("Failed to bind agent state for user %s: %s", 
-                        user.id, bind_result.error.message)
+        agent_state = await self.create_agent_state.execute(user.id, search.id)
+        if not agent_state:
+            logger.error("Failed to create agent state for user %s: %s", 
+                        user.id, "Failed to create agent state")
             # Don't abort — bind failure shouldn't kill the run, but log loudly
 
         fingerprint_result = await self.get_or_create_fingerprint.execute(user.id)
@@ -1008,9 +1008,9 @@ class MasterAgent(AgentServicePort):
     ) -> None:
         print(f"🔄 Resuming job search {search.id} for user: {user.email}")
 
-        bind_result = await self.bind_agent_to_search.execute(user.id, search.id)
-        if not bind_result.is_success:
-            logger.error("Failed to bind agent state for resume: %s", bind_result.error.message)
+        agent_state = await self.create_agent_state.execute(user.id, search.id)
+        if not agent_state:
+            logger.error("Failed to create agent state for resume: %s", "Failed to create agent state")
 
         fingerprint_result = await self.get_or_create_fingerprint.execute(user.id)
         fingerprint = fingerprint_result.value if fingerprint_result.is_success else None

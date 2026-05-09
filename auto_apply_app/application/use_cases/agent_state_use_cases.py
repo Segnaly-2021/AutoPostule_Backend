@@ -13,50 +13,48 @@ logger = logging.getLogger(__name__)
 @dataclass
 class GetAgentStateUseCase:
     """
-    Returns the kill-switch state for a user. Creates a default empty state
-    if none exists (so callers never have to handle 'no state yet').
+    Returns the kill-switch state for a specific search.
+    Returns failure if no state exists for that search.
     """
     uow: UnitOfWork
 
-    async def execute(self, user_id: UUID) -> Result:
+    async def execute(self, search_id: UUID) -> Result:
         try:
             async with self.uow as uow:
-                state = await uow.agent_state_repo.get_by_user_id(user_id)
+                state = await uow.agent_state_repo.get_by_search_id(search_id)
                 if state is None:
-                    state = AgentState(user_id=user_id)
+                    return Result.failure(
+                        Error.not_found("AgentState", str(search_id))
+                    )
                 return Result.success(state)
         except Exception:
-            logger.exception("GetAgentStateUseCase failed for user_id=%s", user_id)
+            logger.exception("GetAgentStateUseCase failed for search_id=%s", search_id)
             return Result.failure(
                 Error.system_error("Could not retrieve agent state.")
             )
 
 
 @dataclass
-class BindAgentToSearchUseCase:
+class CreateAgentStateForSearchUseCase:
     """
     Called at the start of a new agent run.
-    Binds the user's kill-switch state to a specific search_id and clears
-    any stale shutdown flag from a previous run.
+    Creates a fresh kill-switch row for this specific (user, search).
     """
     uow: UnitOfWork
 
     async def execute(self, user_id: UUID, search_id: UUID) -> Result:
         try:
             async with self.uow as uow:
-                state = await uow.agent_state_repo.get_by_user_id(user_id)
-                if state is None:
-                    state = AgentState(user_id=user_id)
-                state.bind_to_search(search_id)
+                state = AgentState(user_id=user_id, search_id=search_id)
                 await uow.agent_state_repo.save(state)
                 return Result.success(state)
         except Exception:
             logger.exception(
-                "BindAgentToSearchUseCase failed for user_id=%s search_id=%s",
+                "CreateAgentStateForSearchUseCase failed for user_id=%s search_id=%s",
                 user_id, search_id,
             )
             return Result.failure(
-                Error.system_error("Could not bind agent state.")
+                Error.system_error("Could not create agent state.")
             )
 
 
@@ -64,26 +62,25 @@ class BindAgentToSearchUseCase:
 class RequestAgentShutdownUseCase:
     """
     Called when a user clicks 'Stop' on a specific running search.
-    The shutdown is rejected (no-op) if the bound search_id doesn't match —
-    this prevents a stale shutdown signal from killing a fresh run.
+    Returns 404 if the search has no agent state row (search never started
+    or was already cleaned up).
     """
     uow: UnitOfWork
 
     async def execute(self, user_id: UUID, search_id: UUID) -> Result:
         try:
             async with self.uow as uow:
-                state = await uow.agent_state_repo.get_by_user_id(user_id)
+                state = await uow.agent_state_repo.get_by_search_id(search_id)
                 if state is None:
                     return Result.failure(
-                        Error.not_found("AgentState", str(user_id))
+                        Error.not_found("AgentState", str(search_id))
                     )
-                applied = state.request_shutdown(search_id)
-                if not applied:
+                # Authorization: user can only stop their own searches
+                if state.user_id != user_id:
                     return Result.failure(
-                        Error.conflict(
-                            "Shutdown rejected: this search is no longer active."
-                        )
+                        Error.unauthorized("You do not own this search.")
                     )
+                state.shutdown()
                 await uow.agent_state_repo.save(state)
                 return Result.success(state)
         except Exception:
@@ -99,23 +96,26 @@ class RequestAgentShutdownUseCase:
 @dataclass
 class IsAgentKilledForSearchUseCase:
     """
-    Workers call this to check whether they should stop.
-    Only returns True if the shutdown is bound to THIS specific search.
+    Workers call this on every node exit to check whether to abort.
     """
     uow: UnitOfWork
 
     async def execute(self, user_id: UUID, search_id: UUID) -> Result:
         try:
             async with self.uow as uow:
-                state = await uow.agent_state_repo.get_by_user_id(user_id)
+                state = await uow.agent_state_repo.get_by_search_id(search_id)
                 if state is None:
+                    # No state row → not killed, but also weird. Log it.
+                    logger.warning(
+                        "IsAgentKilledForSearchUseCase: no state row for search_id=%s",
+                        search_id,
+                    )
                     return Result.success(False)
-                return Result.success(state.is_killed_for(search_id))
+                return Result.success(state.is_shutdown)
         except Exception:
             logger.exception(
                 "IsAgentKilledForSearchUseCase failed for user_id=%s search_id=%s",
                 user_id, search_id,
             )
-            # Fail-closed: if we can't check, assume NOT killed and let the run continue.
-            # Failing-open (assume killed) would create more outages than it prevents.
+            # Fail-closed: if we can't check, assume NOT killed.
             return Result.success(False)

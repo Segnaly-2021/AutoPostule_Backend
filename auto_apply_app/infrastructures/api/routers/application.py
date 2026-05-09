@@ -1,3 +1,4 @@
+# auto_apply_app/infrastructures/api/routes/application_routes.py
 
 from fastapi import APIRouter, Depends, Query
 from typing import Annotated
@@ -11,7 +12,7 @@ from auto_apply_app.infrastructures.api.schema.job_offer_schema import (
     ApplicationFilters, 
     PaginationParams, 
     StatusUpdateSchema,
-    AnalyticsViewModel
+    AnalyticsViewModel,
 )
 
 router = APIRouter()
@@ -24,6 +25,10 @@ def get_job_controller(
 
 JobControllerDep = Annotated[JobOfferController, Depends(get_job_controller)]
 
+
+# ==========================================
+# LIST / SEARCH ENDPOINTS
+# ==========================================
 
 @router.get(
     "/me",
@@ -51,6 +56,7 @@ async def get_user_applications(
     )
     return handle_result(result)
 
+
 @router.get(
     "/daily",
     summary="Get daily application stats",
@@ -60,12 +66,15 @@ async def get_daily_applications(
     current_user_id: CurrentUserId,
     controller: JobControllerDep,
 ):
-    # Simply pass the user_id to your dedicated daily stats controller method
     result = await controller.handle_get_daily_stats(
         user_id=current_user_id
     )
     return handle_result(result)
 
+
+# ==========================================
+# STATUS UPDATES
+# ==========================================
 
 @router.patch(
     "/{application_id}/response",
@@ -73,14 +82,10 @@ async def get_daily_applications(
 )
 async def toggle_response_status(
     application_id: str,
-    data: StatusUpdateSchema, # Body: {"status": true}
+    data: StatusUpdateSchema,
     current_user_id: CurrentUserId,
     controller: JobControllerDep
 ):
-    # Notice: We ignore current_user_id for logic if the Repo handles ownership check,
-    # but strictly we should pass it to EnsureOwnershipUseCase. 
-    # For now, we assume the Repo enforces ownership or we pass it down.
-    
     result = await controller.handle_toggle_response(
         job_id=application_id, 
         status=data.status
@@ -105,6 +110,10 @@ async def toggle_interview_status(
     return handle_result(result)
 
 
+# ==========================================
+# ANALYTICS
+# ==========================================
+
 @router.get(
     "/analytics",
     response_model=AnalyticsViewModel,
@@ -120,6 +129,3 @@ async def get_analytics(
         period=period
     )
     return handle_result(result)
-
-    
-

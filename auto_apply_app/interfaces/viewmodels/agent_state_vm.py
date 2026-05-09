@@ -1,20 +1,16 @@
 # auto_apply_app/interfaces/viewmodels/agent_state_vm.py
 from dataclasses import dataclass
+from typing import Optional
 
 
 @dataclass
 class AgentStateViewModel:
-    """
-    View Model for agent state.
-    Matches the exact JSON structure required by the React frontend.
-    """
     isShutdown: bool
+    searchId: Optional[str] = None  # NEW
 
 
 @dataclass
 class AgentStateMessageViewModel:
-    """
-    View Model for agent state mutation responses (shutdown/reset).
-    """
     message: str
     isShutdown: bool
+    searchId: Optional[str] = None  # NEW

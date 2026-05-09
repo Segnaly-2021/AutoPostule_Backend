@@ -18,7 +18,7 @@ from auto_apply_app.application.use_cases.job_offer_use_cases import (
 )
 from auto_apply_app.application.use_cases.agent_state_use_cases import (
     GetAgentStateUseCase,
-    BindAgentToSearchUseCase,
+    CreateAgentStateForSearchUseCase,
     IsAgentKilledForSearchUseCase,
 )
 from auto_apply_app.application.use_cases.agent_usage_use_cases import CompleteAgentRunUseCase
@@ -36,7 +36,7 @@ def create_agent(
     file_storage: FileStoragePort,
     get_ignored_hashes_use_case: GetIgnoredHashesUseCase,
     get_agent_state_use_case: GetAgentStateUseCase,
-    bind_agent_to_search_use_case: BindAgentToSearchUseCase,           # NEW
+    create_agent_state_use_case: CreateAgentStateForSearchUseCase,     # NEW
     is_agent_killed_for_search_use_case: IsAgentKilledForSearchUseCase, # NEW
     complete_agent_run_use_case: CompleteAgentRunUseCase,               # NEW
     cleanup_unsubmitted_use_case: CleanupUnsubmittedJobsUseCase,
@@ -92,7 +92,7 @@ def create_agent(
         save_applications_use_case=results_saver,
         cleanup_unsubmitted_use_case=cleanup_unsubmitted_use_case,
         get_agent_state=get_agent_state_use_case,
-        bind_agent_to_search=bind_agent_to_search_use_case,
+        create_agent_state=create_agent_state_use_case,
         is_agent_killed_for_search=is_agent_killed_for_search_use_case,
         complete_agent_run=complete_agent_run_use_case,
         get_daily_stats=get_daily_stats_use_case,

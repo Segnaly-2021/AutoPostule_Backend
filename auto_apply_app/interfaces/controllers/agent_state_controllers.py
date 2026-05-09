@@ -13,11 +13,6 @@ from auto_apply_app.application.use_cases.agent_state_use_cases import (
 
 @dataclass
 class AgentStateController:
-    """
-    Interface Adapter for kill-switch state.
-    Note: BindAgentToSearchUseCase is NOT exposed here — it's called
-    internally by the MasterAgent at run start, not by API consumers.
-    """
     get_agent_state_use_case: GetAgentStateUseCase
     request_shutdown_use_case: RequestAgentShutdownUseCase
     presenter: AgentStatePresenter
@@ -26,24 +21,22 @@ class AgentStateController:
         try:
             result = await self.get_agent_state_use_case.execute(UUID(user_id))
             if result.is_success:
-                view_model = self.presenter.present(result.value)
+                view_model = self.presenter.present_state(result.value)
                 return OperationResult.succeed(value=view_model)
             return self._present_error(result)
         except ValueError as e:
             return self._present_validation_exception(e)
 
     async def handle_request_shutdown(self, user_id: str, search_id: str) -> OperationResult:
-        """
-        User clicks 'Stop' on a specific running search.
-        Shutdown is rejected if search_id doesn't match the bound search
-        (prevents stale shutdown signals from killing fresh runs).
-        """
         try:
             result = await self.request_shutdown_use_case.execute(
-                UUID(user_id), UUID(search_id)
+                UUID(user_id), UUID(search_id),
             )
             if result.is_success:
-                view_model = self.presenter.present(result.value)
+                view_model = self.presenter.present_message(
+                    message="Shutdown requested",
+                    agent_state=result.value,
+                )
                 return OperationResult.succeed(value=view_model)
             return self._present_error(result)
         except ValueError as e:

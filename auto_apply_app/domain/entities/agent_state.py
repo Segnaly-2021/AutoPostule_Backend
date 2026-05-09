@@ -8,39 +8,19 @@ from auto_apply_app.domain.entities.entity import Entity
 @dataclass
 class AgentState(Entity):
     """
-    Kill-switch for an in-flight agent run.
+    Kill-switch for ONE specific agent run.
     
-    One row per user, lifetime = forever, rebinds on each new search.
-    The search_id binding prevents stale shutdown signals from killing
-    a fresh run, and prevents a fresh run from accidentally un-killing
-    a still-shutting-down run.
+    One row per (user_id, search_id). Created when a search starts,
+    updated only when shutdown is requested. Old rows persist —
+    they're a historical record, not a single mutable flag.
+    
+    No 'binding' or 'rebinding' — each row IS a specific search's state.
+    Race conditions between concurrent searches are impossible by construction.
     """
     user_id: UUID = None
-    search_id: UUID | None = None  # Bound to the current/last run
+    search_id: UUID = None
     is_shutdown: bool = False
 
-    def bind_to_search(self, search_id: UUID) -> None:
-        """
-        Called at the start of a new run.
-        Atomically binds the new search and clears any stale shutdown flag.
-        """
-        self.search_id = search_id
-        self.is_shutdown = False
-
-    def request_shutdown(self, search_id: UUID) -> bool:
-        """
-        Caller must provide the search_id they intend to kill.
-        Returns True if the shutdown was applied, False if it was rejected
-        (because the bound search_id doesn't match — the run is stale).
-        """
-        if self.search_id is None or self.search_id != search_id:
-            return False
+    def shutdown(self) -> None:
+        """Mark this specific search's agent as shut down."""
         self.is_shutdown = True
-        return True
-
-    def is_killed_for(self, search_id: UUID) -> bool:
-        """
-        Workers call this to check whether they should stop.
-        Only returns True if the shutdown is for THIS specific search.
-        """
-        return self.is_shutdown and self.search_id == search_id

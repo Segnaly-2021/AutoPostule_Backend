@@ -415,23 +415,23 @@ class WebFreeSearchPresenter(FreeSearchPresenter):
     
 
 
-
-
 class WebAgentStatePresenter(AgentStatePresenter):
 
     def present_state(self, agent_state: AgentState) -> AgentStateViewModel:
         return AgentStateViewModel(
-            isShutdown=agent_state.is_shutdown
+            isShutdown=agent_state.is_shutdown,
+            searchId=str(agent_state.search_id) if agent_state.search_id else None,
         )
 
-    def present_message(self, message: str, is_shutdown: bool) -> AgentStateMessageViewModel:
+    def present_message(self, message: str, agent_state: AgentState) -> AgentStateMessageViewModel:
         return AgentStateMessageViewModel(
             message=message,
-            isShutdown=is_shutdown
+            isShutdown=agent_state.is_shutdown,
+            searchId=str(agent_state.search_id) if agent_state.search_id else None,
         )
 
     def present_error(self, message: str, error_code: Optional[str] = None) -> ErrorViewModel:
         return ErrorViewModel(
             message=message,
-            code=error_code
+            code=error_code,
         )

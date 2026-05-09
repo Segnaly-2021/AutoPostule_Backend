@@ -52,7 +52,7 @@ class UserDB(Base):
         "JobOfferDB", back_populates="user", cascade="all, delete-orphan"
     )
     agent_state: Mapped[Optional["AgentStateDB"]] = relationship(
-        "AgentStateDB", back_populates="user", uselist=False
+        "AgentStateDB", back_populates="user", cascade="all, delete-orphan"
     )
 
      # 🚨 ADD THIS:
@@ -252,24 +252,23 @@ class JobOfferDB(Base):
 
     search: Mapped["JobSearchDB"] = relationship("JobSearchDB", back_populates="job_offers")
 
-
 class AgentStateDB(Base):
     __tablename__ = "agent_states"
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     user_id: Mapped[UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"),
-        unique=True,
         index=True,
     )
-    search_id: Mapped[Optional[UUID]] = mapped_column(
-        nullable=True,
+    search_id: Mapped[UUID] = mapped_column(
+        ForeignKey("job_searches.id", ondelete="CASCADE"),
+        unique=True,
         index=True,
     )
     is_shutdown: Mapped[bool] = mapped_column(Boolean, default=False)
 
-    user: Mapped["UserDB"] = relationship("UserDB", back_populates="agent_state")
-
+    user: Mapped["UserDB"] = relationship("UserDB", back_populates="agent_states")
+    
 
 class AgentUsageDB(Base):
     __tablename__ = "agent_usages"

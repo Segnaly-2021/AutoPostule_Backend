@@ -12,7 +12,7 @@ router = APIRouter()
 
 
 def get_agent_state_controller(
-    container: Annotated[Application, Depends(get_container)]
+    container: Annotated[Application, Depends(get_container)],
 ) -> AgentStateController:
     return container.agent_state_controller
 
@@ -27,33 +27,28 @@ AgentStateControllerDep = Annotated[AgentStateController, Depends(get_agent_stat
 )
 async def get_agent_state(
     current_user_id: CurrentUserId,
-    controller: AgentStateControllerDep
+    controller: AgentStateControllerDep,
 ):
     result = await controller.handle_get(user_id=current_user_id)
     return handle_result(result)
 
 
 @router.post(
-    "/shutdown",
+    "/shutdown/{search_id}",
     status_code=status.HTTP_200_OK,
-    summary="Shutdown agent — sets is_shutdown to True",
+    summary="Request shutdown for a specific running search",
+    description=(
+        "Stops the agent for the specified search_id only. "
+        "Returns 409 if the bound search_id doesn't match (stale request)."
+    ),
 )
-async def shutdown_agent(
+async def request_shutdown(
+    search_id: str,
     current_user_id: CurrentUserId,
-    controller: AgentStateControllerDep
+    controller: AgentStateControllerDep,
 ):
-    result = await controller.handle_shutdown(user_id=current_user_id)
-    return handle_result(result)
-
-
-@router.post(
-    "/reset",
-    status_code=status.HTTP_200_OK,
-    summary="Reset agent state — sets is_shutdown to False",
-)
-async def reset_agent(
-    current_user_id: CurrentUserId,
-    controller: AgentStateControllerDep
-):
-    result = await controller.handle_reset(user_id=current_user_id)
+    result = await controller.handle_request_shutdown(
+        user_id=current_user_id,
+        search_id=search_id,
+    )
     return handle_result(result)

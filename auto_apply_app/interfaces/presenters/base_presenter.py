@@ -150,15 +150,13 @@ class FreeSearchPresenter():
         """
         pass
     
-
 class AgentStatePresenter(ABC):
-
     @abstractmethod
     def present_state(self, agent_state: AgentState) -> AgentStateViewModel:
         pass
 
     @abstractmethod
-    def present_message(self, message: str, is_shutdown: bool) -> AgentStateMessageViewModel:
+    def present_message(self, message: str, agent_state: AgentState) -> AgentStateMessageViewModel:
         pass
 
     @abstractmethod
