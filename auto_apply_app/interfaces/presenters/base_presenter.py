@@ -8,7 +8,8 @@ from auto_apply_app.interfaces.viewmodels.user_vm import (
   UserViewModel, 
   LoginViewModel,
   SubViewModel,
-  UploadResumeViewModel
+  UploadResumeViewModel,
+  MessageViewModel
 )
 
 
