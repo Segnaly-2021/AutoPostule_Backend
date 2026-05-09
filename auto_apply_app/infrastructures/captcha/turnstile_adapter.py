@@ -20,35 +20,28 @@ class TurnstileCaptchaAdapter(CaptchaServicePort):
         if not self.secret_key:
             raise ValueError("TURNSTILE_SECRET_KEY environment variable is not set")
 
-    async def verify(self, token: str, remote_ip: str | None = None) -> bool:
+    async def verify(self, token: str, remote_ip: str = None) -> bool:
         if not token:
+            logger.warning("Turnstile: empty token")
+            return False
+        if not self.secret_key:
+            logger.error("Turnstile: SECRET_KEY missing on backend!")
             return False
 
-        payload = {"secret": self.secret_key, "response": token}
+        data = {"secret": self.secret_key, "response": token}
         if remote_ip:
-            payload["remoteip"] = remote_ip
+            data["remoteip"] = remote_ip
 
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(self.VERIFY_URL, data=payload, timeout=5.0)
-
-            if response.status_code != 200:
-                logger.warning("Turnstile verify returned %s", response.status_code)
-                return False
-
-            data = response.json()
-            success = bool(data.get("success", False))
-            if not success:
-                # Cloudflare error codes: invalid-input-response, timeout-or-duplicate, etc.
-                logger.info(
-                    "Turnstile verify rejected: %s",
-                    data.get("error-codes", []),
-                )
-            return success
-
-        except httpx.RequestError:
-            logger.exception("Turnstile verify network error")
-            return False
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.post(self.VERIFY_URL, data=data)
+                result = resp.json()
+                if not result.get("success"):
+                    logger.warning(
+                        "Turnstile rejected token. error-codes=%s",
+                        result.get("error-codes"),
+                    )
+                return result.get("success", False)
         except Exception:
-            logger.exception("Turnstile verify unexpected error")
+            logger.exception("Turnstile verify network error")
             return False

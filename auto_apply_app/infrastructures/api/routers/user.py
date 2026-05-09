@@ -56,7 +56,7 @@ AuthControllerDep = Annotated[AuthController, Depends(get_auth_controller)]
         response_model=UserViewModel, 
         status_code=status.HTTP_201_CREATED
 )
-@limiter.limit("3/hour")
+@limiter.limit("5/hour")
 async def register(
     request: Request,
     data: RegisterSchema,  
@@ -79,7 +79,7 @@ async def register(
     summary="Login user",
     description="Authenticate user and receive JWT access token"
 )
-@limiter.limit("5/minute")
+@limiter.limit("10/minute")
 async def login(
     request: Request,
     data: LoginSchema,
