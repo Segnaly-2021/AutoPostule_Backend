@@ -30,7 +30,8 @@ from auto_apply_app.interfaces.viewmodels.user_vm import (
   UserViewModel, 
   LoginViewModel,
   SubViewModel,
-  UploadResumeViewModel
+  UploadResumeViewModel,
+  MessageViewModel,
 )
 from auto_apply_app.interfaces.viewmodels.preferences_vm import (
     PreferencesViewModel, 
@@ -111,6 +112,19 @@ class WebUserPresenter(UserPresenter):
             message=message,
             code=error_code            
         )
+
+    def present_message(self, value) -> MessageViewModel:
+        """
+        Generic message presenter for actions that return a string or dict.
+        Used by verify-email, resend-verification, etc.
+        """
+        if isinstance(value, dict):
+            msg = value.get("message", "")
+        elif isinstance(value, str):
+            msg = value
+        else:
+            msg = str(value)
+        return MessageViewModel(message=msg)
     
 
 class WebSubPresenter(SubPresenter):

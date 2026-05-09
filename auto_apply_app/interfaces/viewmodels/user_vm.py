@@ -52,3 +52,8 @@ class SubViewModel:
     @property
     def can_review_jobs(self) -> bool:
         return self.account == "PREMIUM"
+
+
+@dataclass(frozen=True)
+class MessageViewModel:
+    message: str

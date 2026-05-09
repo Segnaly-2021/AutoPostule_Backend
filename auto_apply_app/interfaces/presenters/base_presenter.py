@@ -34,6 +34,10 @@ class UserPresenter(ABC):
     pass
 
 
+  @abstractmethod
+  def present_message(self, value) -> MessageViewModel:
+    pass
+
   # Add this to your abstract UserPresenter class
   def present_upload_resume_success(self, data: dict) -> UploadResumeViewModel:
       pass
