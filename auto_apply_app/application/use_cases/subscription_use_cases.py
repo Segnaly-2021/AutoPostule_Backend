@@ -76,7 +76,7 @@ class CreateCheckoutSessionUseCase:
                     email=subs.email,
                     price_id=os.getenv(price_id_env),
                     success_url=f"{self.FRONTEND_URL}/job-search/home?checkout=success",
-                    cancel_url=f"{self.FRONTEND_URL}/pricing",
+                    cancel_url=f"{self.FRONTEND_URL}/#pricing",
                     metadata={
                         "user_id": str(subs.user_id),
                         "account_type": plan_name
