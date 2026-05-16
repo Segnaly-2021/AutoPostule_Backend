@@ -19,7 +19,7 @@ from auto_apply_app.infrastructures.persistence.database.repositories.token_blac
 
 from auto_apply_app.infrastructures.config import Config, RepositoryType
 
-# ... (Keep all your existing imports) ...
+
 
 def create_repositories() -> Tuple[TokenBlacklistRepository, Callable[[], UnitOfWork]]:
     """

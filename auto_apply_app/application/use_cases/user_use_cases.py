@@ -2,31 +2,29 @@ from dataclasses import dataclass
 from uuid import UUID
 import datetime
 import logging
-
-
+import re
 
 from auto_apply_app.application.dtos.operations import DeletionOutcome
 from auto_apply_app.application.common.result import Error, Result
 from auto_apply_app.domain.entities.user import User
 from auto_apply_app.domain.exceptions import (
-  UserNotFoundError,
-  ValidationError,
-  BusinessRuleViolation,
-  InvalidTokenException
+    UserNotFoundError,
+    ValidationError,
+    BusinessRuleViolation,
+    InvalidTokenException
 )
 from auto_apply_app.application.dtos.user_dtos import (   
-  UpdateUserRequest,
-  GetUserRequest,
-  UserResponse
+    UpdateUserRequest,
+    GetUserRequest,
+    UserResponse
 )
 from auto_apply_app.application.dtos.auth_user_dtos import (
-  RegisterUserRequest, 
-  LoginResponse, 
-  ChangePasswordRequest,
-  ForgotPasswordRequest, 
-  ResetPasswordRequest
+    RegisterUserRequest, 
+    LoginResponse, 
+    ChangePasswordRequest,
+    ForgotPasswordRequest, 
+    ResetPasswordRequest
 )
-
 
 from auto_apply_app.application.service_ports.email_service_port import EmailServicePort
 from auto_apply_app.application.repositories.unit_of_work import UnitOfWork
@@ -40,7 +38,6 @@ from auto_apply_app.domain.entities.user_subscription import UserSubscription
 
 from auto_apply_app.application.repositories.token_blacklist import TokenBlacklistRepository
 from auto_apply_app.domain.value_objects import ClientType
-
 
 logger = logging.getLogger(__name__)
 
@@ -81,15 +78,12 @@ def _sanitize_filename(filename: str) -> str:
     return base or "resume.pdf"
 
 
-
-    
-
 @dataclass
 class RegisterUserUseCase:
     uow: UnitOfWork
     password_service: PasswordServicePort
-    token_provider: TokenProviderPort                  # NEW
-    email_service: EmailServicePort                    # NEW
+    token_provider: TokenProviderPort                  
+    email_service: EmailServicePort                    
 
     async def execute(self, request: RegisterUserRequest) -> Result:
         try:
@@ -202,7 +196,6 @@ class LoginUserUseCase:
             return Result.failure(Error.system_error("Could not complete login."))
 
 
-
 @dataclass
 class RequestPasswordResetUseCase:
     uow: UnitOfWork
@@ -235,10 +228,9 @@ class RequestPasswordResetUseCase:
             # Return a dictionary instead of a raw string
             return Result.success({"message": "If an account exists, a reset link has been sent."})
 
-        except Exception as e:
-            # 🚨 ADD THIS LINE to expose the real error in GCP logs!
+        except Exception:
             logger.exception(f"CRITICAL: Failed to reset password for user {request.email}")
-            return Result.failure(Error.system_error(str(e)))
+            return Result.failure(Error.system_error("An unexpected error occurred while requesting a password reset."))
 
 
 @dataclass
@@ -280,10 +272,9 @@ class ConfirmPasswordResetUseCase:
 
         except InvalidTokenException:
             return Result.failure(Error.unauthorized("Token is invalid or has expired."))
-        except Exception as e:
-            # 🚨 ADD THIS LINE to expose the real error in GCP logs!
-            logger.exception(f"CRITICAL: Failed to confirm password reset for user {request.email}")
-            return Result.failure(Error.system_error(str(e)))
+        except Exception:
+            logger.exception("CRITICAL: Failed to confirm password reset")
+            return Result.failure(Error.system_error("An unexpected error occurred while processing the password reset."))
 
 
 @dataclass
@@ -292,13 +283,11 @@ class LogoutUseCase:
     token_provider: TokenProviderPort
     token_blacklist_repo: TokenBlacklistRepository
 
-
     async def execute(self, token: str) -> None:
         """
         Invalidates the given token so it cannot be used again.
         """
         try:
-            
             # 1. Extract the unique ID (JTI)
             jti = self.token_provider.get_token_id(token)
             
@@ -315,9 +304,9 @@ class LogoutUseCase:
             # logging out is technically a "success" (the user session is dead).
             # We fail silently here.
             pass
-
-
-
+        except Exception:
+            logger.exception("Failed during logout token invalidation.")
+            # Still returning nothing as we fail silently for logouts
 
 
 @dataclass
@@ -356,10 +345,9 @@ class ChangePasswordUseCase:
 
         except ValidationError as e:
             return Result.failure(Error.validation_error(str(e)))
-            
-        except Exception as e:
-            # Catch-all for database errors or unexpected issues
-            return Result.failure(Error.system_error(str(e)))
+        except Exception:
+            logger.exception(f"CRITICAL: Failed to change password for user {request.user_id}")
+            return Result.failure(Error.system_error("An unexpected error occurred while changing the password."))
 
 
 @dataclass
@@ -368,17 +356,6 @@ class GetUserUseCase:
     uow: UnitOfWork
 
     async def execute(self, request: GetUserRequest) -> Result:
-        """
-        Execute the use case.
-
-        Args:
-        request: a GetUserRequest object containing the unique identifier of the user 
-
-        Returns Result containing:
-        - UserResponse if successful
-        - Error information
-
-        """
         try:
             params = request.to_execution_params()
             async with self.uow as uow:                
@@ -387,7 +364,9 @@ class GetUserUseCase:
 
         except UserNotFoundError:
             return Result.failure(Error.not_found("User", str(params["user_id"])))
-
+        except Exception:
+            logger.exception(f"GetUserUseCase failed for user {request.user_id}")
+            return Result.failure(Error.system_error("An unexpected error occurred while retrieving user details."))
 
 
 @dataclass
@@ -457,13 +436,10 @@ class UploadUserResumeUseCase:
             return Result.failure(Error.system_error("Failed to process resume."))
 
 
-
-
 @dataclass
 class UpdateUserUseCase:
 
   uow: UnitOfWork
-
 
   async def execute(self, request: UpdateUserRequest) -> Result:
     try:
@@ -479,7 +455,9 @@ class UpdateUserUseCase:
         return Result.failure(Error.validation_error(str(e)))
     except BusinessRuleViolation as e:
         return Result.failure(Error.business_rule_violation(str(e)))
-
+    except Exception:
+        logger.exception("UpdateUserUseCase failed")
+        return Result.failure(Error.system_error("An unexpected error occurred while updating the user profile."))
 
 
 @dataclass
@@ -487,19 +465,7 @@ class DeleteUserUseCase:
   """Use case for deleting a user"""
   uow: UnitOfWork
 
-
   async def execute(self, request: GetUserRequest) -> Result:
-    """
-    Execute the use case.
-
-      Args:
-        request: a GetUserRequest object that contains the unique identifier of the user to delete
-
-      Returns:
-        Result containing DeletionResult if successful
-
-    """
-    
     try:
       async with self.uow as uow:
         params = request.to_execution_params()
@@ -508,6 +474,9 @@ class DeleteUserUseCase:
     
     except UserNotFoundError:
       return Result.failure(Error.not_found("User", str(params["user_id"])))
+    except Exception:
+      logger.exception("DeleteUserUseCase failed")
+      return Result.failure(Error.system_error("An unexpected error occurred while deleting the user."))
 
 
 @dataclass
@@ -592,13 +561,3 @@ class ResendVerificationEmailUseCase:
         except Exception:
             logger.exception("CRITICAL: Failed to resend verification email")
             return Result.failure(Error.system_error("Could not resend verification email."))
-
-
-
-
-
-
-
-    
-
-         

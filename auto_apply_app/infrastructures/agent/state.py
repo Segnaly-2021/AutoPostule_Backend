@@ -52,6 +52,7 @@ class JobApplicationState(TypedDict):
     current_url: Annotated[str, take_latest]
     is_logged_in: Annotated[bool, take_latest]
     error: Annotated[Optional[str], take_latest]
+    error_code: Annotated[Optional[str], take_latest] # 🚨 NEW: Added for translation tracking
 
     # --- PARALLEL MERGE LISTS ---
     # operator.add safely concatenates results from all workers

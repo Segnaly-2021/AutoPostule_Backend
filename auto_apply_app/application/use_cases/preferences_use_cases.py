@@ -1,6 +1,5 @@
-# auto_apply_app/application/use_cases/preferences_use_cases.py
+import logging
 from dataclasses import dataclass
-
 
 from auto_apply_app.application.service_ports.encryption_port import EncryptionServicePort
 from auto_apply_app.application.dtos.preferences_dtos import UpdateUserPreferencesRequest
@@ -13,6 +12,7 @@ from auto_apply_app.application.dtos.preferences_dtos import (
 )
 from auto_apply_app.application.common.result import Result, Error
 
+logger = logging.getLogger(__name__)
 
 @dataclass
 class GetUserPreferencesUseCase:
@@ -37,8 +37,10 @@ class GetUserPreferencesUseCase:
                 
                 return Result.success(response)
 
-        except Exception as e:
-            return Result.failure(Error.system_error(str(e)))
+        except Exception:
+            logger.exception("GetUserPreferencesUseCase failed")
+            return Result.failure(Error.system_error("An unexpected error occurred while retrieving user preferences."))
+
         
 @dataclass
 class UpdateUserPreferencesUseCase:
@@ -108,5 +110,6 @@ class UpdateUserPreferencesUseCase:
 
         except ValueError as e:
             return Result.failure(Error.validation_error(str(e)))
-        except Exception as e:
-            return Result.failure(Error.system_error(str(e)))
+        except Exception:
+            logger.exception("UpdateUserPreferencesUseCase failed")
+            return Result.failure(Error.system_error("An unexpected error occurred while updating user preferences."))

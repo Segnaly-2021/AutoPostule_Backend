@@ -119,10 +119,12 @@ class StartJobSearchAgentUseCase:
 
                 # 8. NEW: Bind kill-switch to this specific search
                 #    (atomic with everything else in this UoW)
-                agent_state = await uow.agent_state_repo.get_by_user_id(user.id)
+                agent_state = await uow.agent_state_repo.get_by_search_id(search_mission.id)
                 if agent_state is None:
-                    agent_state = AgentState(user_id=user.id)
-                agent_state.bind_to_search(search_mission.id)
+                    agent_state = AgentState(
+                    user_id=user.id,
+                    search_id=search_mission.id,
+                    )
                 await uow.agent_state_repo.save(agent_state)
 
             # 9. Run the agent (outside UoW — long-running, blocking)
@@ -300,13 +302,11 @@ class KillJobSearchUseCase:
                 search.cancel()
                 await uow.search_repo.save(search)
 
-                # 3. NEW: Signal the kill-switch (scoped to this search_id)
-                agent_state = await uow.agent_state_repo.get_by_user_id(user_id)
+              
+                # 3. Signal the kill-switch (scoped to this specific search_id)
+                agent_state = await uow.agent_state_repo.get_by_search_id(search_id)
                 if agent_state is not None:
-                    # request_shutdown returns False if search_id doesn't match
-                    # (e.g., a newer search has already taken over). That's fine —
-                    # the cancel() above is what matters for the user-facing record.
-                    agent_state.request_shutdown(search_id)
+                    agent_state.shutdown()
                     await uow.agent_state_repo.save(agent_state)
 
             # 4. Force-cleanup any in-flight workers (outside UoW)
@@ -325,7 +325,6 @@ class KillJobSearchUseCase:
             )
 
 
-
 @dataclass
 class GetIgnoredHashesUseCase:
     """
@@ -339,12 +338,11 @@ class GetIgnoredHashesUseCase:
             async with self.uow as uow:
                 hashes = await uow.job_repo.get_recent_application_hashes(user_id, days=days)
                 return Result.success(hashes)
-        except Exception as e:
-            return Result.failure(Error.system_error(str(e)))
-        
+        except Exception:
+            logger.exception(f"GetIgnoredHashesUseCase failed for user {user_id}")
+            return Result.failure(Error.system_error("An unexpected error occurred while retrieving application history."))
 
 
-        
 @dataclass
 class ProcessAgentResultsUseCase:
     """
@@ -359,7 +357,6 @@ class ProcessAgentResultsUseCase:
                 search_mission = await uow.search_repo.get(search_id)
                 
                 ignored_hashes = await uow.job_repo.get_recent_application_hashes(user_id, days=14)
-                print(f"hashes: {ignored_hashes}")
                 count_new = 0
                 
                 for offer in raw_offers:
@@ -374,10 +371,11 @@ class ProcessAgentResultsUseCase:
                     except ValueError:
                         continue
                         
-            print(f"Processed Agent Results: {count_new} new jobs added to search {search_id}")
             return Result.success(search_mission.all_matched_jobs)
-        except Exception as e:
-            return Result.failure(Error.system_error(str(e)))
+        except Exception:
+            logger.exception(f"ProcessAgentResultsUseCase failed for search {search_id}")
+            return Result.failure(Error.system_error("An unexpected error occurred while processing job matches."))
+
 
 @dataclass
 class SaveJobApplicationsUseCase:
@@ -394,12 +392,8 @@ class SaveJobApplicationsUseCase:
 
             count = 0
             
-            # 🚨 FIX 1: Open the transaction ONCE for the entire batch
             async with self.uow as uow:
                 for offer in offers:                
-                    
-                    # 🚨 FIX 2: Only set the dates if they don't exist yet!
-                    # This prevents overwriting the original date during future status updates.
                     if not offer.application_date and offer.status in [ApplicationStatus.SUBMITTED]:
                         offer.application_date = datetime.now(timezone.utc)
                         offer.followup_date = offer.application_date + timedelta(days=7) 
@@ -407,18 +401,13 @@ class SaveJobApplicationsUseCase:
                     await uow.job_repo.save(offer)                
                     count += 1
                     
-            # uow context manager automatically commits the batch here!
-                
-            print(f"Saving Use Case: Saved {count} job applications.")
             return Result.success(f"Successfully saved {count} applications")
 
-        except Exception as e:
-            return Result.failure(Error.system_error(f"DB Save Failed: {str(e)}"))
+        except Exception:
+            logger.exception("SaveJobApplicationsUseCase failed to save batch.")
+            return Result.failure(Error.system_error("An unexpected error occurred while saving job applications."))
         
 
-
-
-    
 @dataclass
 class GetJobsForReviewUseCase:
     """
@@ -428,27 +417,20 @@ class GetJobsForReviewUseCase:
 
     async def execute(self, request: GetJobsForReviewRequest) -> Result:
         try:
-            # 🚨 Extract from DTO (adjust depending on if you use .to_execution_params() or direct properties)
             user_id = str(request.user_id)
             search_id = str(request.search_id)
 
             async with self.uow as uow:
-                # 1. Verify search exists and belongs to user
                 search = await uow.search_repo.get(UUID(search_id.strip()))
                 
                 if not search:
-                    return Result.failure(
-                        Error.not_found("JobSearch", search_id)
-                    )
+                    return Result.failure(Error.not_found("JobSearch", search_id))
                 
                 if str(search.user_id) != user_id:
                     return Result.failure(
-                        Error.unauthorized(
-                            f"Search {search_id} does not belong to user {user_id}"
-                        )
+                        Error.unauthorized(f"Search {search_id} does not belong to user {user_id}")
                     )
                 
-                # 2. Fetch all jobs with status = GENERATED
                 jobs = await uow.job_repo.get_by_search_and_status(
                     search_id=search_id,
                     status=ApplicationStatus.GENERATED
@@ -456,11 +438,11 @@ class GetJobsForReviewUseCase:
                 
                 return Result.success(jobs)
                 
-        except Exception as e:
-            return Result.failure(Error.system_error(str(e)))
+        except Exception:
+            logger.exception(f"GetJobsForReviewUseCase failed for search {request.search_id}")
+            return Result.failure(Error.system_error("An unexpected error occurred while retrieving jobs for review."))
 
 
-      
 @dataclass
 class UpdateCoverLetterUseCase:
     """
@@ -470,54 +452,36 @@ class UpdateCoverLetterUseCase:
 
     async def execute(self, request: UpdateCoverLetterRequest) -> Result:
         try:
-            # 🚨 Extract from DTO
             user_id = str(request.user_id)
             job_id = str(request.job_id)
-            cover_letter = request.cover_letter  # or request.text based on your DTO
+            cover_letter = request.cover_letter
 
-            # 1. Validate cover letter
             if not cover_letter or not cover_letter.strip():
-                return Result.failure(
-                    Error.validation_error("Cover letter cannot be empty")
-                )
+                return Result.failure(Error.validation_error("Cover letter cannot be empty"))
             
             if len(cover_letter) > 5000:
-                return Result.failure(
-                    Error.validation_error("Cover letter too long (max 5000 characters)")
-                )
+                return Result.failure(Error.validation_error("Cover letter too long (max 5000 characters)"))
             
             async with self.uow as uow:
-                # 2. Fetch job
                 job = await uow.job_repo.get(UUID(job_id.strip()))
                 
                 if not job:
-                    return Result.failure(
-                        Error.not_found("JobOffer", job_id)
-                    )
+                    return Result.failure(Error.not_found("JobOffer", job_id))
                 
-                # 3. Verify ownership (job → search → user)
                 search = await uow.search_repo.get(job.search_id)
                 
                 if not search or str(search.user_id) != user_id:
                     return Result.failure(
-                        Error.unauthorized(
-                            f"Job {job_id} does not belong to user {user_id}"
-                        )
+                        Error.unauthorized(f"Job {job_id} does not belong to user {user_id}")
                     )
                 
-                # 4. Validate status (can only edit GENERATED jobs)
                 if job.status != ApplicationStatus.GENERATED:
                     return Result.failure(
-                        Error.conflict(
-                            f"Cannot edit job in {job.status.value} status. "
-                            "Only GENERATED jobs can be edited."
-                        )
+                        Error.conflict("Cannot edit job in its current status. Only GENERATED jobs can be edited.")
                     )
                 
-                # 5. Update cover letter
                 job.cover_letter = cover_letter.strip()
                 
-                # 6. Save
                 await uow.job_repo.save(job)
                 await uow.commit()
                 
@@ -526,10 +490,9 @@ class UpdateCoverLetterUseCase:
                     "message": "Cover letter updated successfully"
                 })
                 
-        except Exception as e:
-            return Result.failure(Error.system_error(str(e)))
-
-
+        except Exception:
+            logger.exception(f"UpdateCoverLetterUseCase failed for job {request.job_id}")
+            return Result.failure(Error.system_error("An unexpected error occurred while updating the cover letter."))
 
 
 @dataclass
@@ -541,42 +504,29 @@ class ApproveJobUseCase:
 
     async def execute(self, request: ApproveJobRequest) -> Result:
         try:
-            # 🚨 Extract from DTO
             user_id = str(request.user_id)
             job_id = str(request.job_id)
 
             async with self.uow as uow:
-                # 1. Fetch job
                 job = await uow.job_repo.get(UUID(job_id.strip()))
                 
                 if not job:
-                    return Result.failure(
-                        Error.not_found("JobOffer", job_id)
-                    )
+                    return Result.failure(Error.not_found("JobOffer", job_id))
                 
-                # 2. Verify ownership
                 search = await uow.search_repo.get(job.search_id)
                 
                 if not search or str(search.user_id) != user_id:
                     return Result.failure(
-                        Error.unauthorized(
-                            f"Job {job_id} does not belong to user {user_id}"
-                        )
+                        Error.unauthorized(f"Job {job_id} does not belong to user {user_id}")
                     )
                 
-                # 3. Validate status (can only approve GENERATED jobs)
                 if job.status != ApplicationStatus.GENERATED:
                     return Result.failure(
-                        Error.conflict(
-                            f"Cannot approve job in {job.status.value} status. "
-                            "Already processed."
-                        )
+                        Error.conflict("Cannot approve job. It has already been processed.")
                     )
                 
-                # 4. Update status to APPROVED
                 job.status = ApplicationStatus.APPROVED
                 
-                # 5. Save
                 await uow.job_repo.save(job)
                 await uow.commit()
                 
@@ -586,11 +536,9 @@ class ApproveJobUseCase:
                     "message": "Job approved successfully"
                 })
                 
-        except Exception as e:
-            return Result.failure(Error.system_error(str(e)))
-
-
-
+        except Exception:
+            logger.exception(f"ApproveJobUseCase failed for job {request.job_id}")
+            return Result.failure(Error.system_error("An unexpected error occurred while approving the job."))
 
 
 @dataclass
@@ -602,42 +550,29 @@ class DiscardJobUseCase:
 
     async def execute(self, request: DiscardJobRequest) -> Result:
         try:
-            # 🚨 Extract from DTO
             user_id = str(request.user_id)
             job_id = str(request.job_id)
 
             async with self.uow as uow:
-                # 1. Fetch job
                 job = await uow.job_repo.get(UUID(job_id.strip()))
                 
                 if not job:
-                    return Result.failure(
-                        Error.not_found("JobOffer", job_id)
-                    )
+                    return Result.failure(Error.not_found("JobOffer", job_id))
                 
-                # 2. Verify ownership
                 search = await uow.search_repo.get(job.search_id)
                 
                 if not search or str(search.user_id) != user_id:
                     return Result.failure(
-                        Error.unauthorized(
-                            f"Job {job_id} does not belong to user {user_id}"
-                        )
+                        Error.unauthorized(f"Job {job_id} does not belong to user {user_id}")
                     )
                 
-                # 3. Validate status (cannot discard submitted jobs)
                 if job.status in [ApplicationStatus.SUBMITTED]:
                     return Result.failure(
-                        Error.conflict(
-                            f"Cannot discard job in {job.status.value} status. "
-                            "Job already submitted."
-                        )
+                        Error.conflict("Cannot discard job. It has already been submitted.")
                     )
                 
-                # 4. Update status to REJECTED
                 job.status = ApplicationStatus.REJECTED
                 
-                # 5. Save
                 await uow.job_repo.save(job)
                 await uow.commit()
                 
@@ -647,11 +582,9 @@ class DiscardJobUseCase:
                     "message": "Job discarded successfully"
                 })
                 
-        except Exception as e:
-            return Result.failure(Error.system_error(str(e)))
-        
-
-
+        except Exception:
+            logger.exception(f"DiscardJobUseCase failed for job {request.job_id}")
+            return Result.failure(Error.system_error("An unexpected error occurred while discarding the job."))
 
 
 @dataclass
@@ -665,27 +598,22 @@ class ConsumeAiCreditsUseCase:
     async def execute(self, user_id: UUID, amount: int) -> Result:
         try:
             async with self.uow as uow:
-                # 1. Fetch Subscription
                 subscription = await uow.subscription_repo.get_by_user_id(str(user_id))
                 
                 if not subscription:
                     return Result.failure(Error.not_found("Subscription", str(user_id)))
                 
-                # 2. Consume Credits (Domain logic handles validation)
                 try:
                     subscription.consume_credits(amount)
                 except ValueError as e:
-                    # Catch the domain error (e.g., "Insufficient AI credits")
+                    # Domain errors like "Insufficient AI credits" are safe to show to the user
                     return Result.failure(Error.validation_error(str(e)))
                 
-                # 3. Save the updated balance
                 await uow.subscription_repo.save(subscription)
-                # Note: call await uow.commit() here if your UoW requires explicit commits!
                 await uow.commit()
                 
                 return Result.success(subscription.ai_credits_balance)
 
-        except Exception as e:
-            return Result.failure(Error.system_error(str(e)))
-        
-
+        except Exception:
+            logger.exception(f"ConsumeAiCreditsUseCase failed for user {user_id}")
+            return Result.failure(Error.system_error("An unexpected error occurred while updating AI credits."))

@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Optional, Generic, TypeVar, Self
 
+
+
 T = TypeVar('T')  # Success type
 
 class ErrorCode(Enum):
@@ -16,8 +18,21 @@ class ErrorCode(Enum):
     VALIDATION_ERROR = "VALIDATION_ERROR"
     BUSINESS_RULE_VIOLATION = "BUSINESS_RULE_VIOLATION"
     UNAUTHORIZED = "UNAUTHORIZED"
-    CONFLICT= "CONFLICT"
+    CONFLICT = "CONFLICT"
     SYSTEMERROR = "SYSTEMERROR"
+    TOO_MANY_REQUESTS = "TOO_MANY_REQUESTS"
+
+
+# 🚨 Single source of truth for your default English fallbacks
+DEFAULT_ERROR_MESSAGES = {
+    ErrorCode.NOT_FOUND: "The requested resource could not be found.",
+    ErrorCode.VALIDATION_ERROR: "The provided data is invalid.",
+    ErrorCode.BUSINESS_RULE_VIOLATION: "A business rule was violated.",
+    ErrorCode.UNAUTHORIZED: "You are not authorized to perform this action.",
+    ErrorCode.CONFLICT: "A conflict occurred with the current state of the resource.",
+    ErrorCode.SYSTEMERROR: "An unexpected system error occurred. Please try again later.",
+    ErrorCode.TOO_MANY_REQUESTS: "You have exceeded the allowed number of requests. Please try again later."
+}
 
 
 @dataclass(frozen=True)
@@ -39,37 +54,66 @@ class Error:
     details: Optional[dict[str, Any]] = None
 
     @classmethod
-    def conflict(cls, mess: str) -> Self:
+    def conflict(cls, message: Optional[str] = None) -> Self:
         return cls(
             code=ErrorCode.CONFLICT,
-            message=mess
+            message=message or DEFAULT_ERROR_MESSAGES[ErrorCode.CONFLICT]
         )
 
     @classmethod
-    def not_found(cls, entity: str, entity_id: str='1234567890....') -> Self:
+    def not_found(cls, entity: Optional[str] = None, entity_id: Optional[str] = None) -> Self:
         """Create a NOT_FOUND error for a specific entity."""
+        if entity and entity_id:
+            msg = f"{entity} with id {entity_id} not found."
+        elif entity:
+            msg = f"{entity} not found."
+        else:
+            msg = DEFAULT_ERROR_MESSAGES[ErrorCode.NOT_FOUND]
+            
         return cls(
             code=ErrorCode.NOT_FOUND,
-            message=f"{entity} with id {entity_id} not found",
+            message=msg,
         )
 
     @classmethod
-    def validation_error(cls, message: str) -> Self:
+    def validation_error(cls, message: Optional[str] = None) -> Self:
         """Create a VALIDATION_ERROR with the specified message."""
-        return cls(code=ErrorCode.VALIDATION_ERROR, message=message)
+        return cls(
+            code=ErrorCode.VALIDATION_ERROR, 
+            message=message or DEFAULT_ERROR_MESSAGES[ErrorCode.VALIDATION_ERROR]
+        )
 
     @classmethod
-    def business_rule_violation(cls, message: str) -> Self:
+    def business_rule_violation(cls, message: Optional[str] = None) -> Self:
         """Create a BUSINESS_RULE_VIOLATION error with the specified message."""
-        return cls(code=ErrorCode.BUSINESS_RULE_VIOLATION, message=message)
+        return cls(
+            code=ErrorCode.BUSINESS_RULE_VIOLATION, 
+            message=message or DEFAULT_ERROR_MESSAGES[ErrorCode.BUSINESS_RULE_VIOLATION]
+        )
     
     @classmethod
-    def system_error(cls, message: str) -> Self:
-        return cls(code=ErrorCode.SYSTEMERROR, message=message)
+    def system_error(cls, message: Optional[str] = None) -> Self:
+        """Create a SYSTEMERROR. Uses a generic default message if none is provided."""
+        return cls(
+            code=ErrorCode.SYSTEMERROR, 
+            message=message or DEFAULT_ERROR_MESSAGES[ErrorCode.SYSTEMERROR]
+        )
     
     @classmethod
-    def unauthorized(cls, mess:str) -> Self:
-        return cls(code=ErrorCode.UNAUTHORIZED, message=mess)
+    def unauthorized(cls, message: Optional[str] = None) -> Self:
+        """Create an UNAUTHORIZED error."""
+        return cls(
+            code=ErrorCode.UNAUTHORIZED, 
+            message=message or DEFAULT_ERROR_MESSAGES[ErrorCode.UNAUTHORIZED]
+        )
+
+    @classmethod
+    def too_many_requests(cls, message: Optional[str] = None) -> Self:
+        """Create a TOO_MANY_REQUESTS error (rate limit / quota / cooldown)."""
+        return cls(
+            code=ErrorCode.TOO_MANY_REQUESTS, 
+            message=message or DEFAULT_ERROR_MESSAGES[ErrorCode.TOO_MANY_REQUESTS]
+        )
 
 
 @dataclass(frozen=True)
@@ -96,9 +140,6 @@ class Result(Generic[T]):
 
     _value: Optional[T] = None
     _error: Optional[Error] = None
-
-    # Add to ErrorCode enum:
-    TOO_MANY_REQUESTS = "TOO_MANY_REQUESTS"
 
     def __post_init__(self):
         if (self._value is None and self._error is None) or \
@@ -133,9 +174,3 @@ class Result(Generic[T]):
     def failure(cls, error: Error) -> 'Result[T]':
         """Create a failed result with the given error."""
         return cls(_error=error)
-
-    # Add to Error class:
-    @classmethod
-    def too_many_requests(cls, message: str) -> Self:
-        """Create a TOO_MANY_REQUESTS error (rate limit / quota / cooldown)."""
-        return cls(code=ErrorCode.TOO_MANY_REQUESTS, message=message)

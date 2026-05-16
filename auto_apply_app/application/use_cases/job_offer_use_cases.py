@@ -1,5 +1,6 @@
-from dataclasses import dataclass
+import logging
 import math
+from dataclasses import dataclass
 from uuid import UUID
 
 from auto_apply_app.domain.value_objects import ApplicationStatus
@@ -17,7 +18,6 @@ from auto_apply_app.domain.exceptions import (
 from auto_apply_app.application.dtos.job_offer_dtos import (
     CreateJobOfferRequest,
     GetJobOfferRequest,
-    ApplyToJobOfferRequest,
     JobOfferResponse,
     GetUserApplicationsRequest, 
     ToggleStatusRequest,
@@ -25,7 +25,7 @@ from auto_apply_app.application.dtos.job_offer_dtos import (
     GetDailyStatsRequest
 )
 
-
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -45,7 +45,6 @@ class GetUserApplicationsUseCase:
                     pagination=params["pagination"]
                 )
             
-
                 # Mapping Entities -> Response DTOs
                 job_responses = [JobOfferResponse.from_entity(job) for job in jobs]
                 
@@ -58,8 +57,9 @@ class GetUserApplicationsUseCase:
                     "limit": request.limit,
                     "total_pages": math.ceil(total_count / request.limit) if total_count > 0 else 0
                 })
-        except Exception as e:
-            return Result.failure(Error.system_error(str(e)))
+        except Exception:
+            logger.exception(f"GetUserApplicationsUseCase failed for user {request.user_id}")
+            return Result.failure(Error.system_error("An unexpected error occurred while retrieving user applications."))
 
 
 @dataclass
@@ -77,18 +77,17 @@ class ToggleResponseStatusUseCase:
                 
                 # Commit the transaction (if the repo method doesn't auto-commit)
                 # In strict UoW patterns, changes are only persisted on exit/commit
-               
                 
                 return Result.success({
                     "id": job.id,
                     "has_response": request.status
-
                 })
                 
         except JobNotFoundError:
             return Result.failure(Error.not_found("JobOffer", request.job_offer_id))
-        except Exception as e:
-            return Result.failure(Error.system_error(str(e)))
+        except Exception:
+            logger.exception(f"ToggleResponseStatusUseCase failed for job {request.job_offer_id}")
+            return Result.failure(Error.system_error("An unexpected error occurred while updating the response status."))
 
 
 @dataclass
@@ -111,8 +110,9 @@ class ToggleInterviewStatusUseCase:
                 
         except JobNotFoundError:
             return Result.failure(Error.not_found("JobOffer", request.job_offer_id))
-        except Exception as e:
-            return Result.failure(Error.system_error(str(e)))
+        except Exception:
+            logger.exception(f"ToggleInterviewStatusUseCase failed for job {request.job_offer_id}")
+            return Result.failure(Error.system_error("An unexpected error occurred while updating the interview status."))
 
 
 @dataclass
@@ -127,8 +127,9 @@ class GetApplicationAnalyticsUseCase:
                     period=request.period
                 )
                 return Result.success(data)
-        except Exception as e:
-            return Result.failure(Error.system_error(str(e)))
+        except Exception:
+            logger.exception(f"GetApplicationAnalyticsUseCase failed for user {request.user_id}")
+            return Result.failure(Error.system_error("An unexpected error occurred while retrieving application analytics."))
 
 
 @dataclass
@@ -151,11 +152,11 @@ class CleanupUnsubmittedJobsUseCase:
                 "deleted_count": deleted_count
             })
                 
-        except Exception as e:
+        except Exception:
             # If an error happened inside the context, UoW auto-rollbacks, 
             # and we catch the error here.
-            return Result.failure(Error.system_error(str(e)))
-
+            logger.exception(f"CleanupUnsubmittedJobsUseCase failed for search {search_id}")
+            return Result.failure(Error.system_error("An unexpected error occurred while cleaning up unsubmitted jobs."))
 
 
 @dataclass
@@ -183,6 +184,10 @@ class CreateJobOfferUseCase:
             return Result.failure(Error.validation_error(str(e)))
         except BusinessRuleViolation as e:
             return Result.failure(Error.business_rule_violation(str(e)))
+        except Exception:
+            # Added catch-all block just to be safe
+            logger.exception("CreateJobOfferUseCase failed")
+            return Result.failure(Error.system_error("An unexpected error occurred while creating the job offer."))
 
 
 @dataclass
@@ -200,6 +205,10 @@ class GetJobOfferUseCase:
             return Result.failure(
                 Error.not_found("JobOffer", str(params["job_offer_id"]))
             )
+        except Exception:
+            # Added catch-all block just to be safe
+            logger.exception(f"GetJobOfferUseCase failed for job {request.job_offer_id}")
+            return Result.failure(Error.system_error("An unexpected error occurred while retrieving the job offer."))
 
 
 @dataclass
@@ -219,6 +228,10 @@ class DeleteJobOfferUseCase:
             return Result.failure(
                 Error.not_found("JobOffer", str(params["job_offer_id"]))
             )
+        except Exception:
+            # Added catch-all block just to be safe
+            logger.exception(f"DeleteJobOfferUseCase failed for job {request.job_offer_id}")
+            return Result.failure(Error.system_error("An unexpected error occurred while deleting the job offer."))
 
 
 @dataclass
@@ -239,5 +252,6 @@ class GetDailyStatsUseCase:
                     "count": count
                 })
                 
-        except Exception as e:
-            return Result.failure(Error.system_error(str(e)))
+        except Exception:
+            logger.exception(f"GetDailyStatsUseCase failed for user {request.user_id}")
+            return Result.failure(Error.system_error("An unexpected error occurred while retrieving daily statistics."))

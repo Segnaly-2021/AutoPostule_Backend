@@ -80,7 +80,14 @@ class HelloWorkWorker:
             return path
         return None
 
-    async def _emit(self, state: JobApplicationState, stage: str, status: str = "in_progress", error: str = None):
+    async def _emit(
+        self,
+        state: JobApplicationState,
+        stage: str,
+        status: str = "in_progress",
+        error: str = None,
+        error_code: str = None,
+    ):
         if not self._progress_callback:
             return
         try:
@@ -91,6 +98,7 @@ class HelloWorkWorker:
                 "node": self._source_name.lower(),
                 "status": "error" if error else status,
                 "error": error,
+                "error_code": error_code or ("SYSTEMERROR" if error else None),
                 "search_id": search_id,
             })
         except Exception:
@@ -244,7 +252,7 @@ class HelloWorkWorker:
                     try:
                         await submit_filters_btn.click()
                         await self.page.wait_for_load_state("networkidle")
-                        await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=10000)
+                        await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=40000)
                         break
                     except Exception:
                         if attempt == 2:
@@ -330,6 +338,13 @@ class HelloWorkWorker:
             return "start_with_session"
         return "start"
 
+    async def _is_killed(self, state: JobApplicationState) -> bool:
+        """Helper to quickly check if the kill switch was activated during a heavy loop."""
+        user_id = state["user"].id
+        search_id = state["job_search"].id
+        killed_result = await self.is_agent_killed_for_search.execute(user_id, search_id)
+        return killed_result.is_success and killed_result.value
+
     # =========================================================================
     # NODES
     # =========================================================================
@@ -344,7 +359,7 @@ class HelloWorkWorker:
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless=preferences.browser_headless,
+                headless= preferences.browser_headless,
                 args=['--disable-blink-features=AutomationControlled'],
             )
 
@@ -375,7 +390,8 @@ class HelloWorkWorker:
             return {}
         except Exception:
             logger.exception("[HW] Session error")
-            return {"error": "Failed to start the secure browsing session."}
+            await self._emit(state, stage="Failed", status="error", error="Failed to start the secure browsing session.", error_code="BROWSER_START_FAILED")
+            return {"error": "Failed to start the secure browsing session.", "error_code": "BROWSER_START_FAILED"}
 
     async def start_session_with_auth(self, state: JobApplicationState):
         await self._emit(state, "Initializing Secure Browser")
@@ -387,7 +403,7 @@ class HelloWorkWorker:
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless=state["preferences"].browser_headless,
+                headless= state["preferences"].browser_headless,
                 args=['--disable-blink-features=AutomationControlled'],
             )
 
@@ -434,7 +450,8 @@ class HelloWorkWorker:
                 except Exception:
                     if attempt == 2:
                         logger.exception("[HW] Auth boot failed after 3 attempts")
-                        return {"error": "Failed to reach HelloWork after multiple attempts."}
+                        await self._emit(state, stage="Failed", status="error", error="Failed to reach HelloWork.", error_code="JOB_BOARD_UNAVAILABLE")
+                        return {"error": "Failed to reach HelloWork after multiple attempts.", "error_code": "JOB_BOARD_UNAVAILABLE"}
                     await asyncio.sleep(2 ** attempt)
 
             await self._handle_cookies()
@@ -467,7 +484,8 @@ class HelloWorkWorker:
 
         except Exception:
             logger.exception("[HW] Browser auth init error")
-            return {"error": "Failed to initialize HelloWork browser."}
+            await self._emit(state, stage="Failed", status="error", error="Failed to initialize browser with session.", error_code="BROWSER_AUTH_FAILED")
+            return {"error": "Failed to initialize HelloWork browser.", "error_code": "BROWSER_AUTH_FAILED"}
 
     async def go_to_job_board(self, state: JobApplicationState):
         await self._emit(state, "Navigating to Job Board")
@@ -481,14 +499,16 @@ class HelloWorkWorker:
                     break
                 except Exception:
                     if attempt == 2:
-                        return {"error": "Could not reach HelloWork. The job board might be down or undergoing maintenance."}
+                        await self._emit(state, stage="Failed", status="error", error="Could not reach HelloWork.", error_code="JOB_BOARD_UNAVAILABLE")
+                        return {"error": "Could not reach HelloWork. The job board might be down or undergoing maintenance.", "error_code": "JOB_BOARD_UNAVAILABLE"}
                     await asyncio.sleep(2 ** attempt)
 
             await human_warmup(self.page, self.base_url)
             return {}
         except Exception:
             logger.exception("[HW] Navigation error")
-            return {"error": "Navigation failed."}
+            await self._emit(state, stage="Failed", status="error", error="Could not reach HelloWork.", error_code="JOB_BOARD_UNAVAILABLE")
+            return {"error": "Navigation failed.", "error_code": "JOB_BOARD_UNAVAILABLE"}
 
     async def request_login(self, state: JobApplicationState):
         await self._emit(state, "Authenticating")
@@ -511,7 +531,8 @@ class HelloWorkWorker:
                         break
                     except Exception:
                         if attempt == 2:
-                            return {"error": "Login failed. Could not open the login modal."}
+                            await self._emit(state, stage="Failed", status="error", error="Could not open the login modal.", error_code="LOGIN_MODAL_FAILED")
+                            return {"error": "Login failed. Could not open the login modal.", "error_code": "LOGIN_MODAL_FAILED"}
                         await self.page.reload(wait_until="networkidle")
                         await asyncio.sleep(2 ** attempt)
 
@@ -536,7 +557,8 @@ class HelloWorkWorker:
                         break
                     except Exception:
                         if attempt == 2:
-                            return {"error": "Login failed. Could not submit credentials."}
+                            await self._emit(state, stage="Failed", status="error", error="Could not submit credentials.", error_code="LOGIN_SUBMIT_FAILED")
+                            return {"error": "Login failed. Could not submit credentials.", "error_code": "LOGIN_SUBMIT_FAILED"}
                         await asyncio.sleep(2 ** attempt)
 
                 for attempt in range(3):
@@ -546,7 +568,8 @@ class HelloWorkWorker:
                         break
                     except Exception:
                         if attempt == 2:
-                            return {"error": "Login failed. Please check your HelloWork credentials in your settings."}
+                            await self._emit(state, stage="Failed", status="error", error="Please check your HelloWork credentials.", error_code="INVALID_CREDENTIALS")
+                            return {"error": "Login failed. Please check your HelloWork credentials in your settings.", "error_code": "INVALID_CREDENTIALS"}
                         await asyncio.sleep(2 ** attempt)
 
                 await self._save_auth_state(user_id)
@@ -555,7 +578,8 @@ class HelloWorkWorker:
 
             except Exception:
                 logger.exception("[HW] Auto-login failed")
-                return {"error": "Failed to log into HelloWork. Check credentials."}
+                await self._emit(state, stage="Failed", status="error", error="Please check your HelloWork credentials.", error_code="INVALID_CREDENTIALS")
+                return {"error": "Failed to log into HelloWork. Check credentials.", "error_code": "INVALID_CREDENTIALS"}
 
             finally:
                 if login_plain is not None:
@@ -573,7 +597,9 @@ class HelloWorkWorker:
                 await self._save_auth_state(user_id)
                 return {}
             except Exception:
-                return {"error": "Manual login timed out."}
+                logger.exception("[HW] Manual login error")
+                await self._emit(state, stage="Failed", status="error", error="Manual login timed out.", error_code="LOGIN_TIMEOUT")
+                return {"error": "Manual login timed out.", "error_code": "LOGIN_TIMEOUT"}
 
     async def search_jobs(self, state: JobApplicationState):
         await self._emit(state, "Searching for Jobs")
@@ -605,7 +631,8 @@ class HelloWorkWorker:
                 except Exception:
                     if attempt == 2:
                         logger.exception("[HW] Search failed after 3 attempts")
-                        return {"error": "Failed to search HelloWork."}
+                        await self._emit(state, stage="Failed", status="error", error="We encountered an issue applying your search filters.", error_code="SEARCH_FILTERS_FAILED")
+                        return {"error": "Failed to search HelloWork.", "error_code": "SEARCH_FILTERS_FAILED"}
                     await asyncio.sleep(2 ** attempt)
 
             await self._handle_cookies()
@@ -617,12 +644,13 @@ class HelloWorkWorker:
                 await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=10000)
                 logger.info("[HW] Search results loaded")
             except Exception:
-                return {"error": "No new matching jobs were found for this search today."}
+                return {"error": "No new matching jobs were found for this search today.", "error_code": "NO_JOBS_FOUND"}
 
             return {}
         except Exception:
             logger.exception("[HW] Search error")
-            return {"error": "Failed to search HelloWork."}
+            await self._emit(state, stage="Failed", status="error", error="We encountered an issue applying your search filters.", error_code="SEARCH_FILTERS_FAILED")
+            return {"error": "Failed to search HelloWork.", "error_code": "SEARCH_FILTERS_FAILED"}
 
     async def get_matched_jobs(self, state: JobApplicationState):
         await self._emit(state, "Extracting Job Data")
@@ -643,6 +671,12 @@ class HelloWorkWorker:
 
         try:
             while len(found_job_entities) < worker_job_limit and page_number <= max_pages:
+
+                # 🚨 INJECTED KILL CHECK: Before processing a new page
+                if await self._is_killed(state):
+                    logger.info("[HW] Kill switch detected. Halting pagination.")
+                    return {"error": "Agent has been stopped.", "error_code": "AGENT_STOPPED", "found_raw_offers": found_job_entities}
+
                 logger.info("[HW] Processing page %s", page_number)
 
                 cards_locator = self.page.locator(self.CARD_SELECTOR)
@@ -658,6 +692,12 @@ class HelloWorkWorker:
                 search_url = self.page.url
 
                 for i in range(count):
+
+                    # 🚨 INJECTED KILL CHECK: Before clicking a new card
+                    if await self._is_killed(state):
+                        logger.info("[HW] Kill switch detected. Halting card processing.")
+                        return {"error": "Agent has been stopped.", "error_code": "AGENT_STOPPED", "found_raw_offers": found_job_entities}
+
                     if len(found_job_entities) >= worker_job_limit:
                         break
 
@@ -762,7 +802,8 @@ class HelloWorkWorker:
 
         except Exception:
             logger.exception("[HW] Fatal scraping error")
-            return {"error": "[HW] Fatal scraping error."}
+            await self._emit(state, stage="Failed", status="error", error="A critical error occurred while scanning the job listings.", error_code="SCRAPING_FAILED")
+            return {"error": "A critical error occurred while scanning the job listings. We have safely halted the process.", "error_code": "SCRAPING_FAILED"}
 
         if not found_job_entities:
             return {"found_raw_offers": []}
@@ -781,11 +822,18 @@ class HelloWorkWorker:
         hw_jobs = [job for job in jobs_to_submit if job.job_board == JobBoard.HELLOWORK and job.status == ApplicationStatus.APPROVED]
 
         if not hw_jobs:
-            return {"error": "no job to submit for HW worker"}
+            logger.info("[HW] No approved HW jobs in submission queue")
+            return {"status": "no_hw_jobs_to_submit"}
 
         successful_submissions = []
         i = 0
         for offer in hw_jobs:
+
+            # 🚨 INJECTED KILL CHECK: Before starting the next submission
+            if await self._is_killed(state):
+                logger.info("[HW] Kill switch detected. Halting submissions.")
+                return {"error": "Agent has been stopped.", "error_code": "AGENT_STOPPED", "submitted_offers": successful_submissions}
+
             if len(successful_submissions) >= assigned_submit_limit:
                 logger.info("[HW] Reached assigned submission limit (%s)", assigned_submit_limit)
                 break
@@ -865,13 +913,23 @@ class HelloWorkWorker:
             i += 1
 
         if not successful_submissions:
-            return {"error": "All HW submissions failed."}
+            await self._emit(state, stage="Failed", status="error", error="All application attempts failed.", error_code="SUBMISSION_FAILED")
+            return {"error": "All application attempts failed. The job board may have updated its application form structure.", "error_code": "SUBMISSION_FAILED"}
 
         return {"submitted_offers": successful_submissions}
 
     async def cleanup(self, state: JobApplicationState):
         await self._emit(state, "Cleaning Up")
         await self.force_cleanup()
+
+        # 🚨 Fail-soft cleanup: if the circuit breaker was tripped, scrub the error
+        # from state so the master can keep partial worker results from the happy path.
+        if state.get("error"):
+            return {
+                "error": "",
+                "error_code": ""
+            }
+
         return {}
 
     # =========================================================================

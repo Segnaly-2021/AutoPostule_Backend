@@ -1,6 +1,7 @@
+import logging
+import os
 from dataclasses import dataclass
 from datetime import datetime, UTC
-import os
 
 from auto_apply_app.application.common.result import Error, Result
 from auto_apply_app.application.service_ports.payment_port import PaymentPort
@@ -14,7 +15,7 @@ from auto_apply_app.application.dtos.subscription_dtos import (
     HandlePaymentWebhookRequest,
 )
 
-
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -40,10 +41,10 @@ class GetUserSubscriptionUseCase:
             # 2. Map to DTO and return success
             return Result.success(UserSubscriptionResponse.from_entity(subscription))
 
-        except Exception as e:
-            return Result.failure(Error.system_error(str(e)))
+        except Exception:
+            logger.exception(f"GetUserSubscriptionUseCase failed for user {request.user_id}")
+            return Result.failure(Error.system_error("An unexpected error occurred while retrieving the subscription."))
         
-
 
 @dataclass
 class CreateCheckoutSessionUseCase:
@@ -84,8 +85,9 @@ class CreateCheckoutSessionUseCase:
 
             return Result.success({"message": CheckoutSessionResponse(checkout_url=url)})
 
-        except Exception as e:
-            return Result.failure(Error.system_error(str(e)))
+        except Exception:
+            logger.exception(f"CreateCheckoutSessionUseCase failed for user {request.user_id}")
+            return Result.failure(Error.system_error("An unexpected error occurred while creating the checkout session."))
 
     def _map_plan_to_price_id(self, plan_name: str) -> str | None:
         """
@@ -97,6 +99,7 @@ class CreateCheckoutSessionUseCase:
             "PREMIUM": "PREMIUM_PRICE_ID"
         }
         return mapping.get(plan_name)
+
 
 @dataclass
 class HandlePaymentWebhookUseCase:
@@ -147,8 +150,9 @@ class HandlePaymentWebhookUseCase:
 
             return Result.success("Event ignored (not relevant to business)")
 
-        except Exception as e:
-            return Result.failure(Error.system_error(str(e)))
+        except Exception:
+            logger.exception("HandlePaymentWebhookUseCase failed during Stripe webhook processing.")
+            return Result.failure(Error.system_error("An unexpected error occurred while processing the payment webhook."))
         
         
         
@@ -346,7 +350,6 @@ class GetManagementPortalUseCase:
                 )
 
             return Result.success({"message": {"portal_url": portal_url}})
-        except Exception as e:
-            return Result.failure(Error.system_error(str(e)))
-
-
+        except Exception:
+            logger.exception(f"GetManagementPortalUseCase failed for user {user_id}")
+            return Result.failure(Error.system_error("An unexpected error occurred while accessing the management portal."))

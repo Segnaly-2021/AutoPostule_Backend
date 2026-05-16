@@ -79,7 +79,14 @@ class JobTeaserWorker:
             temperature=preferences.llm_temperature,
         )
 
-    async def _emit(self, state: JobApplicationState, stage: str, status: str = "in_progress", error: str = None):
+    async def _emit(
+        self,
+        state: JobApplicationState,
+        stage: str,
+        status: str = "in_progress",
+        error: str = None,
+        error_code: str = None,
+    ):
         if not self._progress_callback:
             return
         try:
@@ -90,6 +97,7 @@ class JobTeaserWorker:
                 "node": self._source_name.lower(),
                 "status": "error" if error else status,
                 "error": error,
+                "error_code": error_code or ("SYSTEMERROR" if error else None),
                 "search_id": search_id,
             })
         except Exception:
@@ -221,7 +229,7 @@ class JobTeaserWorker:
             for attempt in range(3):
                 try:
                     await next_control.click()
-                    await self.page.wait_for_load_state("networkidle")
+                    await self.page.wait_for_load_state("domcontentloaded")
                     await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=45000)
                     break
                 except Exception:
@@ -271,12 +279,12 @@ class JobTeaserWorker:
                                 label = self.page.locator(f'ul#multi-select-container-options label[for="{cb_id}"]')
                                 await human_delay(300, 700)
                                 await label.click()
-                                await self.page.wait_for_load_state("networkidle")
+                                await self.page.wait_for_load_state("domcontentloaded")
                         except Exception:
                             logger.warning("[JOBTEASER] Could not check contract '%s'", contract.value)
 
                     await self.page.keyboard.press("Enter")
-                    await self.page.wait_for_load_state("networkidle")
+                    await self.page.wait_for_load_state("domcontentloaded")
                 except Exception:
                     logger.exception("[JOBTEASER] Contract filter step failed")
 
@@ -295,7 +303,7 @@ class JobTeaserWorker:
                     ).first
                     await first_suggestion.wait_for(state="visible", timeout=30000)
                     await human_click(first_suggestion)
-                    await self.page.wait_for_load_state("networkidle")
+                    await self.page.wait_for_load_state("domcontentloaded")
                 except Exception:
                     logger.exception("[JOBTEASER] Location filter step failed")
 
@@ -336,7 +344,7 @@ class JobTeaserWorker:
                         'button[data-testid="job-ads-secondary-filters-apply-button"]'
                     )
                     await apply_btn.click()
-                    await self.page.wait_for_load_state("networkidle")
+                    await self.page.wait_for_load_state("domcontentloaded")
                     await self.page.wait_for_selector(self.CARD_SELECTOR, state="attached", timeout=15000)
                     break
                 except Exception:
@@ -355,7 +363,7 @@ class JobTeaserWorker:
         try:
             if await self.page.locator('a[title="Retourner aux résultats"]').count() > 0:
                 await self.page.locator('a[title="Retourner aux résultats"]').click()
-                await self.page.wait_for_load_state("networkidle")
+                await self.page.wait_for_load_state("domcontentloaded")
                 await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=15000)
                 await self._handle_cookies()
                 await human_delay(800, 2000)
@@ -404,6 +412,13 @@ class JobTeaserWorker:
             return "start_with_session"
         return "start"
 
+    async def _is_killed(self, state: JobApplicationState) -> bool:
+        """Helper to quickly check if the kill switch was activated during a heavy loop."""
+        user_id = state["user"].id
+        search_id = state["job_search"].id
+        killed_result = await self.is_agent_killed_for_search.execute(user_id, search_id)
+        return killed_result.is_success and killed_result.value
+
     # =========================================================================
     # NODES
     # =========================================================================
@@ -419,7 +434,7 @@ class JobTeaserWorker:
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless=preferences.browser_headless,
+                headless= preferences.browser_headless,
                 args=['--disable-blink-features=AutomationControlled'],
             )
 
@@ -451,7 +466,8 @@ class JobTeaserWorker:
             return {}
         except Exception:
             logger.exception("[JOBTEASER] Session error")
-            return {"error": "Failed to start the secure browsing session."}
+            await self._emit(state, stage="Failed", status="error", error="Failed to start the secure browsing session.", error_code="BROWSER_START_FAILED")
+            return {"error": "Failed to start the secure browsing session.", "error_code": "BROWSER_START_FAILED"}
 
     async def start_session_with_auth(self, state: JobApplicationState):
         await self._emit(state, "Initializing Secure Browser")
@@ -463,7 +479,7 @@ class JobTeaserWorker:
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless=state["preferences"].browser_headless,
+                headless= state["preferences"].browser_headless,
                 args=['--disable-blink-features=AutomationControlled'],
             )
 
@@ -515,7 +531,8 @@ class JobTeaserWorker:
                 except Exception:
                     if attempt == 2:
                         logger.exception("[JOBTEASER] Auth boot failed after 3 attempts")
-                        return {"error": "Failed to reach JobTeaser after multiple attempts."}
+                        await self._emit(state, stage="Failed", status="error", error="Failed to reach JobTeaser.", error_code="JOB_BOARD_UNAVAILABLE")
+                        return {"error": "Failed to reach JobTeaser after multiple attempts.", "error_code": "JOB_BOARD_UNAVAILABLE"}
                     await asyncio.sleep(2 ** attempt)
 
             await human_warmup(self.page, self.base_url)
@@ -525,11 +542,11 @@ class JobTeaserWorker:
             ).first
             await offres_link.wait_for(state="visible", timeout=15000)
             await human_click(offres_link)
-            await self.page.wait_for_load_state("networkidle")
+            # await self.page.wait_for_load_state("networkidle", timeout=90000)
             await self.page.wait_for_selector(
                 'input[id="job-ads-autocomplete-keyword-search"]',
                 state="visible",
-                timeout=60000,
+                timeout=90000,
             )
 
             search_entity = state["job_search"]
@@ -555,7 +572,7 @@ class JobTeaserWorker:
 
                 await self._apply_filters(contract_types, location)
 
-                await self.page.wait_for_load_state("networkidle")
+                #await self.page.wait_for_load_state("networkidle")
 
                 try:
                     await self.page.wait_for_selector(self.CARD_SELECTOR, state="attached", timeout=30000)
@@ -570,7 +587,8 @@ class JobTeaserWorker:
 
         except Exception:
             logger.exception("[JOBTEASER] Browser auth init error")
-            return {"error": "Failed to initialize JobTeaser browser with session."}
+            await self._emit(state, stage="Failed", status="error", error="Failed to initialize browser with session.", error_code="BROWSER_AUTH_FAILED")
+            return {"error": "Failed to initialize JobTeaser browser with session.", "error_code": "BROWSER_AUTH_FAILED"}
 
     async def go_to_job_board(self, state: JobApplicationState):
         await self._emit(state, "Navigating to Job Board")
@@ -584,14 +602,16 @@ class JobTeaserWorker:
                     break
                 except Exception:
                     if attempt == 2:
-                        return {"error": "Could not reach JobTeaser. The job board might be down or undergoing maintenance."}
+                        await self._emit(state, stage="Failed", status="error", error="Could not reach JobTeaser.", error_code="JOB_BOARD_UNAVAILABLE")
+                        return {"error": "Could not reach JobTeaser. The job board might be down or undergoing maintenance.", "error_code": "JOB_BOARD_UNAVAILABLE"}
                     await asyncio.sleep(2 ** attempt)
 
             await human_warmup(self.page, self.base_url)
             return {}
         except Exception:
             logger.exception("[JOBTEASER] Navigation error")
-            return {"error": "Navigation failed."}
+            await self._emit(state, stage="Failed", status="error", error="Could not reach JobTeaser.", error_code="JOB_BOARD_UNAVAILABLE")
+            return {"error": "Navigation failed.", "error_code": "JOB_BOARD_UNAVAILABLE"}
 
     async def request_login(self, state: JobApplicationState):
         await self._emit(state, "Authenticating")
@@ -626,7 +646,8 @@ class JobTeaserWorker:
                         break
                     except Exception:
                         if attempt == 2:
-                            return {"error": "Login failed. Could not reach the login form."}
+                            await self._emit(state, stage="Failed", status="error", error="Could not reach the login form.", error_code="LOGIN_MODAL_FAILED")
+                            return {"error": "Login failed. Could not reach the login form.", "error_code": "LOGIN_MODAL_FAILED"}
                         await self.page.reload(wait_until="networkidle")
                         await asyncio.sleep(2 ** attempt)
 
@@ -650,7 +671,8 @@ class JobTeaserWorker:
                         break
                     except Exception:
                         if attempt == 2:
-                            return {"error": "Login failed. Could not submit credentials."}
+                            await self._emit(state, stage="Failed", status="error", error="Could not submit credentials.", error_code="LOGIN_SUBMIT_FAILED")
+                            return {"error": "Login failed. Could not submit credentials.", "error_code": "LOGIN_SUBMIT_FAILED"}
                         await asyncio.sleep(2 ** attempt)
 
                 for attempt in range(3):
@@ -659,7 +681,8 @@ class JobTeaserWorker:
                         break
                     except Exception:
                         if attempt == 2:
-                            return {"error": "Login failed. Please check your JobTeaser credentials in your settings."}
+                            await self._emit(state, stage="Failed", status="error", error="Please check your JobTeaser credentials.", error_code="INVALID_CREDENTIALS")
+                            return {"error": "Login failed. Please check your JobTeaser credentials in your settings.", "error_code": "INVALID_CREDENTIALS"}
                         await asyncio.sleep(2 ** attempt)
 
                 offres_link = self.page.locator(
@@ -667,7 +690,7 @@ class JobTeaserWorker:
                 ).first
                 await offres_link.wait_for(state="visible", timeout=15000)
                 await human_click(offres_link)
-                await self.page.wait_for_load_state("networkidle")
+                #await self.page.wait_for_load_state("networkidle")
 
                 logger.info("[JOBTEASER] Auto-login successful")
                 await self._save_auth_state(user_id)
@@ -675,7 +698,8 @@ class JobTeaserWorker:
 
             except Exception:
                 logger.exception("[JOBTEASER] Auto-login failed")
-                return {"error": "Failed to log into JobTeaser. Please check your credentials."}
+                await self._emit(state, stage="Failed", status="error", error="Please check your JobTeaser credentials.", error_code="INVALID_CREDENTIALS")
+                return {"error": "Failed to log into JobTeaser. Please check your credentials.", "error_code": "INVALID_CREDENTIALS"}
 
             finally:
                 if login_plain is not None:
@@ -693,7 +717,8 @@ class JobTeaserWorker:
                 return {}
             except Exception:
                 logger.exception("[JOBTEASER] Manual login error")
-                return {"error": "Manual login timed out."}
+                await self._emit(state, stage="Failed", status="error", error="Manual login timed out.", error_code="LOGIN_TIMEOUT")
+                return {"error": "Manual login timed out.", "error_code": "LOGIN_TIMEOUT"}
 
     async def search_jobs(self, state: JobApplicationState):
         await self._emit(state, "Searching for Jobs")
@@ -729,26 +754,28 @@ class JobTeaserWorker:
                     break
                 except Exception:
                     if attempt == 2:
-                        return {"error": f"Failed to execute search for '{job_title}' on JobTeaser."}
+                        await self._emit(state, stage="Failed", status="error", error="We encountered an issue applying your search filters.", error_code="SEARCH_FILTERS_FAILED")
+                        return {"error": f"Failed to execute search for '{job_title}' on JobTeaser.", "error_code": "SEARCH_FILTERS_FAILED"}
                     await self.page.reload(wait_until="networkidle")
                     await asyncio.sleep(2 ** attempt)
 
             await self._apply_filters(contract_types, location)
 
-            await self.page.wait_for_load_state("networkidle")
+            #await self.page.wait_for_load_state("networkidle")
 
             try:
                 await self.page.wait_for_selector(self.CARD_SELECTOR, state="attached", timeout=90000)
                 logger.info("[JOBTEASER] Search results loaded")
             except Exception:
-                return {"error": "No new matching jobs were found for this search today."}
+                return {"error": "No new matching jobs were found for this search today.", "error_code": "NO_JOBS_FOUND"}
 
             await self._handle_cookies()
             return {}
 
         except Exception:
             logger.exception("[JOBTEASER] Search error")
-            return {"error": f"Failed to execute search for '{job_title}' on JobTeaser."}
+            await self._emit(state, stage="Failed", status="error", error="We encountered an issue applying your search filters.", error_code="SEARCH_FILTERS_FAILED")
+            return {"error": f"Failed to execute search for '{job_title}' on JobTeaser.", "error_code": "SEARCH_FILTERS_FAILED"}
 
     async def get_matched_jobs(self, state: JobApplicationState):
         await self._emit(state, "Extracting Job Data")
@@ -774,6 +801,12 @@ class JobTeaserWorker:
 
         try:
             while len(found_job_entities) < worker_job_limit and page_number <= max_pages:
+
+                # 🚨 INJECTED KILL CHECK: Before processing a new page
+                if await self._is_killed(state):
+                    logger.info("[JOBTEASER] Kill switch detected. Halting pagination.")
+                    return {"error": "Agent has been stopped.", "error_code": "AGENT_STOPPED", "found_raw_offers": found_job_entities}
+
                 logger.info("[JOBTEASER] Processing page %s", page_number)
 
                 try:
@@ -789,6 +822,11 @@ class JobTeaserWorker:
                 result_url = self.page.url
 
                 for i in range(count):
+                    # 🚨 INJECTED KILL CHECK: Before clicking a new card
+                    if await self._is_killed(state):
+                        logger.info("[JOBTEASER] Kill switch detected. Halting card processing.")
+                        return {"error": "Agent has been stopped.", "error_code": "AGENT_STOPPED", "found_raw_offers": found_job_entities}
+
                     if len(found_job_entities) >= worker_job_limit:
                         break
 
@@ -897,7 +935,8 @@ class JobTeaserWorker:
 
         except Exception:
             logger.exception("[JOBTEASER] Fatal scraping error")
-            return {"error": "A critical error occurred while scanning JobTeaser."}
+            await self._emit(state, stage="Failed", status="error", error="A critical error occurred while scanning the job listings.", error_code="SCRAPING_FAILED")
+            return {"error": "A critical error occurred while scanning JobTeaser.", "error_code": "SCRAPING_FAILED"}
 
         if not found_job_entities:
             return {"found_raw_offers": []}
@@ -926,6 +965,12 @@ class JobTeaserWorker:
         successful_submissions = []
         i = 0
         for offer in teaser_jobs:
+
+            # 🚨 INJECTED KILL CHECK: Before starting the next submission
+            if await self._is_killed(state):
+                logger.info("[JOBTEASER] Kill switch detected. Halting submissions.")
+                return {"error": "Agent has been stopped.", "error_code": "AGENT_STOPPED", "submitted_offers": successful_submissions}
+
             if len(successful_submissions) >= assigned_submit_limit:
                 logger.info("[JOBTEASER] Reached assigned submission limit (%s)", assigned_submit_limit)
                 break
@@ -1030,7 +1075,8 @@ class JobTeaserWorker:
             i += 1
 
         if not successful_submissions:
-            return {"error": "All JobTeaser application attempts failed. Forms may have changed."}
+            await self._emit(state, stage="Failed", status="error", error="All application attempts failed.", error_code="SUBMISSION_FAILED")
+            return {"error": "All JobTeaser application attempts failed. Forms may have changed.", "error_code": "SUBMISSION_FAILED"}
 
         logger.info("[JOBTEASER] Successfully submitted %s applications", len(successful_submissions))
         return {"submitted_offers": successful_submissions}
@@ -1038,6 +1084,15 @@ class JobTeaserWorker:
     async def cleanup(self, state: JobApplicationState):
         await self._emit(state, "Cleaning Up")
         await self.force_cleanup()
+
+        # 🚨 Fail-soft cleanup: if the circuit breaker was tripped, scrub the error
+        # from state so the master can keep partial worker results from the happy path.
+        if state.get("error"):
+            return {
+                "error": "",
+                "error_code": ""
+            }
+
         return {}
 
     # =========================================================================

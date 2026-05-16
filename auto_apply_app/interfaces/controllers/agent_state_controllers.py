@@ -30,7 +30,7 @@ class AgentStateController:
     async def handle_request_shutdown(self, user_id: str, search_id: str) -> OperationResult:
         try:
             result = await self.request_shutdown_use_case.execute(
-                UUID(user_id), UUID(search_id),
+                UUID(user_id.strip()), UUID(search_id.strip()),
             )
             if result.is_success:
                 view_model = self.presenter.present_message(

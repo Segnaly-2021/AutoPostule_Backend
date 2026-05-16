@@ -14,6 +14,8 @@ from auto_apply_app.infrastructures.config import RepositoryType
 
 # 🚨 NEW: Global exception handlers to prevent raw errors from reaching the frontend
 from auto_apply_app.infrastructures.api.exception_handlers import register_exception_handlers
+from auto_apply_app.infrastructures.api.middleware.ip_blocklist import ip_blocklist_middleware
+
 
 # Import your concrete implementations
 from auto_apply_app.infrastructures.authentication.password_service import PasswordService
@@ -123,7 +125,7 @@ def create_fastapi_app() -> FastAPI:
     # This ensures no raw error (SQL, asyncpg, etc.) ever reaches the frontend
     register_exception_handlers(app)
 
-    
+    app.middleware("http")(ip_blocklist_middleware)
 
     app.add_middleware(
         CORSMiddleware,

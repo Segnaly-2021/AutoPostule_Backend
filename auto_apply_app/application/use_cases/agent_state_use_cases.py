@@ -34,20 +34,30 @@ class GetAgentStateUseCase:
             )
 
 
+
 @dataclass
 class CreateAgentStateForSearchUseCase:
     """
     Called at the start of a new agent run.
-    Creates a fresh kill-switch row for this specific (user, search).
+    Creates a fresh kill-switch row for this specific (user, search),
+    or retrieves it if it already exists (Get-or-Create pattern).
     """
     uow: UnitOfWork
 
     async def execute(self, user_id: UUID, search_id: UUID) -> Result:
         try:
             async with self.uow as uow:
+                # 1. Try to get existing state first
+                existing_state = await uow.agent_state_repo.get_by_search_id(search_id)
+                
+                if existing_state:                        
+                    return Result.success(existing_state)
+
+                # 2. If it doesn't exist, create it
                 state = AgentState(user_id=user_id, search_id=search_id)
                 await uow.agent_state_repo.save(state)
                 return Result.success(state)
+                
         except Exception:
             logger.exception(
                 "CreateAgentStateForSearchUseCase failed for user_id=%s search_id=%s",
@@ -56,7 +66,6 @@ class CreateAgentStateForSearchUseCase:
             return Result.failure(
                 Error.system_error("Could not create agent state.")
             )
-
 
 @dataclass
 class RequestAgentShutdownUseCase:

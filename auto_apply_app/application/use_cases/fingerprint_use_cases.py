@@ -1,4 +1,5 @@
 # auto_apply_app/application/use_cases/fingerprint_use_cases.py
+import logging
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -9,6 +10,7 @@ from auto_apply_app.application.service_ports.fingerprint_generator_port import 
 from auto_apply_app.application.common.result import Result, Error
 from auto_apply_app.domain.entities.user_fingerprint import UserFingerprint
 
+logger = logging.getLogger(__name__)
 
 @dataclass
 class GetOrCreateUserFingerprintUseCase:
@@ -30,5 +32,10 @@ class GetOrCreateUserFingerprintUseCase:
                 
                 return Result.success(new_fingerprint)
 
-        except Exception as e:
-            return Result.failure(Error.system_error(str(e)))
+        except Exception:
+            # Securely log the raw database/system exception to the backend console
+            logger.exception(f"GetOrCreateUserFingerprintUseCase failed for user {user_id}")
+            # Return a safe, sanitized message to the interface layer
+            return Result.failure(
+                Error.system_error("An unexpected error occurred while processing the user fingerprint.")
+            )

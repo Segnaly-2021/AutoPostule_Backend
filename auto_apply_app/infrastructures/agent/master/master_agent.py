@@ -396,9 +396,9 @@ class MasterAgent(AgentServicePort):
             print(f"Error reading resume: {e}")
         return text
     
-    # --- HELPER: Unified Explicit Emit (Master Agent) ---
-    async def _emit(self, state: JobApplicationState, stage: str, status: str = "in_progress", error: str = None):
-        """Master Agent explicit progress emitter."""
+    # --- HELPER: Unified Explicit Emit ---
+    async def _emit(self, state: JobApplicationState, stage: str, status: str = "in_progress", error: str = None, error_code: str = None):
+        """Explicit progress emitter with error code mapping."""
         if not self._progress_callback:
             return
         try:
@@ -410,25 +410,40 @@ class MasterAgent(AgentServicePort):
                 "node": "master", 
                 "status": "error" if error else status,
                 "error": error,
+                "error_code": error_code or ("SYSTEMERROR" if error else None), 
                 "search_id": search_id
             })
         except Exception:
             pass
 
-    # --- NODE 1: The Scrape Dispatcher ---
-    async def dispatch_scrape(self, state: JobApplicationState):
-        """
-        Reads user preferences, calculates job limits per board, 
-        and dynamically spins up ONLY the active workers.
-        """
-        await self._emit(state, "Launching Search Workers")
 
-        print("--- [Master] Dispatching Scrape Missions ---")
+    async def _is_killed(self, state: JobApplicationState) -> bool:
+        """Quickly checks the DB to see if the kill switch was flipped."""
+        user_id = state["user"].id
+        search_id = state["job_search"].id
+        killed_result = await self.is_agent_killed_for_search.execute(user_id, search_id)
+        return killed_result.is_success and killed_result.value
+
+    async def dispatch_scrape(self, state: JobApplicationState):
+        if await self._is_killed(state):
+            print("🛑 [Master] Kill switch detected before scrape dispatch. Aborting.")
+            return []
+
+        await self._emit(state, "Launching Search Workers")
+        print("--- [Master] Dispatching Scrape Missions ---")        
         
         active_boards = [board for board, is_active in state["preferences"].active_boards.items() if is_active]
         
         if not active_boards:
             print("⚠️ No active job boards selected in preferences.")
+            # 🚨 FIX: Emit the translated error to the UI, then halt the graph gracefully
+            await self._emit(
+                state, 
+                stage="Validation Failed", 
+                status="error", 
+                error="You haven't selected any active job boards in your preferences. Please enable at least one platform to begin the search.",
+                error_code="NO_ACTIVE_BOARDS"
+            )
             return []
 
         max_jobs = state.get("max_jobs", 20)
@@ -472,11 +487,8 @@ class MasterAgent(AgentServicePort):
                 
         return sends
 
-    # --- NODE 2: The Brain ---
     async def analyze_and_generate(self, state: JobApplicationState):
-
         await self._emit(state, "AI Generating Cover Letters")
-
         print("--- [Master Brain] Analyzing Jobs with LLM ---")       
         
         user_id = state["user"].id
@@ -491,18 +503,25 @@ class MasterAgent(AgentServicePort):
         
         subscription = state.get("subscription")
         if not subscription:
-             return {"error": "Could not verify your subscription status."}
+            # 🚨 NEW: Added error_code
+            return {
+                "error": "Could not verify your subscription status. Please try refreshing the page.", 
+                "error_code": "SUBSCRIPTION_NOT_FOUND"
+            }
              
         if not subscription.has_sufficient_credits(jobs_count):
-             return {"error": "You are out of AI Credits for this billing cycle. Please upgrade or wait for your credits to replenish."}
+            # 🚨 NEW: Added error_code
+            return {
+                "error": "You are out of AI Credits for this billing cycle. Please upgrade or wait for your credits to replenish.", 
+                "error_code": "OUT_OF_CREDITS"
+            }
              
         jobs_to_analyze = raw_offers
         if subscription.ai_credits_balance < jobs_count:
-             print(f"⚠ Low balance! Only analyzing {subscription.ai_credits_balance} out of {jobs_count} jobs.")
-             jobs_to_analyze = raw_offers[:subscription.ai_credits_balance]
+            print(f"⚠ Low balance! Only analyzing {subscription.ai_credits_balance} out of {jobs_count} jobs.")
+            jobs_to_analyze = raw_offers[:subscription.ai_credits_balance]
 
         daily_limit = subscription.daily_limit
-
         resume_path = state["user"].resume_path
         resume_bytes = await self.file_storage.download_file(resume_path)
         resume_text = await asyncio.to_thread(self._extract_resume, resume_bytes)
@@ -513,6 +532,10 @@ class MasterAgent(AgentServicePort):
         for offer in jobs_to_analyze:
             print(f"🤖 Generating Cover Letter for [{offer.job_board.name}]: {offer.job_title}")
             
+            if await self._is_killed(state):
+                print("🛑 [Master Brain] Kill switch detected! Halting LLM generation to save credits.")
+                break
+
             if not offer.job_desc or len(offer.job_desc) < 50:
                 print(f"⏩ Description too short for {offer.url}, skipping LLM.")
                 continue
@@ -528,11 +551,9 @@ class MasterAgent(AgentServicePort):
                 
                 try:
                     data = json.loads(response.content[0]["text"])
-                    
                     offer.cover_letter = data.get("cover_letter", "")
                     offer.ranking = int(data.get("ranking", 5))
                     offer.clean_title = data.get("clean_title", offer.job_title).strip().lower()
-
                     offer.status = ApplicationStatus.GENERATED if subscription.account_type == ClientType.PREMIUM else ApplicationStatus.APPROVED
                                         
                     processed_offers.append(offer)
@@ -543,7 +564,11 @@ class MasterAgent(AgentServicePort):
                 print(f"LLM Error for {offer.job_title}: {e}")
 
         if not processed_offers:
-            return {"error": "Our AI engine couldn't generate valid cover letters. Please try again later."}
+            # 🚨 NEW: Added error_code
+            return {
+                "error": "Our AI engine couldn't generate valid cover letters. Please try again later.", 
+                "error_code": "AI_GENERATION_FAILED"
+            }
 
         processed_offers.sort(key=lambda x: x.ranking, reverse=True)
         print(f"📈 Sorted {len(processed_offers)} generated jobs by AI ranking.")
@@ -553,9 +578,12 @@ class MasterAgent(AgentServicePort):
         
         billing_result = await self.consume_credits.execute(user_id=user_id, amount=credits_to_deduct)
         if not billing_result.is_success:
-            return {"error": "A billing error occurred while processing your AI credits. Please contact support."}
+            # 🚨 NEW: Added error_code
+            return {
+                "error": "A billing error occurred while processing your AI credits. Please contact support.", 
+                "error_code": "BILLING_ERROR"
+            }
         
-
         if daily_limit < len(processed_offers):
             processed_offers = processed_offers[:daily_limit]
         
@@ -563,6 +591,11 @@ class MasterAgent(AgentServicePort):
         save_result = await self.save_applications.execute(processed_offers)
         if not save_result.is_success:
             print(f"⚠ Error saving drafts: {save_result.error.message}")
+            # 🚨 NEW: Made DB Save Failure a hard stop with error_code
+            return {
+                "error": "We generated your cover letters but failed to save them to your account. Please try again.", 
+                "error_code": "DB_SAVE_FAILED"
+            }
 
         if subscription and subscription.account_type.name == "PREMIUM":
             await self._emit(state, stage="Waiting for User Review", status="paused")
@@ -575,9 +608,11 @@ class MasterAgent(AgentServicePort):
     
 
     async def dispatch_submit(self, state: JobApplicationState):
-        """Groups approved jobs by board and launches workers in parallel for submission."""
-        print("--- [Master] Dispatching Submit Missions ---")
+        if await self._is_killed(state):
+            print("🛑 [Master] Kill switch detected before submit dispatch. Aborting.")
+            return []
 
+        print("--- [Master] Dispatching Submit Missions ---")
         processed_offers = state.get("processed_offers", [])
         approved_jobs = [job for job in processed_offers if job and job.status == ApplicationStatus.APPROVED]
                 
@@ -602,11 +637,13 @@ class MasterAgent(AgentServicePort):
         if remaining_quota == 0:
             print("🛑 [Master] Daily submission limit already reached. Bypassing submission phase.")
             
+            # 🚨 NEW: Added error_code to the emit!
             await self._emit(
                 state, 
                 stage="Daily Limit Reached", 
                 status="error", 
-                error=f"You have reached your daily limit of {daily_limit} applications. Please try again tomorrow."
+                error=f"You have reached your daily limit of {daily_limit} applications. Please try again tomorrow.",
+                error_code="DAILY_LIMIT_REACHED"
             )
             return []
 
@@ -648,7 +685,6 @@ class MasterAgent(AgentServicePort):
         user_id = state["user"].id
         search_id = state["job_search"].id
         
-        # Check if killed (status determines what 'finished' means)
         is_killed = False
         killed_result = await self.is_agent_killed_for_search.execute(user_id, search_id)
         if killed_result.is_success and killed_result.value:
@@ -659,12 +695,18 @@ class MasterAgent(AgentServicePort):
             save_result = await self.save_applications.execute(submitted_offers)
             if not save_result.is_success:
                 logger.warning("Error updating DB with final statuses: %s", save_result.error.message)
+                # 🚨 NEW: Catch DB failure at the end of the line
+                return {
+                    "error": "Applications were sent, but we failed to update their statuses in your dashboard.", 
+                    "error_code": "FINAL_DB_UPDATE_FAILED"
+                }
 
         cleanup_result = await self.cleanup_unsubmitted.execute(search_id)
         if cleanup_result.is_success:
             deleted = cleanup_result.value.get("deleted_count", 0)
             logger.info("Cleanup complete. Deleted %s zombie job offers.", deleted)
         else:
+            # We don't make cleanup failure fatal to the user, just log it.
             logger.warning("Database cleanup failed: %s", cleanup_result.error.message)
 
         return {"status": "killed" if is_killed else "finished_successfully"}
@@ -752,8 +794,22 @@ class MasterAgent(AgentServicePort):
     async def stop_agent_notification(self, state: JobApplicationState):
         """Dummy node to notify the frontend that the 90s spinner can be safely cleared."""
         print("🛑 [Master] Emitting agent killed signal.")
-        await self._emit(state, stage="Agent has been stopped", status="killed")
-        return {"status": "killed"}
+        
+        # 🚨 NEW: Emit the error_code down the stream
+        await self._emit(
+            state, 
+            stage="Agent has been stopped", 
+            status="killed",
+            error="Agent has been stopped.",
+            error_code="AGENT_STOPPED"
+        )
+        
+        # 🚨 NEW: Return the error_code to the LangGraph state
+        return {
+            "status": "killed", 
+            "error": "Agent has been stopped.",
+            "error_code": "AGENT_STOPPED"
+        }
 
 
     async def no_jobs_notification(self, state: JobApplicationState):
@@ -765,14 +821,23 @@ class MasterAgent(AgentServicePort):
 
     def route_end(self, state: JobApplicationState):
         """Routes from finalize to the correct terminal notification node."""
+        if state.get("error"):
+            return "error_notification"
+            
         if state.get("status") == "killed":
             return "stop_agent_notification"
+            
         if state.get("status") == "no_jobs_found":
             return "no_jobs_notification"
             
         return "completion_notification"
     
-
+    async def error_notification(self, state: JobApplicationState):
+        """Notifies the frontend that the graph hit a fatal error."""
+        error_msg = state.get("error", "An unknown error occurred during the job search.")
+        print(f"❌ [Master] Emitting error signal: {error_msg}")
+        await self._emit(state, stage="Failed", status="error", error=error_msg)
+        return {"status": "error"}
 
 
     def get_graph(self):
@@ -794,6 +859,7 @@ class MasterAgent(AgentServicePort):
         workflow.add_node("completion_notification", self.completion_notification)
         workflow.add_node("stop_agent_notification", self.stop_agent_notification)
         workflow.add_node("no_jobs_notification", self.no_jobs_notification)
+        workflow.add_node("error_notification", self.error_notification)
         
         # --- THE WORKFLOW ROUTING ---
 
@@ -831,12 +897,13 @@ class MasterAgent(AgentServicePort):
         workflow.add_conditional_edges(
             "finalize",
             self.route_end,
-            ["completion_notification", "stop_agent_notification", "no_jobs_notification"]
+            ["completion_notification", "stop_agent_notification", "no_jobs_notification", "error_notification"]
         )
         
         workflow.add_edge("completion_notification", END)
         workflow.add_edge("stop_agent_notification", END)
         workflow.add_edge("no_jobs_notification", END)
+        workflow.add_edge("error_notification", END)
 
         return workflow.compile(
             checkpointer=self._checkpointer,
@@ -1007,10 +1074,6 @@ class MasterAgent(AgentServicePort):
         progress_callback: Optional[Callable] = None
     ) -> None:
         print(f"🔄 Resuming job search {search.id} for user: {user.email}")
-
-        agent_state = await self.create_agent_state.execute(user.id, search.id)
-        if not agent_state:
-            logger.error("Failed to create agent state for resume: %s", "Failed to create agent state")
 
         fingerprint_result = await self.get_or_create_fingerprint.execute(user.id)
         fingerprint = fingerprint_result.value if fingerprint_result.is_success else None

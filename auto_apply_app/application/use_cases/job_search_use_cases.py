@@ -1,3 +1,4 @@
+import logging
 from dataclasses import dataclass
 
 from auto_apply_app.application.repositories.job_search_repo import JobSearchRepository
@@ -16,6 +17,8 @@ from auto_apply_app.domain.exceptions import (
     ValidationError,
     BusinessRuleViolation,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -49,6 +52,9 @@ class CreateJobSearchUseCase:
             return Result.failure(Error.validation_error(str(e)))
         except BusinessRuleViolation as e:
             return Result.failure(Error.business_rule_violation(str(e)))
+        except Exception:
+            logger.exception("CreateJobSearchUseCase failed")
+            return Result.failure(Error.system_error("An unexpected error occurred while creating the job search."))
 
 
 @dataclass
@@ -66,7 +72,9 @@ class GetJobSearchUseCase:
             return Result.failure(
                 Error.not_found("JobSearch", str(params["job_search_id"]))
             )
-
+        except Exception:
+            logger.exception("GetJobSearchUseCase failed")
+            return Result.failure(Error.system_error("An unexpected error occurred while retrieving the job search."))
 
 
 @dataclass
@@ -103,7 +111,9 @@ class UpdateJobSearchUseCase:
             return Result.failure(Error.validation_error(str(e)))
         except BusinessRuleViolation as e:
             return Result.failure(Error.business_rule_violation(str(e)))
-
+        except Exception:
+            logger.exception("UpdateJobSearchUseCase failed")
+            return Result.failure(Error.system_error("An unexpected error occurred while updating the job search."))
 
 
 @dataclass
@@ -129,7 +139,9 @@ class CompleteJobSearchUseCase:
             return Result.failure(Error.validation_error(str(e)))
         except BusinessRuleViolation as e:
             return Result.failure(Error.business_rule_violation(str(e)))
-
+        except Exception:
+            logger.exception("CompleteJobSearchUseCase failed")
+            return Result.failure(Error.system_error("An unexpected error occurred while completing the job search."))
 
 
 @dataclass
@@ -163,4 +175,6 @@ class DeleteJobSearchUseCase:
             return Result.failure(
                 Error.not_found("JobSearch", str(params["job_search_id"]))
             )
-
+        except Exception:
+            logger.exception("DeleteJobSearchUseCase failed")
+            return Result.failure(Error.system_error("An unexpected error occurred while deleting the job search."))

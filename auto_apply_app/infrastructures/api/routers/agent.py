@@ -4,6 +4,7 @@ from fastapi.responses import StreamingResponse
 from typing import Annotated, List
 import asyncio
 import json
+import logging
 import dataclasses # Added for safe SSE serialization
 
 from auto_apply_app.infrastructures.api.dependencies.result import handle_result
@@ -18,6 +19,8 @@ from auto_apply_app.infrastructures.api.schema.agent_schema import (
     AgentViewModel,
 )
 from auto_apply_app.interfaces.viewmodels.job_offer_vm import JobReviewViewModel
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -111,16 +114,22 @@ async def start_job_search_agent_stream(
             yield f"data: {json.dumps(progress)}\n\n"
 
         # ← Safe exception handling — never let agent_task.result() crash the generator
+        # ← Safe exception handling — never let agent_task.result() crash the generator
         try:
             result = agent_task.result()
-            if result.is_success:
-                yield f"data: {json.dumps({'source': 'MASTER', 'stage': 'Complete', 'status': 'success'})}\n\n"
-            else:
-                yield f"data: {json.dumps({'source': 'MASTER', 'stage': 'Failed', 'status': 'error', 'error': str(result.error)})}\n\n"
-        except Exception as e:
-            # Task raised an unhandled exception — send error event instead of crashing
-            print(f"🚨 Agent task raised exception: {e}")
-            yield f"data: {json.dumps({'source': 'MASTER', 'stage': 'Failed', 'status': 'error', 'error': str(e)})}\n\n"
+            if not result.is_success:
+                # 🚨 FIX: We safely extract from your exact ErrorViewModel structure
+                error_vm = result.error  # This is the ErrorViewModel
+                
+                error_msg = error_vm.message if error_vm and error_vm.message else "An unexpected error occurred."
+                error_code = error_vm.code if error_vm and error_vm.code else "SYSTEMERROR"
+
+                yield f"data: {json.dumps({'source': 'MASTER', 'stage': 'Failed', 'status': 'error', 'error': error_msg, 'error_code': error_code})}\n\n"
+                
+        except Exception:
+            # Task raised an unhandled exception (a true Python crash)
+            logger.exception("🚨 Agent task raised exception: {e}")
+            yield f"data: {json.dumps({'source': 'MASTER', 'stage': 'Failed', 'status': 'error', 'error': 'Something went wrong', 'error_code': 'SYSTEMERROR'})}\n\n"
 
     return StreamingResponse(
         event_generator(),
@@ -185,16 +194,25 @@ async def resume_job_search_agent_stream(
             except asyncio.TimeoutError:
                 yield ": heartbeat\n\n"
 
+        # Drain any remaining events before closing
         while not queue.empty():
             progress = queue.get_nowait()
             yield f"data: {json.dumps(progress)}\n\n"
 
-        result = agent_task.result()
-        if result.is_success:
-            yield f"data: {json.dumps({'source': 'MASTER', 'stage': 'Complete', 'status': 'success', 'search_id': search_id})}\n\n"
-        else:
-            yield f"data: {json.dumps({'source': 'MASTER', 'stage': 'Failed', 'status': 'error', 'error': str(result.error)})}\n\n"
+        # 🚨 APPLIED ERRORVIEWMODEL FIX HERE 🚨
+        try:
+            result = agent_task.result()
+            if not result.is_success:
+                error_vm = result.error
+                
+                error_msg = error_vm.message if error_vm and error_vm.message else "An unexpected error occurred."
+                error_code = error_vm.code if error_vm and error_vm.code else "SYSTEMERROR"
 
+                yield f"data: {json.dumps({'source': 'MASTER', 'stage': 'Failed', 'status': 'error', 'error': error_msg, 'error_code': error_code})}\n\n"
+        except Exception as e:
+            logger.exception(f"🚨 Agent task raised exception: {e}")
+            yield f"data: {json.dumps({'source': 'MASTER', 'stage': 'Failed', 'status': 'error', 'error': 'Something went wrong', 'error_code': 'SYSTEMERROR'})}\n\n"
+    
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",

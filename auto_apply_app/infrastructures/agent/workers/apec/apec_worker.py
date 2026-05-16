@@ -361,12 +361,12 @@ class ApecWorker():
         preferences = state["preferences"]
 
         fingerprint = state.get("user_fingerprint")
-        proxy_config = state.get("proxy_config")
+        #proxy_config = state.get("proxy_config")
 
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless=preferences.browser_headless,
+                headless= preferences.browser_headless,
                 args=['--disable-blink-features=AutomationControlled'],
             )
 
@@ -411,7 +411,7 @@ class ApecWorker():
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless=state["preferences"].browser_headless,
+                headless= state["preferences"].browser_headless,
                 args=['--disable-blink-features=AutomationControlled'],
             )
 
@@ -824,12 +824,22 @@ class ApecWorker():
                     try:
                         await self.page.goto(offer.form_url, wait_until='networkidle', timeout=90000)
                         await human_delay(1500, 3500)
-                        await self.page.wait_for_selector('button[title="Postuler"]', state="visible", timeout=60000)
-                        await human_click(self.page.locator('button[title="Postuler"]'))
-                        await self.page.wait_for_load_state("networkidle")
-                        await self.page.wait_for_selector('#formUpload, .form-check.uploadFile.profil-selection', state="attached", timeout=90000)
-                        form_loaded = True
-                        break
+                        try:
+                            await self.page.wait_for_selector('#formUpload, .form-check.uploadFile.profil-selection', state="attached", timeout=90000)
+                        except Exception:
+                            pass
+
+                        if await self.page.locator('#formUpload input[type="file"]').count() > 0 or await self.page.locator('.form-check.uploadFile.profil-selection').count() > 0:
+                            form_loaded = True
+                            break
+                        else:
+                            await self.page.wait_for_selector('button[title="Postuler"]', state="visible", timeout=60000)
+                            await human_click(self.page.locator('button[title="Postuler"]'))
+                            await self.page.wait_for_load_state("networkidle")
+                            await self.page.wait_for_selector('#formUpload, .form-check.uploadFile.profil-selection', state="attached", timeout=90000)
+                            break
+                        
+                        
                     except Exception:
                         if attempt == 2:
                             logger.warning("[APEC] Form failed to load after 3 attempts. Skipping.")
