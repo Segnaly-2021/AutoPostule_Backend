@@ -81,6 +81,13 @@ class CreateCheckoutSessionUseCase:
                         "user_id": str(subs.user_id),
                         "account_type": plan_name
                     },
+                    allow_promotion_codes=True,              # lets users enter promo codes
+                    locale='fr',                             # forces French UI (since you serve France)
+                    custom_text={
+                        'submit': {
+                            'message': 'En cliquant ci-dessous, vous acceptez nos conditions générales.'
+                        }
+                    },
                 )
 
             return Result.success({"message": CheckoutSessionResponse(checkout_url=url)})
