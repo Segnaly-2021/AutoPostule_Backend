@@ -1,31 +1,30 @@
 import stripe
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 from uuid import UUID
 import os
 
 from auto_apply_app.application.service_ports.payment_port import PaymentPort
 
+
 class StripePaymentAdapter(PaymentPort):
     def __init__(self):
-        # In 2026, ensure you're using at least Stripe API version 2023-10-16 or later
         stripe.api_key = os.getenv("STRIPE_API_KEY")
         self.webhook_secret = os.getenv("STRIPE_WEBHOOK_SECRET")
         self.return_url = os.getenv("APP_RETURN_URL", "http://localhost:5173/job-search/home")
 
     async def create_checkout_session(
-        self, 
-        user_id: UUID, 
-        email: str, 
+        self,
+        user_id: UUID,
+        email: str,
         price_id: str,
         success_url: str,
         cancel_url: str,
-        metadata: Dict[str, str] = None
+        metadata: Optional[Dict[str, str]] = None,
     ) -> str:
         """
-        Initializes the Stripe Checkout flow. 
+        Initializes the Stripe Checkout flow.
         We pass the user_id in metadata so we can identify them in the webhook.
         """
-        # Stripe's python library now supports async for many operations
         session = stripe.checkout.Session.create(
             customer_email=email,
             payment_method_types=['card'],
@@ -38,10 +37,21 @@ class StripePaymentAdapter(PaymentPort):
             cancel_url=cancel_url,
             metadata={
                 "user_id": str(user_id),
-                **(metadata or {})
+                **(metadata or {}),
             },
-            # This allows us to track the user even if they haven't been assigned a customer_id yet
-            client_reference_id=str(user_id)
+            client_reference_id=str(user_id),
+
+            # --- UI / UX improvements ---
+            locale='fr',                             # French UI to match the app
+            allow_promotion_codes=True,              # let users enter promo codes
+            custom_text={
+                'submit': {
+                    'message': (
+                        "En confirmant votre abonnement, vous acceptez nos conditions de vente et d'utilisation."
+                        "Vous pouvez annuler à tout moment depuis votre espace client."
+                    )
+                }
+            },
         )
         return session.url
 
@@ -65,10 +75,8 @@ class StripePaymentAdapter(PaymentPort):
             )
             return event
         except ValueError as e:
-            # Invalid payload
             print(f"STRIPE WEBHOOK PAYLOAD ERROR: {e}")
             raise Exception("Invalid payload")
         except stripe.error.SignatureVerificationError as e:
-            # Invalid signature
             print(f"STRIPE WEBHOOK SIGNATURE ERROR: {e}")
             raise Exception("Invalid signature")

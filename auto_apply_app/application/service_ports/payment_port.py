@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 from uuid import UUID
+
 
 class PaymentPort(ABC):
     """
@@ -10,12 +11,13 @@ class PaymentPort(ABC):
 
     @abstractmethod
     async def create_checkout_session(
-        self, 
-        user_id: UUID, 
-        email: str, 
+        self,
+        user_id: UUID,
+        email: str,
         price_id: str,
         success_url: str,
         cancel_url: str,
+        metadata: Optional[Dict[str, str]] = None,
     ) -> str:
         """
         Creates a session for the initial purchase and returns the redirect URL.
@@ -33,7 +35,7 @@ class PaymentPort(ABC):
     @abstractmethod
     def parse_webhook_event(self, payload: bytes, sig_header: str) -> Dict[str, Any]:
         """
-        Verifies the authenticity of the provider's webhook and returns 
+        Verifies the authenticity of the provider's webhook and returns
         the event data in a structured format.
         """
         pass
