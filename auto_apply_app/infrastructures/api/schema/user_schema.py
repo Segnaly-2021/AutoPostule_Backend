@@ -59,10 +59,6 @@ class ForgotPasswordRequestSchema(BaseModel):
     """Schema for requesting a password reset email."""
     email: EmailStr
 
-
-class ResendVerificationSchema(BaseModel):
-    email: EmailStr
-
 class ResetPasswordConfirmSchema(BaseModel):
     """Schema for submitting a new password using an email token."""
     token: str = Field(min_length=1)

@@ -21,7 +21,8 @@ from auto_apply_app.infrastructures.api.schema.user_schema import (
     UserUpdateSchema,
     ForgotPasswordRequestSchema,  
     ResetPasswordConfirmSchema,
-    ResendVerificationSchema,   
+    ResendVerificationSchema,
+    VerifyCodeSchema,   
 )
 
 
