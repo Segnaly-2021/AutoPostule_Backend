@@ -60,26 +60,36 @@ class ResendEmailService(EmailServicePort):
             html_content=html_content,
         )
 
-    async def send_verification_email(self, to_email: str, verification_token: str) -> None:
-        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
-        verify_link = f"{frontend_url}/verify-email?token={verification_token}"
+    async def send_verification_email(self, to_email: str, code: str) -> None:
+        """
+        Sends a 6-digit verification code. Replaces the previous link-based flow.
+        Code is valid for 15 minutes (enforced by the use case / entity).
+        """
+        # Spacing for readability: '123456' -> '123 456'
+        formatted_code = f"{code[:3]} {code[3:]}" if len(code) == 6 else code
 
         html_content = f"""
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <h2>Vérifiez votre adresse e-mail</h2>
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1a1a1a;">
+            <h2 style="margin-bottom: 16px;">Confirmez votre adresse e-mail</h2>
             <p>Bonjour,</p>
-            <p>Bienvenue sur AutoPostule. Pour activer votre compte, veuillez confirmer votre adresse e-mail.</p>
-            <p>Ce lien expirera dans 24 heures.</p>
-            <div style="margin: 30px 0;">
-                <a href="{verify_link}" style="background-color: #0066ff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold;">
-                    Vérifier mon e-mail
-                </a>
+            <p>Bienvenue sur AutoPostule. Pour activer votre compte, saisissez le code ci-dessous sur la page d'inscription :</p>
+
+            <div style="margin: 32px 0; text-align: center;">
+                <div style="display: inline-block; padding: 20px 32px; background-color: #f4f6fb; border: 1px solid #dfe3ee; border-radius: 8px;">
+                    <div style="font-family: 'Courier New', monospace; font-size: 32px; font-weight: 700; letter-spacing: 6px; color: #0066ff;">
+                        {formatted_code}
+                    </div>
+                </div>
             </div>
-            <p style="color: #666; font-size: 14px;">Si vous n'avez pas créé de compte AutoPostule, vous pouvez ignorer cet e-mail.</p>
+
+            <p>Ce code est valable pendant <strong>15 minutes</strong>.</p>
+            <p style="color: #666; font-size: 14px; margin-top: 32px;">
+                Si vous n'avez pas créé de compte AutoPostule, vous pouvez ignorer cet e-mail en toute sécurité.
+            </p>
         </div>
         """
         await self._send(
             to_email=to_email,
-            subject="Confirmez votre adresse e-mail AutoPostule",
+            subject=f"Votre code de vérification : {code}",
             html_content=html_content,
         )

@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from uuid import UUID
 import datetime
 import logging
+import secrets
 import re
 
 from auto_apply_app.application.dtos.operations import DeletionOutcome
@@ -21,6 +22,8 @@ from auto_apply_app.application.dtos.user_dtos import (
 from auto_apply_app.application.dtos.auth_user_dtos import (
     RegisterUserRequest, 
     LoginResponse, 
+    VerifyCodeRequest,
+    ResendVerificationRequest,
     ChangePasswordRequest,
     ForgotPasswordRequest, 
     ResetPasswordRequest
@@ -29,6 +32,7 @@ from auto_apply_app.application.dtos.auth_user_dtos import (
 from auto_apply_app.application.service_ports.email_service_port import EmailServicePort
 from auto_apply_app.application.repositories.unit_of_work import UnitOfWork
 from auto_apply_app.application.service_ports.password_service_port import PasswordServicePort
+from auto_apply_app.application.service_ports.rate_limiter_port import RateLimiterPort
 from auto_apply_app.application.service_ports.file_storage_port import FileStoragePort
 from auto_apply_app.application.dtos.auth_user_dtos import LoginRequest
 from auto_apply_app.application.service_ports.token_provider_port import TokenProviderPort
@@ -37,7 +41,7 @@ from auto_apply_app.domain.entities.user_preferences import UserPreferences
 from auto_apply_app.domain.entities.user_subscription import UserSubscription
 
 from auto_apply_app.application.repositories.token_blacklist import TokenBlacklistRepository
-from auto_apply_app.domain.value_objects import ClientType
+
 
 logger = logging.getLogger(__name__)
 
@@ -77,23 +81,39 @@ def _sanitize_filename(filename: str) -> str:
 
     return base or "resume.pdf"
 
-
+# Resend cooldown: 1 request per 60s per email (independent of backend-internal Resend API).
+RESEND_COOLDOWN_SECONDS = 60
+ 
+ 
+def _generate_verification_code() -> str:
+    """Generate a 6-digit verification code, zero-padded. Uses `secrets` for CSPRNG."""
+    return f"{secrets.randbelow(1_000_000):06d}"
+ 
+ 
+# ============================================================================
+# REGISTER — modified to issue a code instead of a JWT link
+# ============================================================================
+ 
 @dataclass
 class RegisterUserUseCase:
     uow: UnitOfWork
     password_service: PasswordServicePort
-    token_provider: TokenProviderPort                  
-    email_service: EmailServicePort                    
-
+    email_service: EmailServicePort
+    # token_provider removed — no longer needed for verification.
+ 
     async def execute(self, request: RegisterUserRequest) -> Result:
         try:
             params = request.to_execution_params()
-
+ 
+            # Generate code BEFORE the transaction so we can hash + persist atomically.
+            raw_code = _generate_verification_code()
+            code_hash = self.password_service.get_password_hash(raw_code)
+ 
             async with self.uow:
                 existing_auth = await self.uow.auth_repo.get_by_email(params["email"])
                 if existing_auth:
                     return Result.failure(Error.conflict("User with this email already exists"))
-
+ 
                 user = User(
                     firstname=params["firstname"],
                     lastname=params["lastname"],
@@ -105,51 +125,44 @@ class RegisterUserUseCase:
                     major=None,
                     study_level=None,
                 )
-
+ 
                 raw_password = params.pop("password")
                 hashed_password = self.password_service.get_password_hash(raw_password)
                 user_id = user.id
-
+ 
                 auth_user = AuthUser(
                     user_id=user_id,
                     email=params["email"],
                     password_hash=hashed_password,
                 )
-
-                sub_user = UserSubscription(
-                    user_id=user_id,
-                    email=params["email"],                    
-                )
-
+                # Issue the verification code on the entity (sets hash, expiry, attempts=0)
+                auth_user.set_verification_code(code_hash)
+ 
+                sub_user = UserSubscription(user_id=user_id, email=params["email"])
                 user_prefs = UserPreferences(user_id=user.id)
-
+ 
                 await self.uow.user_repo.save(user)
                 await self.uow.auth_repo.save(auth_user)
                 await self.uow.subscription_repo.save(sub_user)
                 await self.uow.user_pref_repo.save(user_prefs)
-
-            # 4. Generate verification token + send email (outside UoW — non-critical)
+ 
+            # Send code outside UoW — email failure must not roll back registration.
             try:
-                verification_token = self.token_provider.encode_token(
-                    user_id=user_id,
-                    claims={"email": params["email"], "purpose": "email_verification"},
-                    expires_delta=datetime.timedelta(hours=24),
-                )
                 await self.email_service.send_verification_email(
                     to_email=params["email"],
-                    verification_token=verification_token,
+                    code=raw_code,
                 )
             except Exception:
-                # Don't fail registration if email fails — user can request resend.
                 logger.exception("Failed to send verification email to %s", params["email"])
-
+ 
             return Result.success(UserResponse.from_entity(user))
-
+ 
         except ValidationError as e:
             return Result.failure(Error.validation_error(str(e)))
         except Exception:
             logger.exception("CRITICAL: Failed to register user")
             return Result.failure(Error.system_error("Could not complete registration."))
+ 
 
 
 @dataclass
@@ -480,84 +493,123 @@ class DeleteUserUseCase:
 
 
 @dataclass
-class VerifyEmailUseCase:
-    """Verifies an email using the token sent during registration."""
+class VerifyCodeUseCase:
+    """
+    Verifies the 6-digit code and, on success, logs the user in by returning a JWT.
+    Replaces VerifyEmailUseCase.
+    """
     uow: UnitOfWork
+    password_service: PasswordServicePort
     token_provider: TokenProviderPort
-
-    async def execute(self, token: str) -> Result:
+ 
+    async def execute(self, request: VerifyCodeRequest) -> Result:
         try:
-            payload = self.token_provider.decode_token(token)
-
-            if payload.get("purpose") != "email_verification":
-                return Result.failure(Error.unauthorized("Invalid token type."))
-
-            user_id = payload.get("sub")
-            if not user_id:
-                return Result.failure(Error.unauthorized("Invalid token payload."))
-
-            async with self.uow as uow:
-                auth_user = await uow.auth_repo.get_by_id(UUID(user_id))
-                if not auth_user:
-                    return Result.failure(Error.not_found("User", str(user_id)))
-
-                if auth_user.is_verified:
-                    return Result.success({"message": "Email already verified."})
-
-                auth_user.is_verified = True
-                await uow.auth_repo.save(auth_user)
-
-            return Result.success({"message": "Email verified successfully."})
-
-        except InvalidTokenException:
-            return Result.failure(Error.unauthorized("Verification link is invalid or has expired."))
-        except Exception:
-            logger.exception("CRITICAL: Failed to verify email")
-            return Result.failure(Error.system_error("Could not verify email."))
-
-
-@dataclass
-class ResendVerificationEmailUseCase:
-    """Resends the verification email if the user hasn't verified yet."""
-    uow: UnitOfWork
-    token_provider: TokenProviderPort
-    email_service: EmailServicePort
-
-    async def execute(self, email: str) -> Result:
-        try:
+            params = request.to_execution_params()
+            email = params["email"]
+            code = params["code"]
+ 
             async with self.uow:
                 auth_user = await self.uow.auth_repo.get_by_email(email)
-
-                # Anti-enumeration: same response whether or not email exists
+ 
+                # Anti-enumeration: generic "invalid_code" for missing user / already verified.
                 if not auth_user:
-                    return Result.success({
-                        "message": "If an account exists and is not yet verified, a new email has been sent."
-                    })
-
+                    return Result.failure(Error.unauthorized("invalid_code"))
+ 
                 if auth_user.is_verified:
-                    return Result.success({
-                        "message": "If an account exists and is not yet verified, a new email has been sent."
-                    })
-
-                verification_token = self.token_provider.encode_token(
+                    return Result.failure(Error.unauthorized("invalid_code"))
+ 
+                if not auth_user.has_pending_verification():
+                    return Result.failure(Error.unauthorized("expired_code"))
+ 
+                if auth_user.has_exceeded_attempts():
+                    auth_user.clear_verification_code()
+                    await self.uow.auth_repo.save(auth_user)
+                    return Result.failure(Error.unauthorized("too_many_attempts"))
+ 
+                if not self.password_service.verify(code, auth_user.verification_code_hash):
+                    auth_user.register_failed_attempt()
+                    if auth_user.has_exceeded_attempts():
+                        auth_user.clear_verification_code()
+                        await self.uow.auth_repo.save(auth_user)
+                        return Result.failure(Error.unauthorized("too_many_attempts"))
+                    await self.uow.auth_repo.save(auth_user)
+                    return Result.failure(Error.unauthorized("invalid_code"))
+ 
+                # Success — verify, clear code, record login, mint token.
+                auth_user.mark_verified()
+                await self.uow.auth_repo.save(auth_user)
+ 
+                token = self.token_provider.encode_token(
                     user_id=auth_user.user_id,
-                    claims={"email": auth_user.email, "purpose": "email_verification"},
-                    expires_delta=datetime.timedelta(hours=24),
+                    claims={"email": auth_user.email},
                 )
-
-            # Send outside UoW
-            try:
-                await self.email_service.send_verification_email(
-                    to_email=auth_user.email,
-                    verification_token=verification_token,
-                )
-            except Exception:
-                logger.exception("Failed to resend verification email to %s", email)
-
-            return Result.success({
-                "message": "If an account exists and is not yet verified, a new email has been sent."
-            })
-
+ 
+            return Result.success(LoginResponse(access_token=token, token_type="Bearer"))
+ 
+        except BusinessRuleViolation as e:
+            return Result.failure(Error.business_rule_violation(str(e)))
         except Exception:
-            logger.exception("CRITICAL: Failed to resend verification email")
-            return Result.failure(Error.system_error("Could not resend verification email."))
+            logger.exception("CRITICAL: Failed to verify code")
+            return Result.failure(Error.system_error("Could not verify code."))
+ 
+ 
+@dataclass
+class ResendVerificationEmailUseCase:
+    """
+    Resends a 6-digit verification code, rate-limited via Redis (1/60s per email).
+    Anti-enumeration: same response whether or not the email exists / is verified.
+    """
+    uow: UnitOfWork
+    password_service: PasswordServicePort
+    email_service: EmailServicePort
+    rate_limiter: RateLimiterPort
+ 
+    async def execute(self, request: ResendVerificationRequest) -> Result:
+        try:
+            params = request.to_execution_params()
+            normalized_email = params["email"]
+            generic_response = {
+                "message": "If an account exists and is not yet verified, a new code has been sent."
+            }
+ 
+            # 1) Rate limit FIRST — prevents email enumeration via timing too.
+            rate_key = f"resend_verification:{normalized_email}"
+            allowed, retry_after = await self.rate_limiter.try_acquire(
+                key=rate_key,
+                window_seconds=RESEND_COOLDOWN_SECONDS,
+            )
+            if not allowed:
+                return Result.failure(
+                    Error.rate_limited(
+                        message="rate_limited",
+                        retry_after=retry_after,
+                    )
+                )
+ 
+            # 2) Generate code + hash outside the transaction.
+            raw_code = _generate_verification_code()
+            code_hash = self.password_service.get_password_hash(raw_code)
+ 
+            should_send = False
+            async with self.uow:
+                auth_user = await self.uow.auth_repo.get_by_email(normalized_email)
+ 
+                if auth_user and not auth_user.is_verified:
+                    auth_user.set_verification_code(code_hash)
+                    await self.uow.auth_repo.save(auth_user)
+                    should_send = True
+ 
+            if should_send:
+                try:
+                    await self.email_service.send_verification_email(
+                        to_email=normalized_email,
+                        code=raw_code,
+                    )
+                except Exception:
+                    logger.exception("Failed to resend verification email to %s", normalized_email)
+ 
+            return Result.success(generic_response)
+ 
+        except Exception:
+            logger.exception("CRITICAL: Failed to resend verification code")
+            return Result.failure(Error.system_error("Could not resend verification code."))

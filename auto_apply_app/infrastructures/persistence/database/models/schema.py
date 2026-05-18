@@ -62,16 +62,15 @@ class UserDB(Base):
         "UserFingerprintDB", back_populates="user", uselist=False, cascade="all, delete-orphan"
     )
 
-
+ 
 class AuthUserDB(Base):
     __tablename__ = "auth_users"
-
-    
+ 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     user_id: Mapped[UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"),
-        unique=True, 
-        index=True
+        unique=True,
+        index=True,
     )
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
@@ -79,15 +78,23 @@ class AuthUserDB(Base):
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc)
+        default=lambda: datetime.now(timezone.utc),
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc)
+        onupdate=lambda: datetime.now(timezone.utc),
     )
     last_login: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-
+ 
+    # --- Email verification (code-based) ---
+    verification_code_hash: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    verification_code_expires_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    verification_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+ 
     user: Mapped["UserDB"] = relationship("UserDB", back_populates="auth_account")
 
 

@@ -2,7 +2,9 @@
 
 import os
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Optional
+
+from redis.asyncio import Redis
 
 # Repositories & UoW
 from auto_apply_app.application.repositories.token_blacklist import TokenBlacklistRepository
@@ -18,6 +20,10 @@ from auto_apply_app.application.service_ports.payment_port import PaymentPort
 from auto_apply_app.application.service_ports.encryption_port import EncryptionServicePort
 from auto_apply_app.application.service_ports.email_service_port import EmailServicePort
 from auto_apply_app.application.service_ports.captcha_service_port import CaptchaServicePort
+from auto_apply_app.application.service_ports.rate_limiter_port import RateLimiterPort  # NEW
+
+# Rate limiter adapter
+from auto_apply_app.infrastructures.redis_rate_limit.redis_rate_limiter import RedisRateLimiter  # NEW
 
 # Proxy / fingerprint
 from auto_apply_app.infrastructures.proxy.iproyal_proxy_adapter import IPRoyalProxyAdapter
@@ -49,7 +55,7 @@ from auto_apply_app.application.use_cases.user_use_cases import (
     RequestPasswordResetUseCase,
     ConfirmPasswordResetUseCase,
     ResendVerificationEmailUseCase,
-    VerifyEmailUseCase,
+    VerifyCodeUseCase,  # CHANGED: was VerifyEmailUseCase
 )
 from auto_apply_app.application.use_cases.agent_use_cases import (
     ApproveJobUseCase,
@@ -82,7 +88,6 @@ from auto_apply_app.application.use_cases.preferences_use_cases import (
     UpdateUserPreferencesUseCase,
 )
 
-# NEW: agent state use cases (replaced ShutdownAgentUseCase + ResetAgentUseCase)
 from auto_apply_app.application.use_cases.agent_state_use_cases import (
     GetAgentStateUseCase,
     CreateAgentStateForSearchUseCase,
@@ -90,7 +95,6 @@ from auto_apply_app.application.use_cases.agent_state_use_cases import (
     IsAgentKilledForSearchUseCase,
 )
 
-# NEW: completion + free-search use cases
 from auto_apply_app.application.use_cases.agent_usage_use_cases import CompleteAgentRunUseCase
 from auto_apply_app.application.use_cases.free_search_use_cases import FreeSearchUseCase
 
@@ -120,6 +124,24 @@ def _resolve_proxy_service():
     return NoProxyAdapter()
 
 
+def _build_rate_limiter(redis_client: Optional[Redis]) -> RateLimiterPort:
+    """
+    Build the rate limiter. In DATABASE mode we reuse the same Redis client
+    that backs the token blacklist. In MEMORY mode we fall back to a no-op
+    limiter so dev/test environments aren't forced to run Redis.
+    """
+    if redis_client is not None:
+        return RedisRateLimiter(redis_client)
+
+    # In-memory fallback: always allow. Acceptable in dev because rate-limiting
+    # is a defense-in-depth measure — the use case still functions without it.
+    class _NoopRateLimiter(RateLimiterPort):
+        async def try_acquire(self, key: str, window_seconds: int) -> tuple[bool, int]:
+            return True, 0
+
+    return _NoopRateLimiter()
+
+
 def create_application(
     user_presenter: UserPresenter,
     job_presenter: JobPresenter,
@@ -138,7 +160,10 @@ def create_application(
     free_search_presenter: FreeSearchPresenter,
 ) -> "Application":
 
-    token_repo, uow_factory = create_repositories()
+    # create_repositories now returns the Redis client too — we reuse it for
+    # the rate limiter so we don't open a second connection pool.
+    token_repo, uow_factory, redis_client = create_repositories()
+    rate_limiter = _build_rate_limiter(redis_client)
 
     return Application(
         token_repo=token_repo,
@@ -157,6 +182,7 @@ def create_application(
         encryption_port=encryption_port,
         captcha_port=captcha_port,
         email_service_port=email_service_port,
+        rate_limiter=rate_limiter,  # NEW
         free_search_presenter=free_search_presenter,
     )
 
@@ -175,6 +201,8 @@ class Application:
     encryption_port: EncryptionServicePort
     email_service_port: EmailServicePort
     captcha_port: CaptchaServicePort
+    rate_limiter: RateLimiterPort  # NEW
+
     # Presenters
     user_presenter: UserPresenter
     job_presenter: JobPresenter
@@ -207,8 +235,8 @@ class Application:
             register_use_case=RegisterUserUseCase(
                 uow=uow,
                 password_service=self.password_service,
-                token_provider=self.token_provider,            # NEW
-                email_service=self.email_service_port,         # NEW
+                email_service=self.email_service_port,
+                # token_provider removed — registration no longer issues a JWT.
             ),
             login_use_case=LoginUserUseCase(self.password_service, self.token_provider, uow),
             logout_use_case=LogoutUseCase(self.token_provider, self.token_repo),
@@ -223,14 +251,17 @@ class Application:
                 token_provider=self.token_provider,
                 password_service=self.password_service,
             ),
-            verify_email_use_case=VerifyEmailUseCase(            # NEW
+            verify_code_use_case=VerifyCodeUseCase(  # CHANGED: was verify_email_use_case
                 uow=uow,
+                password_service=self.password_service,
                 token_provider=self.token_provider,
             ),
-            resend_verification_use_case=ResendVerificationEmailUseCase(  # NEW
+            resend_verification_use_case=ResendVerificationEmailUseCase(
                 uow=uow,
-                token_provider=self.token_provider,
+                password_service=self.password_service,  # NEW: needed to hash codes
                 email_service=self.email_service_port,
+                rate_limiter=self.rate_limiter,          # NEW: Redis-backed cooldown
+                # token_provider removed — codes don't use JWTs.
             ),
             presenter=self.user_presenter,
         )
@@ -256,7 +287,6 @@ class Application:
             generator=FingerprintGenerator(),
         )
 
-        # NEW: build the use cases the master agent needs
         is_agent_killed_uc = IsAgentKilledForSearchUseCase(uow)
         complete_agent_run_uc = CompleteAgentRunUseCase(uow)
 

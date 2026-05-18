@@ -95,6 +95,30 @@ async def login(
     return handle_result(result)
 
 
+
+@router.post(
+    "/verify-code",
+    response_model=LoginViewModel,
+    status_code=status.HTTP_200_OK,
+    summary="Verify email with 6-digit code",
+    description=(
+        "Verifies the user's email using the 6-digit code sent by email. "
+        "On success, returns a JWT access token — the user is logged in implicitly."
+    ),
+)
+@limiter.limit("10/hour")
+async def verify_code(
+    request: Request,
+    data: VerifyCodeSchema,
+    auth_controller: AuthControllerDep,
+):
+    result = await auth_controller.handle_verify_code(
+        email=data.email,
+        code=data.code,
+    )
+    return handle_result(result)
+
+
 # 🚨 NEW: Forgot Password Route
 @router.post(
     "/forgot-password",

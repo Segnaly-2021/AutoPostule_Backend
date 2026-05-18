@@ -11,12 +11,17 @@ from auto_apply_app.application.use_cases.user_use_cases import (
     ChangePasswordUseCase,
     RequestPasswordResetUseCase,    # ✅ Added
     ConfirmPasswordResetUseCase,
+    VerifyCodeUseCase,
     ResendVerificationEmailUseCase,
-    VerifyEmailUseCase     # ✅ Added
+
 )
+
+
 from auto_apply_app.application.dtos.auth_user_dtos import (
     RegisterUserRequest,
     LoginRequest,
+    VerifyCodeRequest,
+    ResendVerificationRequest,
     ChangePasswordRequest,
     ForgotPasswordRequest,          # ✅ Added
     ResetPasswordRequest            # ✅ Added

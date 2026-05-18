@@ -73,7 +73,18 @@ class ResetPasswordConfirmSchema(BaseModel):
     def validate_new_password(cls, v: str) -> str:
         return validate_secure_password(v)
 
-
+ 
+class VerifyCodeSchema(BaseModel):
+    """Body for POST /auth/verify-code."""
+    email: EmailStr
+    code: str = Field(..., min_length=6, max_length=6, pattern=r"^\d{6}$")
+ 
+ 
+class ResendVerificationSchema(BaseModel):
+    """Body for POST /auth/resend-verification.
+    Already exists in your codebase — keep your existing one if it matches.
+    """
+    email: EmailStr
 
 class UserUpdateSchema(BaseModel):
     """Schema for partial updates to the user profile."""

@@ -5,7 +5,6 @@ from pydantic import EmailStr
 
 
 
-
 @dataclass(frozen=True)
 class RegisterUserRequest:
     """
@@ -123,3 +122,42 @@ class ResetPasswordRequest:
     new_password: str
     
 
+dataclass(frozen=True)
+class VerifyCodeRequest:
+    """
+    Data carrier for verifying a 6-digit email verification code.
+    """
+    email: str
+    code: str
+ 
+    def __post_init__(self) -> None:
+        if not self.email:
+            raise ValueError("Email is required")
+ 
+        if not self.code:
+            raise ValueError("Code is required")
+ 
+        if len(self.code) != 6 or not self.code.isdigit():
+            raise ValueError("Code must be exactly 6 digits")
+ 
+    def to_execution_params(self) -> Dict:
+        return {
+            "email": self.email.lower().strip(),
+            "code": self.code,
+        }
+ 
+ 
+@dataclass(frozen=True)
+class ResendVerificationRequest:
+    """
+    Data carrier for requesting a new verification code.
+    """
+    email: str
+ 
+    def __post_init__(self) -> None:
+        if not self.email:
+            raise ValueError("Email is required")
+ 
+    def to_execution_params(self) -> Dict:
+        return {"email": self.email.lower().strip()}
+ 
