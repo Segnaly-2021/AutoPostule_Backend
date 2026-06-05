@@ -494,7 +494,7 @@ class JobTeaserWorker:
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless= not preferences.browser_headless,
+                headless= preferences.browser_headless,
                 args=['--disable-blink-features=AutomationControlled'],
             )
 
@@ -532,18 +532,18 @@ class JobTeaserWorker:
     async def start_session_with_auth(self, state: JobApplicationState):
         await self._emit(state, "Initializing Secure Browser")
         logger.info("[JOBTEASER] Booting browser (session injection)")
-        user_id = str(state["user"].id)
+        #user_id = str(state["user"].id)
 
         #fingerprint = state.get("user_fingerprint")
 
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless= not state["preferences"].browser_headless,
+                headless= state["preferences"].browser_headless,
                 args=['--disable-blink-features=AutomationControlled'],
             )
 
-            session_path = self._get_auth_state_path(user_id)
+            #session_path = self._get_auth_state_path(user_id)
 
             # context_kwargs = {}
             # if fingerprint:
