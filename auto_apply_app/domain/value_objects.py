@@ -9,9 +9,10 @@ class ClientType(Enum):
 class ContractType(Enum):   
    INTERNSHIP = "Stage"
    APPRENTICESHIP = "Alternance"
-   FREELANCE = "freelance"
+   FREELANCE = "Freelance"
    TEMPORARY = "CDD"
    FULL_TIME = "CDI"
+   INDEPENDENT = "Independant"
 
 
 

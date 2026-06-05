@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 class HelloWorkWorker:
 
-    CARD_SELECTOR = '[data-id-storage-target="item"]'
+    CARD_SELECTOR = 'li[data-id-storage-target="item"]'
 
     def __init__(
         self,
@@ -164,6 +164,15 @@ class HelloWorkWorker:
             raw_location.strip() if raw_location else None,
         )
 
+    async def close_google_auth_popup(self):
+        try:
+            popup_selector = 'button[data-cy="closeHWOneTap"]'
+            await self.page.wait_for_selector(popup_selector, state="visible", timeout=15000)
+            await human_click(self.page.locator(popup_selector))
+            logger.info("[HW] Closed Google auth popup")
+        except Exception:
+            logger.debug("[HW] No Google auth popup to close")
+
     async def force_cleanup(self):
         logger.info("[HW] Force cleanup initiated")
         try:
@@ -187,11 +196,38 @@ class HelloWorkWorker:
         except Exception:
             return default_value
 
+    async def _neutralize_pagination_input(self):
+        """Removes the rogue mobile pagination input that auto-submits the search form on blur,
+        causing unexpected page jumps during card iteration."""
+        try:
+            await self.page.evaluate("""() => {
+                document.querySelectorAll(
+                    'input[data-toggle-attribute-attribute-param="name"][data-toggle-attribute-value-param="p"]'
+                ).forEach(el => el.remove());
+            }""")
+        except Exception:
+            logger.debug("[HW] Could not neutralize pagination input (page may have navigated)")
+
+    async def _block_tracking(self):
+        """Blocks analytics, tracking, and tag manager requests to prevent network noise
+        and ensure load states resolve predictably."""
+        async def _route_handler(route):
+            url = route.request.url
+            if any(d in url for d in [
+                "googletagmanager.com", "google-analytics.com", "doubleclick.net",
+                "t.hellowork.com", "piano-analytics", "screeb"
+            ]):
+                await route.abort()
+            else:
+                await route.continue_()
+        await self.context.route("**/*", _route_handler)
+
     async def _nav_back_to_search(self, search_url: str) -> bool:
         for attempt in range(3):
             try:
-                await self.page.goto(search_url, wait_until="networkidle")
-                await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=10000)
+                await self.page.goto(search_url, wait_until="domcontentloaded")
+                await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=15000)
+                await self._neutralize_pagination_input()
                 await human_delay(800, 2000)
                 return True
             except Exception:
@@ -205,7 +241,7 @@ class HelloWorkWorker:
         try:
             logger.info("[HW] Applying search filters")
 
-            FILTER_LABEL_SELECTOR = 'div[class="tw-layout-inner-grid"] label[for="allFilters"][data-cy="serpFilters"]:has-text(" Filtres ")'
+            FILTER_LABEL_SELECTOR = 'div[class="layout-inner-grid"] label[for="allFilters"][data-cy="serpFilters"]:has-text(" Filtres ")'
 
             for attempt in range(3):
                 try:
@@ -221,6 +257,9 @@ class HelloWorkWorker:
                     await asyncio.sleep(2 ** attempt)
 
             if contract_types:
+                if ContractType.FREELANCE in contract_types:
+                    contract_types.append(ContractType.INDEPENDENT)  # Treat "Independant" as a synonym for "Freelance" on HelloWork
+
                 for contract in contract_types:
                     try:
                         checkbox_selector = f'input[id="c-{str(contract.value)}"]'
@@ -251,8 +290,9 @@ class HelloWorkWorker:
                 for attempt in range(3):
                     try:
                         await submit_filters_btn.click()
-                        await self.page.wait_for_load_state("networkidle")
+                        await self.page.wait_for_load_state("domcontentloaded")
                         await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=40000)
+                        await self._neutralize_pagination_input()
                         break
                     except Exception:
                         if attempt == 2:
@@ -285,8 +325,9 @@ class HelloWorkWorker:
             for attempt in range(3):
                 try:
                     await next_button.click()
-                    await self.page.wait_for_load_state("networkidle")
-                    await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=10000)
+                    await self.page.wait_for_load_state("domcontentloaded")
+                    await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=15000)
+                    await self._neutralize_pagination_input()
                     break
                 except Exception:
                     if attempt == 2:
@@ -359,7 +400,7 @@ class HelloWorkWorker:
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless= preferences.browser_headless,
+                headless= not preferences.browser_headless,
                 args=['--disable-blink-features=AutomationControlled'],
             )
 
@@ -386,6 +427,7 @@ class HelloWorkWorker:
 
             stealth = Stealth()
             await stealth.apply_stealth_async(self.context)
+            await self._block_tracking()
             self.page = await self.context.new_page()
             return {}
         except Exception:
@@ -403,7 +445,7 @@ class HelloWorkWorker:
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless= state["preferences"].browser_headless,
+                headless= not state["preferences"].browser_headless,
                 args=['--disable-blink-features=AutomationControlled'],
             )
 
@@ -440,11 +482,12 @@ class HelloWorkWorker:
 
             stealth = Stealth()
             await stealth.apply_stealth_async(self.context)
+            await self._block_tracking()
             self.page = await self.context.new_page()
 
             for attempt in range(3):
                 try:
-                    await self.page.goto(self.base_url, wait_until="networkidle", timeout=120000)
+                    await self.page.goto(self.base_url, wait_until="domcontentloaded", timeout=120000)
                     await self.page.wait_for_selector('input[id="k"]', state="visible", timeout=60000)
                     break
                 except Exception:
@@ -471,7 +514,9 @@ class HelloWorkWorker:
                 await human_delay(500, 1200)
                 await self.page.keyboard.press("Enter")
 
-                await self.page.wait_for_load_state("networkidle")
+                await self.page.wait_for_load_state("domcontentloaded")
+                await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=30000)
+                await self._neutralize_pagination_input()
                 await self._handle_cookies()
 
                 if contract_types or min_salary > 0:
@@ -493,8 +538,9 @@ class HelloWorkWorker:
         try:
             for attempt in range(3):
                 try:
-                    await self.page.goto(self.base_url, wait_until="networkidle", timeout=60000)
+                    await self.page.goto(self.base_url, wait_until="domcontentloaded", timeout=60000)
                     await self._handle_cookies()
+                    await self.close_google_auth_popup()                    
                     await self.page.wait_for_selector('[data-cy="headerAccountMenu"]', state="visible", timeout=30000)
                     break
                 except Exception:
@@ -533,7 +579,7 @@ class HelloWorkWorker:
                         if attempt == 2:
                             await self._emit(state, stage="Failed", status="error", error="Could not open the login modal.", error_code="LOGIN_MODAL_FAILED")
                             return {"error": "Login failed. Could not open the login modal.", "error_code": "LOGIN_MODAL_FAILED"}
-                        await self.page.reload(wait_until="networkidle")
+                        await self.page.reload(wait_until="domcontentloaded")
                         await asyncio.sleep(2 ** attempt)
 
                 login_plain = await self.encryption_service.decrypt(creds["hellowork"].login_encrypted)
@@ -563,7 +609,7 @@ class HelloWorkWorker:
 
                 for attempt in range(3):
                     try:
-                        await self.page.goto(self.base_url, wait_until="networkidle", timeout=60000)
+                        await self.page.goto(self.base_url, wait_until="domcontentloaded", timeout=60000)
                         await self.page.wait_for_selector('input[id="k"]', state="visible", timeout=20000)
                         break
                     except Exception:
@@ -626,7 +672,9 @@ class HelloWorkWorker:
                         await human_type(self.page.locator('input[id="l"]'), location)
                     await human_delay(500, 1200)
                     await self.page.keyboard.press("Enter")
-                    await self.page.wait_for_load_state("networkidle")
+                    await self.page.wait_for_load_state("domcontentloaded")
+                    await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=30000)
+                    await self._neutralize_pagination_input()
                     break
                 except Exception:
                     if attempt == 2:
@@ -660,7 +708,7 @@ class HelloWorkWorker:
         search_id = state["job_search"].id
         found_job_entities = []
 
-        worker_job_limit = 1 or state.get("worker_job_limit", 5)
+        worker_job_limit = 2 or state.get("worker_job_limit", 5)
         hash_result = await self.get_ignored_hashes.execute(user_id=user_id, days=14)
         ignored_hashes = hash_result.value if hash_result.is_success else set()
 
@@ -712,12 +760,22 @@ class HelloWorkWorker:
                         if not raw_title:
                             continue
 
+                        fast_hash = self._generate_fast_hash(raw_company, raw_title, str(user_id))
+                        if fast_hash in ignored_hashes:
+                            if not await self._nav_back_to_search(search_url):
+                                break
+                            continue
+
                         click_success = False
                         for attempt in range(3):
                             try:
                                 card = self.page.locator(self.CARD_SELECTOR).nth(i)
-                                await human_click(card)
-                                await self.page.wait_for_load_state("networkidle")
+                                link = card.locator('a[data-cy="offerTitle"]')
+                                await link.scroll_into_view_if_needed()
+                                await human_delay(300, 800)
+                                await human_click(link)
+                                await self.page.wait_for_load_state("domcontentloaded")
+                                await self.page.wait_for_selector('div[id="content"]', state="visible", timeout=15000)
                                 click_success = True
                                 break
                             except Exception:
@@ -729,10 +787,10 @@ class HelloWorkWorker:
                         if not click_success:
                             continue
 
+                        # URL sanity check — confirm we landed on a job detail page
                         current_url = self.page.url
-
-                        fast_hash = self._generate_fast_hash(raw_company, raw_title, str(user_id))
-                        if fast_hash in ignored_hashes:
+                        if "/fr-fr/emplois/" not in current_url:
+                            logger.warning("[HW] Unexpected URL after card click: %s", current_url)
                             if not await self._nav_back_to_search(search_url):
                                 break
                             continue
@@ -770,9 +828,10 @@ class HelloWorkWorker:
                                     )
                                     logger.info("[HW] External form detected, skipping")
                                 except Exception:
+                                    print("current_url:", self.page.url)
                                     offer = JobOffer(
                                         url=current_url,
-                                        form_url=current_url,
+                                        form_url= self.page.url,
                                         search_id=search_id,
                                         user_id=state["user"].id,
                                         company_name=raw_company,
@@ -843,13 +902,10 @@ class HelloWorkWorker:
                 for attempt in range(3):
                     try:
                         await self.page.goto(offer.form_url, wait_until="commit", timeout=60000)
-                        await human_delay(1500, 3500)
+                        print("Navigated to form URL:", offer.form_url)
+                        await human_delay(1500, 3500)            
 
-                        moving_to_form_btn = self.page.locator('a[data-cy="applyButtonHeader"]')
-                        if await moving_to_form_btn.count() > 0:
-                            await human_click(moving_to_form_btn)
-
-                        await self.page.wait_for_selector('input[name="Firstname"]', state="visible", timeout=15000)
+                        await self.page.wait_for_selector('input[name="Firstname"]', state="visible", timeout=90000)
                         form_loaded = True
                         break
                     except Exception:
@@ -863,6 +919,8 @@ class HelloWorkWorker:
                     continue
 
                 await human_delay(400, 1000)
+                await human_type(self.page.locator('input[name="Firstname"]'), user.firstname)
+                await human_delay(300, 700)
                 await human_type(self.page.locator('input[name="LastName"]'), user.lastname)
 
                 if user.resume_path:

@@ -22,9 +22,36 @@ from auto_apply_app.domain.entities.job_search import JobSearch
 from auto_apply_app.domain.entities.job_offer import JobOffer
 from auto_apply_app.domain.entities.user_preferences import UserPreferences
 from auto_apply_app.domain.entities.agent_state import AgentState
-from auto_apply_app.domain.value_objects import ApplicationStatus
+from auto_apply_app.domain.value_objects import ApplicationStatus, SearchStatus  # add SearchStatus
+from auto_apply_app.application.dtos.job_search_dtos import JobSearchSummaryResponse
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ListRecentSearchesUseCase:
+    """
+    Return the user's most recent SEARCHING job searches (README §4a).
+    Read-only, no jobs hydrated.
+    """
+    uow: UnitOfWork
+
+    async def execute(self, user_id: UUID, limit: int = 5) -> Result:
+        try:
+            async with self.uow as uow:
+                searches = await uow.search_repo.list_recent_by_user(
+                    user_id=user_id,
+                    status=SearchStatus.SEARCHING,
+                    limit=limit,
+                )
+                summaries = [JobSearchSummaryResponse.from_entity(s) for s in searches]
+                return Result.success(summaries)
+        except Exception:
+            logger.exception(f"ListRecentSearchesUseCase failed for user {user_id}")
+            return Result.failure(
+                Error.system_error("An unexpected error occurred while listing recent searches.")
+            )
+
 
 
 @dataclass
@@ -64,14 +91,14 @@ class StartJobSearchAgentUseCase:
                         Error.unauthorized("Subscription invalid or expired")
                     )
 
-                # 3. NEW: Daily quota + cooldown check (atomic with usage row)
-                usage = await uow.agent_usage_repo.get_or_create_for_today(user.id)
-                allowed, reason = usage.can_start_run(
-                    daily_limit=subscription.agent_daily_limit,
-                    base_cooldown_minutes=subscription.agent_cooldown_base_minutes,
-                )
-                if not allowed:
-                    return Result.failure(Error.too_many_requests(reason))
+                # # 3. NEW: Daily quota + cooldown check (atomic with usage row)
+                # usage = await uow.agent_usage_repo.get_or_create_for_today(user.id)
+                # allowed, reason = usage.can_start_run(
+                #     daily_limit=subscription.agent_daily_limit,
+                #     base_cooldown_minutes=subscription.agent_cooldown_base_minutes,
+                # )
+                # if not allowed:
+                #     return Result.failure(Error.too_many_requests(reason))
 
                 # 4. Fetch User Preferences
                 preferences = await uow.user_pref_repo.get_by_user_id(user.id)

@@ -7,6 +7,7 @@ from uuid import UUID
 
 from auto_apply_app.domain.entities.job_search import JobSearch
 from auto_apply_app.domain.entities.job_offer import JobOffer
+from auto_apply_app.domain.value_objects import SearchStatus
 
 
 
@@ -66,4 +67,25 @@ class JobSearchRepository(ABC):
         """
         pass
 
-   
+    @abstractmethod
+    async def list_recent_by_user(
+        self,
+        user_id: UUID,
+        status: SearchStatus,
+        limit: int = 5,
+    ) -> list[JobSearch]:
+        """
+        Retrieve the most recent job searches for a user, filtered by status,
+        ordered by updated_at descending. Does NOT hydrate matched jobs.
+
+        Args:
+            user_id: Owner of the searches
+            status: SearchStatus to filter on (e.g. SEARCHING)
+            limit: Max rows to return (default 5)
+
+        Returns:
+            List of JobSearch entities (possibly empty), newest first.
+        """
+        pass
+
+    

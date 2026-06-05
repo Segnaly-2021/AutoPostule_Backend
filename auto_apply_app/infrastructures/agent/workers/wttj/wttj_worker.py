@@ -4,6 +4,7 @@ import logging
 import os
 import json
 import asyncio
+import random
 import pdfplumber
 from datetime import datetime
 from typing import Optional
@@ -32,15 +33,24 @@ from auto_apply_app.infrastructures.agent.human_behavior import (
     human_delay,
     human_type,
     human_click,
+    human_hover,
     human_warmup,
+    human_read_page,
+    human_mouse_move,
+    should_skip_card,
+    should_hover_without_clicking,
 )
-
 logger = logging.getLogger(__name__)
 
 
 class WelcomeToTheJungleWorker:
 
-    CARD_SELECTOR = 'a.no-underline[href*="/fr/companies/"][href*="/jobs/"]'
+    
+    NEW_MATCHES_LIST = 'div[data-testid="job-list"]'
+    
+    CARD_SELECTOR = 'div[data-testid="job-list"] > div[data-testid^="job-card-"]'
+    
+    CARD_LINK = 'a[href*="/fr/companies/"][href*="/jobs/"]'
 
     def __init__(
         self,
@@ -141,6 +151,45 @@ class WelcomeToTheJungleWorker:
         except Exception:
             logger.debug("[WTTJ] No cookie popup detected")
 
+
+    async def _get_promoted_hrefs(self) -> set[str]:
+        """
+        Returns the set of hrefs inside WTTJ's 'Jobs prioritaires' (promoted)
+        section. Empty set if the section is absent (e.g. on pages 2+).
+    
+        Fail-soft: any error returns an empty set rather than aborting the scrape.
+        """
+        try:
+            promoted_section = self.page.locator(
+                'section[data-testid="promoted-jobs-section"]'
+            )
+            if await promoted_section.count() == 0:
+                return set()
+    
+            # Reuse the same href pattern as CARD_SELECTOR — same cards, just scoped.
+            promoted_links = promoted_section.locator(
+                'a.no-underline[href*="/fr/companies/"][href*="/jobs/"]'
+            )
+            count = await promoted_links.count()
+    
+            hrefs: set[str] = set()
+            for i in range(count):
+                href = await promoted_links.nth(i).get_attribute("href")
+                if href:
+                    hrefs.add(href)
+    
+            if hrefs:
+                logger.info(
+                    "[WTTJ] Identified %s promoted cards on this page (will skip)",
+                    len(hrefs),
+                )
+            return hrefs
+        except Exception:
+            logger.warning(
+                "[WTTJ] Could not enumerate promoted cards — proceeding without filter"
+            )
+            return set()
+
     async def _handle_wttj_application_modal(self):
         try:
             modal = self.page.locator('[data-testid="modals"]')
@@ -208,26 +257,36 @@ class WelcomeToTheJungleWorker:
         raw_company = None
         raw_location = None
 
+        # Desktop block holds the visible title/company at lg+ width.
+        desktop_block = card.locator('div.hidden.lg\\:flex')
+
         try:
-            await card.locator('div.hidden.lg\\:flex p').first.wait_for(state="attached", timeout=10000)
+            await desktop_block.locator('p').first.wait_for(state="attached", timeout=10000)
         except Exception:
             logger.warning("[WTTJ] Card content not ready")
             return "No Name", None, None
 
         try:
-            raw_title = await card.locator('p[class*="heading-md-strong"]').first.inner_text()
+            # Title is the heading-md-strong <a> inside the desktop block.
+            raw_title = await desktop_block.locator(
+                'a[class*="heading-md-strong"]'
+            ).first.inner_text()
         except Exception:
             logger.warning("[WTTJ] Could not extract title")
 
         try:
-            raw_company = await card.locator('p[class*="body-lg-strong"]').first.inner_text()
+            raw_company = await desktop_block.locator(
+                'p[class*="body-lg-strong"]'
+            ).first.inner_text()
         except Exception:
             raw_company = "No Name"
             logger.warning("[WTTJ] Could not extract company")
 
         try:
+            # Location tag lives in the tag row (not in the desktop header block),
+            # so scope to the whole card here.
             raw_location = await card.locator(
-                'svg.name-map-marker-alt + span'
+                'div[data-testid="job-card-tag-location"] span'
             ).first.inner_text()
         except Exception:
             logger.warning("[WTTJ] Could not extract location")
@@ -473,6 +532,26 @@ class WelcomeToTheJungleWorker:
             logger.exception("[WTTJ] Error applying filters")
             raise
 
+
+        
+    async def _is_home_bounce(self) -> bool:
+        """
+        Detects whether WTTJ has redirected us to the homepage as a soft bot
+        response. Use after a click that should have opened a job detail page.
+        """
+        try:
+            url = self.page.url
+            # WTTJ homepage URLs end with /fr or /fr/ — job detail URLs contain /jobs/
+            if "/jobs/" in url:
+                return False
+            # The job detail page has the apply button. Homepage doesn't.
+            apply_btn_count = await self.page.locator(
+                '[data-testid="job_bottom-button-apply"]'
+            ).count()
+            return apply_btn_count == 0
+        except Exception:
+            return False
+
     async def nav_back(self, url: str) -> bool:
         for i in range(3):
             try:
@@ -535,7 +614,7 @@ class WelcomeToTheJungleWorker:
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless= preferences.browser_headless,
+                headless= not preferences.browser_headless,
                 args=['--disable-blink-features=AutomationControlled'],
             )
 
@@ -580,7 +659,7 @@ class WelcomeToTheJungleWorker:
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless= state["preferences"].browser_headless,
+                headless= not state["preferences"].browser_headless,
                 args=['--disable-blink-features=AutomationControlled'],
             )
 
@@ -862,6 +941,7 @@ class WelcomeToTheJungleWorker:
             await self._emit(state, stage="Failed", status="error", error="We encountered an issue applying your search filters.", error_code="SEARCH_FILTERS_FAILED")
             return {"error": f"Failed to execute search for '{job_title}' on Welcome to the Jungle.", "error_code": "SEARCH_FILTERS_FAILED"}
 
+     
     async def get_matched_jobs(self, state: JobApplicationState):
         await self._emit(state, "Extracting Job Data")
         logger.info("[WTTJ] Scraping jobs")
@@ -870,7 +950,7 @@ class WelcomeToTheJungleWorker:
         search_id = state["job_search"].id
         found_job_entities = []
 
-        worker_job_limit = 1 or state.get("worker_job_limit", 5)
+        worker_job_limit = 10 or state.get("worker_job_limit", 5)
 
         hash_result = await self.get_ignored_hashes.execute(user_id=user_id, days=30)
         if not hash_result.is_success:
@@ -884,10 +964,22 @@ class WelcomeToTheJungleWorker:
         page_number = 1
         max_pages = 20
 
-        try:
+        # --- NEW: identity-based bookkeeping (replaces index iteration) ---
+        # Opening a job moves it from "Nouveaux matchs" to "Consultés", so the list
+        # shrinks under us. We never iterate by index; we always take the top
+        # unprocessed card and rely on the list shrinking to advance.
+        processed_hrefs: set[str] = set()      # cards we've fully handled / poisoned
+        hover_skip_counts: dict[str, int] = {} # href -> times we hover-skipped it
+        MAX_HOVER_SKIPS = 2                     # after this, consume it normally
+
+        # Safety cap: even if the list never shrinks (bug / soft-block), we can't
+        # spin forever on one page. Bounded by a generous multiple of the limit.
+        MAX_NOPROGRESS_PER_PAGE = max(worker_job_limit * 3, 15)
+
+        try:        
+
             while len(found_job_entities) < worker_job_limit and page_number <= max_pages:
 
-                # 🚨 INJECTED KILL CHECK: Before processing a new page
                 if await self._is_killed(state):
                     logger.info("[WTTJ] Kill switch detected. Halting pagination.")
                     return {"error": "Agent has been stopped.", "error_code": "AGENT_STOPPED", "found_raw_offers": found_job_entities}
@@ -902,58 +994,148 @@ class WelcomeToTheJungleWorker:
                         return {"found_raw_offers": []}
                     break
 
-                cards = self.page.locator(self.CARD_SELECTOR)
-                count = await cards.count()
+                # --- Page-arrival "browsing" pause: a real user scans before clicking ---
+                await human_read_page(self.page, min_seconds=2.0, max_seconds=4.5)
+
                 result_url = self.page.url
+                promoted_hrefs = await self._get_promoted_hrefs()
 
-                for i in range(count):
+                # --- Drain this page by always taking the FIRST unprocessed card ---
+                no_progress_streak = 0
 
-                    # 🚨 INJECTED KILL CHECK: Before clicking a new card
+                while len(found_job_entities) < worker_job_limit:
+
                     if await self._is_killed(state):
                         logger.info("[WTTJ] Kill switch detected. Halting card processing.")
                         return {"error": "Agent has been stopped.", "error_code": "AGENT_STOPPED", "found_raw_offers": found_job_entities}
 
-                    if len(found_job_entities) >= worker_job_limit:
+                    if no_progress_streak >= MAX_NOPROGRESS_PER_PAGE:
+                        logger.warning(
+                            "[WTTJ] No-progress cap hit on page %s (%s iterations). "
+                            "Moving to pagination.", page_number, no_progress_streak
+                        )
+                        break
+
+                    # Re-query every iteration: the list shifts as cards are consumed.
+                    cards = self.page.locator(self.CARD_SELECTOR)
+                    count = await cards.count()
+                    if count == 0:
+                        logger.info("[WTTJ] List empty on page %s — done with this page", page_number)
+                        break
+
+                    # --- Pick the first card we haven't already dealt with ---
+                    target_card = None
+                    target_href = None
+                    for i in range(count):
+                        candidate = cards.nth(i)
+                        # Card container is a <div>; the href lives on the inner <a>.
+                        try:
+                            href = await candidate.locator(self.CARD_LINK).first.get_attribute("href")
+                        except Exception:
+                            href = None
+                        if not href:
+                            continue
+                        if href in promoted_hrefs:
+                            continue
+                        if href in processed_hrefs:
+                            continue
+                        target_card = candidate
+                        target_href = href
+                        break
+
+                    if target_card is None:
+                        # Nothing left on this page we haven't handled.
+                        logger.info("[WTTJ] No unprocessed cards remain on page %s", page_number)
                         break
 
                     try:
-                        card = self.page.locator(self.CARD_SELECTOR).nth(i)
+                        # Scroll into view with a natural delay
+                        await target_card.scroll_into_view_if_needed()
+                        await human_delay(500, 1300)
 
-                        await card.scroll_into_view_if_needed()
-                        await human_delay(400, 1000)
-
-                        raw_company, raw_title, raw_location = await self.get_raw_job_data(card)
+                        raw_company, raw_title, raw_location = await self.get_raw_job_data(target_card)
 
                         if not raw_title:
+                            # Can't identify it — mark processed so we don't loop on it.
+                            processed_hrefs.add(target_href)
+                            no_progress_streak += 1
+                            continue
+
+                        if (state["user"].current_company and raw_company) and state["user"].current_company == raw_company:
+                            processed_hrefs.add(target_href)
+                            no_progress_streak += 1
                             continue
 
                         fast_hash = self._generate_fast_hash(raw_company, raw_title, str(user_id))
                         if fast_hash in ignored_hashes:
+                            processed_hrefs.add(target_href)
+                            no_progress_streak += 1
                             continue
 
+                        # --- BEHAVIORAL NOISE: occasionally hover without clicking ---
+                        # Capped per-card so a hover-skip can never stall the loop:
+                        # after MAX_HOVER_SKIPS we stop rolling and consume it normally.
+                        hovered_already = hover_skip_counts.get(target_href, 0)
+                        if hovered_already < MAX_HOVER_SKIPS and should_hover_without_clicking(probability=0.07):
+                            try:
+                                await human_hover(target_card, duration_ms=random.randint(600, 1400))
+                            except Exception:
+                                pass
+                            hover_skip_counts[target_href] = hovered_already + 1
+                            no_progress_streak += 1
+                            # NOTE: not added to processed_hrefs — we still want this job.
+                            continue
+
+                        # --- THE CLICK: opens detail, which moves card to "Consultés" ---
                         click_success = False
                         for attempt in range(3):
                             try:
-                                card = self.page.locator(self.CARD_SELECTOR).nth(i)
-                                await human_click(card)
-                                await self.page.wait_for_load_state("networkidle")
+                                if attempt == 0:
+                                    await human_click(target_card.locator(self.CARD_LINK).first)
+                                else:
+                                    # Re-resolve by href: the DOM may have shifted on retry.
+                                    retry_link = self.page.locator(
+                                        f'{self.CARD_SELECTOR} {self.CARD_LINK}[href="{target_href}"]'
+                                    ).first
+                                    if await retry_link.count() > 0:
+                                        await human_click(retry_link)
+                                    else:
+                                        await human_click(target_card.locator(self.CARD_LINK).first)
+
                                 await self._handle_cookies()
-                                await self.page.wait_for_selector('[data-testid="job_bottom-button-apply"]', state="attached", timeout=40000)
+                                await self.page.wait_for_selector(
+                                    '[data-testid="job_bottom-button-apply"]',
+                                    state="attached",
+                                    timeout=40000,
+                                )
                                 click_success = True
                                 break
                             except Exception:
                                 if attempt == 2:
                                     logger.warning("[WTTJ] Card click failed after 3 attempts. Skipping.")
                                     break
-                                await asyncio.sleep(2 ** attempt)
+                                if await self._is_home_bounce():
+                                    logger.warning(
+                                        "[WTTJ] Detected redirect to homepage after click — "
+                                        "backing off before retry"
+                                    )
+                                    await human_delay(8000, 15000)
+                                    await self.nav_back(result_url)
 
                         if not click_success:
+                            # Poison card: mark processed so we never re-pick it.
+                            processed_hrefs.add(target_href)
+                            no_progress_streak += 1
+                            # We may still be on the detail page; try to return.
+                            await self.nav_back(result_url)
                             continue
+
+                        # Successfully opened → this href is now consumed regardless of outcome.
+                        processed_hrefs.add(target_href)
 
                         current_url = self.page.url
 
-                        await human_delay(1500, 3500)
-
+                        # --- Read the description page like a real user ---
                         try:
                             desc_el = self.page.locator("div#the-position-section")
                             if await desc_el.count() == 0:
@@ -962,14 +1144,27 @@ class WelcomeToTheJungleWorker:
                         except Exception:
                             job_desc = ""
 
+                        desc_len = len(job_desc) if job_desc else 0
+                        read_min = max(2.0, min(4.0, desc_len / 1200))
+                        read_max = max(4.0, min(9.0, desc_len / 600))
+                        await human_read_page(self.page, min_seconds=read_min, max_seconds=read_max)
+
                         apply_btn = self.page.locator('[data-testid="job_header-button-apply"]')
 
                         if await apply_btn.count() > 0:
                             try:
                                 try:
-                                    await self.page.wait_for_selector('a[data-testid="job_header-button-apply"] svg[alt="ExternalLink"]', state="visible", timeout=3000)
+                                    await self.page.wait_for_selector(
+                                        'a[data-testid="job_header-button-apply"] svg[alt="ExternalLink"]',
+                                        state="visible",
+                                        timeout=3000,
+                                    )
+                                    # External application — skip, go back, move on.
                                     if not await self.nav_back(result_url):
                                         break
+                                    # Progress WAS made (card consumed), so reset streak.
+                                    no_progress_streak = 0
+                                    await human_delay(1200, 3200)
                                     continue
                                 except Exception:
                                     raise
@@ -991,8 +1186,17 @@ class WelcomeToTheJungleWorker:
                         if not await self.nav_back(result_url):
                             break
 
+                        # Real progress: a card was consumed this iteration.
+                        no_progress_streak = 0
+
+                        # Inter-card pause
+                        await human_delay(1200, 3200)
+
                     except Exception:
-                        logger.exception("[WTTJ] Error on card %s", i)
+                        logger.exception("[WTTJ] Error on card %s", target_href)
+                        if target_href:
+                            processed_hrefs.add(target_href)
+                        no_progress_streak += 1
                         try:
                             if not await self.nav_back(result_url):
                                 break
@@ -1017,6 +1221,7 @@ class WelcomeToTheJungleWorker:
 
         logger.info("[WTTJ] Scraping complete. Returning %s jobs.", len(found_job_entities))
         return {"found_raw_offers": found_job_entities}
+ 
 
     # Helper for dynamic questions
     async def _handle_dynamic_questions(self, user, preferences, resume_bytes: bytes) -> dict:
@@ -1179,6 +1384,7 @@ class WelcomeToTheJungleWorker:
                             raise Exception("Apply button not found")
 
                         await human_click(apply_btn)
+                        await self._handle_cookies()
                         await self.page.wait_for_selector('[data-testid="apply-form-field-firstname"]', state="visible", timeout=15000)
                         form_opened = True
                         break

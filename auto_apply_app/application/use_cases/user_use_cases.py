@@ -99,7 +99,6 @@ class RegisterUserUseCase:
     uow: UnitOfWork
     password_service: PasswordServicePort
     email_service: EmailServicePort
-    # token_provider removed — no longer needed for verification.
  
     async def execute(self, request: RegisterUserRequest) -> Result:
         try:
@@ -310,7 +309,7 @@ class LogoutUseCase:
             # 3. If the token is valid and has time remaining, blacklist it.
             #    If ttl is 0, it's already expired, so no need to blacklist.
             if jti and ttl > 0:
-                self.token_blacklist_repo.blacklist_token(token_id=jti, ttl_seconds=ttl)
+                await self.token_blacklist_repo.blacklist_token(token_id=jti, ttl_seconds=ttl)
                 
         except InvalidTokenException:
             # If the token is already invalid (malformed, expired, fake), 

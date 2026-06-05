@@ -68,6 +68,7 @@ from auto_apply_app.application.use_cases.agent_use_cases import (
     SaveJobApplicationsUseCase,
     UpdateCoverLetterUseCase,
     ConsumeAiCreditsUseCase,
+    ListRecentSearchesUseCase,  # NEW
 )
 from auto_apply_app.application.use_cases.subscription_use_cases import (
     GetUserSubscriptionUseCase,
@@ -314,8 +315,10 @@ class Application:
             update_cover_letter_use_case=UpdateCoverLetterUseCase(uow),
             approve_job_use_case=ApproveJobUseCase(uow),
             discard_job_use_case=DiscardJobUseCase(uow),
+            list_recent_searches_use_case=ListRecentSearchesUseCase(uow),  # NEW
             presenter=self.agent_presenter,
             job_presenter=self.job_presenter,
+            search_presenter=self.search_presenter,  # NEW
         )
 
     @property

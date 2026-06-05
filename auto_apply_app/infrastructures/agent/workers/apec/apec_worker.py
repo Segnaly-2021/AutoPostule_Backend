@@ -215,7 +215,7 @@ class ApecWorker():
 
     # --- HELPER: Nav Back ---
     async def nav_back(self, url: str):
-        await self.page.goto(url, wait_until="networkidle")
+        await self.page.goto(url, wait_until="networkidle", timeout=120000)
 
         try:
             await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=10000)
@@ -286,7 +286,7 @@ class ApecWorker():
             await human_click(self.page.locator('a[id="advancedSearch"]'))
             await self.page.wait_for_load_state("networkidle", timeout=90000)
 
-            await self.page.wait_for_selector('input[id="keywords"]', state="visible", timeout=15000)
+            await self.page.wait_for_selector('input[id="keywords"]', state="visible", timeout=45000)
             await human_type(self.page.locator('input[id="keywords"]'), job_title)
 
             contract_map = {
@@ -299,7 +299,7 @@ class ApecWorker():
 
             for attempt in range(3):
                 try:
-                    await self.page.wait_for_selector('apec-slider input.pull-left', state="attached", timeout=45000)
+                    await self.page.wait_for_selector('apec-slider input[class*="pull-left"]', state="attached", timeout=45000)
                     logger.info("[APEC] Full Angular form rendered")
                     break
                 except Exception:
@@ -319,8 +319,8 @@ class ApecWorker():
                         break
 
             if min_salary > 0:
-                await self.page.locator('apec-slider input.pull-left').scroll_into_view_if_needed()
-                salary_input = self.page.locator('apec-slider input.pull-left')
+                await self.page.locator('apec-slider input[class*="pull-left"]').scroll_into_view_if_needed()
+                salary_input = self.page.locator('apec-slider input[class*="pull-left"]')
                 if await salary_input.count() > 0:
                     salary_k = str(min_salary // 1000) if min_salary >= 1000 else str(min_salary)
                     await human_delay(300, 700)
@@ -366,7 +366,7 @@ class ApecWorker():
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless= preferences.browser_headless,
+                headless= not preferences.browser_headless,
                 args=['--disable-blink-features=AutomationControlled'],
             )
 
@@ -411,7 +411,7 @@ class ApecWorker():
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless= state["preferences"].browser_headless,
+                headless= not state["preferences"].browser_headless,
                 args=['--disable-blink-features=AutomationControlled'],
             )
 
@@ -529,6 +529,7 @@ class ApecWorker():
                 # RETRY UNIT 1: Open login modal
                 for attempt in range(3):
                     try:
+                        await self._handle_cookies()
                         await self.page.wait_for_selector('li[id="header-monespace"]', state="visible", timeout=30000)
                         await human_click(self.page.locator('li[id="header-monespace"]'))
                         await self.page.wait_for_selector('input[id="emailid"]', state="visible", timeout=15000)
@@ -794,6 +795,8 @@ class ApecWorker():
         logger.info("[APEC] Scraping complete. Returning %s jobs.", len(found_job_entities))
         return {"found_raw_offers": found_job_entities}
 
+    
+    
     # --- NODE 7: Submit Applications ---
     async def submit_applications(self, state: JobApplicationState):
         await self._emit(state, "Submitting Applications")
@@ -825,19 +828,21 @@ class ApecWorker():
                         await self.page.goto(offer.form_url, wait_until='networkidle', timeout=90000)
                         await human_delay(1500, 3500)
                         try:
-                            await self.page.wait_for_selector('#formUpload, .form-check.uploadFile.profil-selection', state="attached", timeout=90000)
+                            await self.page.wait_for_selector('#formUpload, .form-check.uploadFile.profil-selection', state="attached", timeout=60000)
                         except Exception:
                             pass
 
                         if await self.page.locator('#formUpload input[type="file"]').count() > 0 or await self.page.locator('.form-check.uploadFile.profil-selection').count() > 0:
                             form_loaded = True
-                            break
+                        
                         else:
                             await self.page.wait_for_selector('button[title="Postuler"]', state="visible", timeout=60000)
                             await human_click(self.page.locator('button[title="Postuler"]'))
-                            await self.page.wait_for_load_state("networkidle")
+                            await self.page.wait_for_load_state("networkidle", timeout=60000)
                             await self.page.wait_for_selector('#formUpload, .form-check.uploadFile.profil-selection', state="attached", timeout=90000)
-                            break
+                            form_loaded = True
+                        
+                        break
                         
                         
                     except Exception:
@@ -854,31 +859,58 @@ class ApecWorker():
                     resume_bytes = await self.file_storage.download_file(user.resume_path)
                     human_name = user.resume_file_name or f"{user.firstname}_{user.lastname}_CV.pdf"
 
-                    await self.page.wait_for_selector('#formUpload input[type="file"]', state="attached", timeout=15000)
-                    await self.page.locator('#formUpload input[type="file"]').first.set_input_files({
+                    # The "Importer un CV" radio is the SECOND choixCV radio — the one inside
+                    # the .uploadFile block. profil-selection is NOT a reliable anchor: it's a
+                    # dynamic marker Angular moves to whichever choice is active.
+                    import_block = self.page.locator('.form-check.uploadFile')
+                    import_radio = import_block.locator('input[type="radio"][formcontrolname="choixCV"]')
+
+                    # Select it. Clicking the LABEL is what actually drives the Angular handler
+                    # here — the radio itself is styled/proxied through the label.
+                    label_clicked = False
+                    try:
+                        await self.page.locator('label.choice-highlight.import-cv').click(timeout=10000)
+                        label_clicked = True
+                    except Exception:
+                        try:
+                            await import_radio.check(force=True, timeout=10000)
+                            label_clicked = True
+                        except Exception:
+                            logger.warning("[APEC] Could not select 'Importer un CV'")
+
+                    # Wait for the upload widget to actually become visible. This is the real
+                    # signal the switch worked — the .form-apec div drops its hidden attribute.
+                    try:
+                        await self.page.wait_for_selector(
+                            '#formUpload input[type="file"]', state="visible", timeout=10000
+                        )
+                    except Exception:
+                        logger.warning("[APEC] Upload widget did not become visible after selecting import")
+
+                    # Confirm the import radio is now the active choice.
+                    is_active = await import_block.evaluate(
+                        "el => el.classList.contains('profil-selection')"
+                    )
+                    if not is_active:
+                        logger.warning("[APEC] 'Importer un CV' not marked active (profil-selection); "
+                                    "old CV will likely be submitted")
+
+                    # Now the file input is visible — set the file.
+                    file_input = self.page.locator('#formUpload input[type="file"]').first
+                    await file_input.set_input_files({
                         "name": human_name,
                         "mimeType": "application/pdf",
                         "buffer": resume_bytes,
                     })
+                    await file_input.dispatch_event("change")
                     await human_delay(1000, 2000)
 
-                    # has_saved_resume = await self.page.locator('.form-check.uploadFile.profil-selection').count() > 0
-
-                    # if has_saved_resume:
-                    #     await human_click(self.page.locator('label.choice-highlight.import-cv'))
-                    #     await self.page.wait_for_selector('#formUpload input[type="file"]', state="visible", timeout=10000)
-                    #     await self.page.locator('#formUpload input[type="file"]').first.set_input_files({
-                    #         "name": human_name,
-                    #         "mimeType": "application/pdf",
-                    #         "buffer": resume_bytes
-                    #     })
-                    # else:
-                    #     await self.page.locator('#formUpload input[type="file"]').first.set_input_files({
-                    #         "name": human_name,
-                    #         "mimeType": "application/pdf",
-                    #         "buffer": resume_bytes
-                    #     })
-                    # await human_delay(1000, 2000)
+                    # Verify the upload label updated to our file.
+                    try:
+                        lbl = (await self.page.locator('#formUpload label').first.inner_text()).strip()
+                        logger.info("[APEC] Upload widget shows: %s", lbl)
+                    except Exception:
+                        pass
 
                     try:
                         save_checkbox = self.page.locator('input[formcontrolname="isCvSave"]')

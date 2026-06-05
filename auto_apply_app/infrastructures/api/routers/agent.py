@@ -19,6 +19,8 @@ from auto_apply_app.infrastructures.api.schema.agent_schema import (
     AgentViewModel,
 )
 from auto_apply_app.interfaces.viewmodels.job_offer_vm import JobReviewViewModel
+from auto_apply_app.interfaces.viewmodels.job_search_vm import JobSearchSummaryViewModel
+
 
 logger = logging.getLogger(__name__)
 
@@ -290,5 +292,25 @@ async def discard_job(
     result = await controller.handle_discard_job(
         user_id=current_user_id,
         job_id=job_id
+    )
+    return handle_result(result)
+
+
+
+@router.get(
+    "/recent-searches",
+    response_model=List[JobSearchSummaryViewModel],
+    status_code=status.HTTP_200_OK,
+    summary="List recent active (SEARCHING) job searches",
+    description="Returns the authenticated user's 5 most recent searches with SEARCHING status.",
+)
+async def list_recent_searches(
+    current_user_id: CurrentUserId,
+    controller: AgentControllerDep,
+    limit: int = 5,
+):
+    result = await controller.handle_list_recent_searches(
+        user_id=current_user_id,
+        limit=limit,
     )
     return handle_result(result)

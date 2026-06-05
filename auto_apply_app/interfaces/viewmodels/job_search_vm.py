@@ -26,3 +26,20 @@ class JobSearchViewModel:
     
     # Optional: Include jobs list (for detail view)
     jobs: Optional[List[JobOfferViewModel]] = None
+
+
+
+
+
+
+@dataclass(frozen=True)
+class JobSearchSummaryViewModel:
+    """Compact ViewModel for the 'recent searches' list (README §4a)."""
+    id: str
+    job_title: str
+    status: str
+    job_boards: List[str]
+    contract_types: List[str]
+    location: str
+    min_salary: int
+    updated_at: Optional[str] = None

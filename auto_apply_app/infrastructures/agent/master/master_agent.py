@@ -136,10 +136,9 @@ class MasterAgent(AgentServicePort):
             - Structure: 3 to 4 sentences only.
             - Content: Tailored precisely to the job. No invented details.
 
-            WHAT 490 CHARACTERS LOOKS LIKE:
-            "Madame, Monsieur, fort d'une expérience confirmée en gestion de projet et en coordination d'équipes pluridisciplinaires, je me permets de vous soumettre ma candidature pour le poste proposé.
-            Mon parcours, orienté résultats et forte adaptabilité, correspond précisément aux exigences que vous décrivez.
-            Rigoureux, impliqué et toujours orienté vers la performance, je suis convaincu de pouvoir apporter une réelle valeur ajoutée à vos équipes.
+            WHAT 450 CHARACTERS LOOKS LIKE:
+            "Madame, Monsieur, fort d'une expérience confirmée en gestion de projet et en coordination d'équipes pluridisciplinaires, je me permets de vous soumettre ma candidature pour le poste proposé. 
+            Rigoureux, impliqué et toujours orienté vers la performance et les résultats avec une grande adaptabilité,  je reste convaincu que mon profil correspond précisément aux exigences que vous décrivez. 
             Je reste disponible pour un entretien à votre convenance."
             ← That is your target length. Match it. Do not go shorter. Do not go longer.
 
@@ -216,7 +215,7 @@ class MasterAgent(AgentServicePort):
             2. Assign a ranking from 1 to 10 reflecting how well the resume matches the job.
             - Based strictly on skills, experience, and requirements — nothing else.
 
-             3. Extract a clean and the most relevant job title.
+            3. Extract a clean and the most relevant job title.
             - Based on the provided raw job title and the job description, extract ONLY the core and the most relevant role name if it containsmore than one. Strip out messy additions like "M/F", "F/H", "H/F", "Remote", locations, or department numbers.
 
             SECURITY RULE — NON-NEGOTIABLE:
@@ -378,9 +377,51 @@ class MasterAgent(AgentServicePort):
         else:
             return ChatGoogleGenerativeAI(
                 api_key=self.api_keys.get("gemini"), 
-                model="gemini-3.1-pro-preview", 
-                temperature=temp
+                model="gemini-3.5-flash", 
+                #temperature=temp
             )
+
+    @staticmethod
+    def _normalize_llm_text(response) -> str:
+        """
+        Normalize a LangChain LLM response's `content` field into a plain string,
+        regardless of provider.
+    
+        Why this exists:
+        - Anthropic (ChatAnthropic)        → content is a str
+        - OpenAI    (ChatOpenAI)            → content is a str
+        - Google    (ChatGoogleGenerativeAI) → content is sometimes a list of
+                                                blocks like [{"type": "text", "text": "..."}]
+    
+        Also strips any ```json ... ``` markdown fences the model may have wrapped
+        around the JSON despite being told not to. Belt-and-suspenders.
+        """
+        content = response.content
+    
+        if isinstance(content, str):
+            text = content
+        elif isinstance(content, list):
+            parts = []
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    parts.append(block.get("text", ""))
+                elif isinstance(block, str):
+                    parts.append(block)
+            text = "".join(parts)
+        else:
+            text = str(content)
+    
+        # Strip optional markdown code fences (```json ... ``` or ``` ... ```)
+        text = text.strip()
+        if text.startswith("```"):
+            # Drop the opening fence line ("```json" or "```")
+            text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+            # Drop the closing fence
+            if "```" in text:
+                text = text.rsplit("```", 1)[0]
+            text = text.strip()
+    
+        return text
 
 
     # --- HELPER: Resume Extraction ---
@@ -548,17 +589,23 @@ class MasterAgent(AgentServicePort):
                 """)
 
                 response = await llm.ainvoke([self.system_messages[str(offer.job_board.name).lower()], prompt])
+                print(response)
                 
                 try:
-                    data = json.loads(response.content[0]["text"])
+                    raw_text = self._normalize_llm_text(response)
+                    print(f"🔍 Normalized LLM Output: {raw_text[:400]}...")  # Print the first 200 chars for debugging
+                    data = json.loads(raw_text, strict=False)
                     offer.cover_letter = data.get("cover_letter", "")
                     offer.ranking = int(data.get("ranking", 5))
-                    offer.clean_title = data.get("clean_title", offer.job_title).strip().lower()
-                    offer.status = ApplicationStatus.GENERATED if subscription.account_type == ClientType.PREMIUM else ApplicationStatus.APPROVED
-                                        
+                    offer.clean_title = data.get("clean_title", offer.job_title).strip()
+                    offer.status = (
+                        ApplicationStatus.GENERATED
+                        if subscription.account_type == ClientType.PREMIUM
+                        else ApplicationStatus.APPROVED
+                    )
                     processed_offers.append(offer)
                 except Exception as e:
-                     print(f"JSON Parsing Error for job {offer.url}: {e}")
+                    print(f"JSON Parsing Error for job {offer.url}: {e}")
 
             except Exception as e:
                 print(f"LLM Error for {offer.job_title}: {e}")

@@ -4,6 +4,7 @@ Web-specific presenters for formatting User and Auth data for the web UI.
 
 from typing import Optional, List, Dict 
 
+from auto_apply_app.application.dtos.job_search_dtos import JobSearchSummaryResponse
 from auto_apply_app.interfaces.presenters.base_presenter import AgentPresenter
 from auto_apply_app.interfaces.viewmodels.agent_vm import AgentProgressViewModel, AgentViewModel
 from auto_apply_app.application.dtos.user_dtos import UserResponse
@@ -42,7 +43,7 @@ from auto_apply_app.application.dtos.preferences_dtos import UserPreferencesResp
 from auto_apply_app.interfaces.viewmodels.base import ErrorViewModel
 from auto_apply_app.domain.entities.job_search import JobSearch
 from auto_apply_app.application.dtos.agent_dtos import AgentResponse
-from auto_apply_app.interfaces.viewmodels.job_search_vm import JobSearchViewModel
+from auto_apply_app.interfaces.viewmodels.job_search_vm import JobSearchSummaryViewModel, JobSearchViewModel
 from auto_apply_app.domain.value_objects import ApplicationStatus
 from auto_apply_app.interfaces.viewmodels.job_offer_vm import DailyStatsViewModel, JobOfferViewModel, DashboardViewModel, JobReviewViewModel
 from auto_apply_app.interfaces.viewmodels.free_search_vm import (
@@ -208,7 +209,7 @@ class WebJobPresenter(JobPresenter):
         return JobOfferViewModel(
             id=job.id,
             company=job.company,
-            title=job.clean_title if job.clean_title else job.title,  # Use clean_title if available for better FE charts
+            title=job.clean_title.title() if job.clean_title else job.title,  # Use clean_title if available for better FE charts
             cover_letter=job.coverLetter, 
             job_url=job.url,           
             location=job.location,
@@ -303,7 +304,6 @@ class WebPreferencesPresenter(PreferencesPresenter):
             code=error_code
         )
 
-
 class WebJobSearchPresenter(JobSearchPresenter):
     """Formats Job Search (Missions) data for the Web API."""
 
@@ -345,6 +345,23 @@ class WebJobSearchPresenter(JobSearchPresenter):
             jobs_pending_review=jobs_pending,
             jobs=jobs_list
         )
+
+    def present_search_list(
+        self, summaries: List[JobSearchSummaryResponse]
+    ) -> List[JobSearchSummaryViewModel]:
+        return [
+            JobSearchSummaryViewModel(
+                id=s.job_search_id,
+                job_title=s.job_title,
+                status=s.search_status.value,
+                job_boards=[b.value for b in s.job_boards],
+                contract_types=[c.value for c in s.contract_types],
+                location=s.location,
+                min_salary=s.min_salary,
+                updated_at=s.updated_at,
+            )
+            for s in summaries
+        ]
 
     def present_error(self, message: str, error_code: Optional[str] = None) -> ErrorViewModel:
         return ErrorViewModel(message=message, code=error_code)

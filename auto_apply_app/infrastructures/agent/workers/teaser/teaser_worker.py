@@ -130,12 +130,72 @@ class JobTeaserWorker:
 
     async def _handle_cookies(self):
         try:
-            agree_button_selector = '#didomi-notice-agree-button'
-            await self.page.wait_for_selector(agree_button_selector, state='visible', timeout=5000)
-            await self.page.click(agree_button_selector)
-            await self.page.wait_for_timeout(1000)
+            # Wait briefly for the Didomi banner to appear
+            await self.page.wait_for_selector(
+                '#didomi-host, #didomi-notice-agree-button',
+                state='attached',
+                timeout=10000,
+            )
+            print("[JOBTEASER] Cookie popup detected, attempting to handle it...")
         except Exception:
             logger.debug("[JOBTEASER] No cookie popup detected")
+            return
+        
+
+        # 1) Preferred: use Didomi's own consent API (most reliable, no click needed)
+        try:
+            handled = await self.page.evaluate("""() => {
+                if (window.Didomi && typeof window.Didomi.setUserAgreeToAll === 'function') {
+                    window.Didomi.setUserAgreeToAll();
+                    return true;
+                }
+                return false;
+            }""")
+            if handled:
+                await self.page.wait_for_timeout(1000)
+                print("[JOBTEASER] Consent accepted via Didomi API")
+                logger.debug("[JOBTEASER] Consent accepted via Didomi API")
+                return 
+        except Exception:
+            print("[JOBTEASER] Didomi API not available, falling back to click")
+            logger.debug("[JOBTEASER] Didomi API not available, falling back to click")
+            handled = False
+
+        # 2) Fallback: click the agree button if it's still there
+        if not handled:
+            try:
+                agree_button_selector = 'button#didomi-notice-agree-button'
+                await self.page.wait_for_selector(
+                    agree_button_selector, state='visible', timeout=3000
+                )
+                await human_click(self.page.locator(agree_button_selector))
+                print("[JOBTEASER] Consent accepted via button click")
+                await self.page.wait_for_timeout(500)
+                logger.debug("[JOBTEASER] Consent accepted via button click")
+            except Exception:
+                print("[JOBTEASER] Agree button not clickable, removing overlay")
+                logger.debug("[JOBTEASER] Agree button not clickable, removing overlay")
+
+        # 3) Last resort: forcibly remove the overlay and unlock the body
+        try:
+            print("[JOBTEASER] Forcibly removing Didomi overlay")
+            removed = await self.page.evaluate("""() => {
+                let removed = 0;
+                document.querySelectorAll(
+                    '#didomi-host, .didomi-popup-backdrop, .didomi-popup-open-ios'
+                ).forEach(el => { el.remove(); removed++; });
+                document.body.classList.remove('didomi-popup-open', 'didomi-popup-open-ios');
+                document.body.style.overflow = '';
+                document.body.style.position = '';
+                return removed;
+            }""")
+            if removed:
+                print(f"[JOBTEASER] Removed {removed} Didomi element(s)")
+                logger.debug("[JOBTEASER] Removed %s Didomi element(s)", removed)
+        except Exception:
+            logger.debug("[JOBTEASER] Nothing to clean up")
+
+        
 
     async def force_cleanup(self):
         logger.info("[JOBTEASER] Force cleanup initiated")
@@ -429,23 +489,23 @@ class JobTeaserWorker:
 
         preferences = state["preferences"]
 
-        fingerprint = state.get("user_fingerprint")
+        #fingerprint = state.get("user_fingerprint")
 
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless= preferences.browser_headless,
+                headless= not preferences.browser_headless,
                 args=['--disable-blink-features=AutomationControlled'],
             )
 
-            context_kwargs = {}
-            if fingerprint:
-                context_kwargs.update(fingerprint.to_playwright_context_args())
-            else:
-                context_kwargs["user_agent"] = (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-                )
+            # context_kwargs = {}
+            # if fingerprint:
+            #     context_kwargs.update(fingerprint.to_playwright_context_args())
+            # else:
+            #     context_kwargs["user_agent"] = (
+            #         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            #         "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            #     )
 
             # if proxy_config:
             #     context_kwargs["proxy"] = {
@@ -454,13 +514,13 @@ class JobTeaserWorker:
             #         "password": proxy_config["password"],
             #     }
 
-            self.context = await self.browser.new_context(**context_kwargs)
+            self.context = await self.browser.new_context() #**context_kwargs)
 
-            if fingerprint:
-                await self.context.add_init_script(fingerprint.to_init_script())
+            # if fingerprint:
+            #     await self.context.add_init_script(fingerprint.to_init_script())
 
-            stealth = Stealth()
-            await stealth.apply_stealth_async(self.context)
+            # stealth = Stealth()
+            # await stealth.apply_stealth_async(self.context)
             self.page = await self.context.new_page()
 
             return {}
@@ -474,53 +534,53 @@ class JobTeaserWorker:
         logger.info("[JOBTEASER] Booting browser (session injection)")
         user_id = str(state["user"].id)
 
-        fingerprint = state.get("user_fingerprint")
+        #fingerprint = state.get("user_fingerprint")
 
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless= state["preferences"].browser_headless,
+                headless= not state["preferences"].browser_headless,
                 args=['--disable-blink-features=AutomationControlled'],
             )
 
             session_path = self._get_auth_state_path(user_id)
 
-            context_kwargs = {}
-            if fingerprint:
-                context_kwargs.update(fingerprint.to_playwright_context_args())
-                context_kwargs.update({
-                    "device_scale_factor": fingerprint.device_scale_factor,
-                    "has_touch": False,
-                    "is_mobile": False,
-                })
-            else:
-                context_kwargs["user_agent"] = (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-                )
+            # context_kwargs = {}
+            # if fingerprint:
+            #     context_kwargs.update(fingerprint.to_playwright_context_args())
+            #     context_kwargs.update({
+            #         "device_scale_factor": fingerprint.device_scale_factor,
+            #         "has_touch": False,
+            #         "is_mobile": False,
+            #     })
+            # else:
+            #     context_kwargs["user_agent"] = (
+            #         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            #         "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            #     )
 
-            if session_path:
-                context_kwargs["storage_state"] = session_path
+            # if session_path:
+            #     context_kwargs["storage_state"] = session_path
 
-            # if proxy_config:
-            #     context_kwargs["proxy"] = {
-            #         "server": proxy_config["server"],
-            #         "username": proxy_config["username"],
-            #         "password": proxy_config["password"],
-            #     }
+            # # if proxy_config:
+            # #     context_kwargs["proxy"] = {
+            # #         "server": proxy_config["server"],
+            # #         "username": proxy_config["username"],
+            # #         "password": proxy_config["password"],
+            # #     }
 
-            self.context = await self.browser.new_context(**context_kwargs)
+            self.context = await self.browser.new_context() #**context_kwargs)
 
-            if fingerprint:
-                await self.context.add_init_script(fingerprint.to_init_script())
+            # if fingerprint:
+            #     await self.context.add_init_script(fingerprint.to_init_script())
 
-            stealth = Stealth()
-            await stealth.apply_stealth_async(self.context)
+            # # stealth = Stealth()
+            # await stealth.apply_stealth_async(self.context)
             self.page = await self.context.new_page()
 
             for attempt in range(3):
                 try:
-                    await self.page.goto(self.base_url, wait_until="networkidle", timeout=120000)
+                    await self.page.goto(self.base_url, wait_until="domcontentloaded", timeout=120000)
                     await self._handle_cookies()
                     await self.page.wait_for_selector(
                         'span[class*="Greeting_firstWord"]',
@@ -596,11 +656,15 @@ class JobTeaserWorker:
         try:
             for attempt in range(3):
                 try:
-                    await self.page.goto(self.base_url, wait_until="networkidle", timeout=90000)
+                    print(f"Attempt {attempt+1}: Navigating to {self.base_url}")
+                    await self.page.goto(self.base_url, wait_until="domcontentloaded", timeout=90000)
+                
                     await self._handle_cookies()
+                    
                     await self.page.wait_for_selector('button[id="UnloggedUserDropdownButton"]', state="visible", timeout=30000)
                     break
-                except Exception:
+                except Exception as e:
+                    print(f"⚠️ Attempt {attempt + 1} failed: {str(e)}")
                     if attempt == 2:
                         await self._emit(state, stage="Failed", status="error", error="Could not reach JobTeaser.", error_code="JOB_BOARD_UNAVAILABLE")
                         return {"error": "Could not reach JobTeaser. The job board might be down or undergoing maintenance.", "error_code": "JOB_BOARD_UNAVAILABLE"}
@@ -632,23 +696,26 @@ class JobTeaserWorker:
                 for attempt in range(3):
                     try:
                         await human_click(self.page.locator('button#UnloggedUserDropdownButton'))
-                        await self.page.wait_for_selector('a[data-testid="signinLink"]', state="visible", timeout=10000)
+                        await self.page.wait_for_selector('a[data-testid="signinLink"]', state="visible", timeout=90000)
 
-                        await human_click(self.page.locator('a[data-testid="signinLink"]'))
-                        await self.page.wait_for_load_state("networkidle")
+                        await human_click(self.page.locator('a[data-testid="signinLink"]'))                        
+                        await self.page.wait_for_load_state("domcontentloaded", timeout=120000)
 
+                        
+                        await self.page.wait_for_selector('a[href*="/users/auth/connect"]', state="visible", timeout=120000)
                         connect_btn = self.page.locator('a[href*="/users/auth/connect"]')
-                        await self.page.wait_for_selector('a[href*="/users/auth/connect"]', state="visible", timeout=15000)
                         await human_click(connect_btn)
-                        await self.page.wait_for_load_state("networkidle")
+                        await self.page.wait_for_load_state("domcontentloaded", timeout=60000)
 
-                        await self.page.wait_for_selector('input#email', state="visible", timeout=60000)
+                        await self.page.wait_for_selector('input#email', state="visible", timeout=120000)
                         break
-                    except Exception:
+                    except Exception as e:
                         if attempt == 2:
                             await self._emit(state, stage="Failed", status="error", error="Could not reach the login form.", error_code="LOGIN_MODAL_FAILED")
+                            print("⚠️ Login form not available yet, retrying...", str(e))
                             return {"error": "Login failed. Could not reach the login form.", "error_code": "LOGIN_MODAL_FAILED"}
-                        await self.page.reload(wait_until="networkidle")
+                        await self.page.reload(wait_until="commit", timeout=90000)
+                        print("⚠️ Login form not available yet, retrying...", str(e))
                         await asyncio.sleep(2 ** attempt)
 
                 login_plain = await self.encryption_service.decrypt(creds["jobteaser"].login_encrypted)
@@ -666,8 +733,8 @@ class JobTeaserWorker:
                         await human_delay(600, 1500)
 
                         submit_btn = self.page.locator('form[data-e2e="sign-in-form"] button[type="submit"]')
-                        await submit_btn.click()
-                        await self.page.wait_for_load_state("networkidle", timeout=60000)
+                        await human_click(submit_btn)
+                        await self.page.wait_for_load_state("commit", timeout=60000)
                         break
                     except Exception:
                         if attempt == 2:
@@ -785,7 +852,7 @@ class JobTeaserWorker:
         search_id = state["job_search"].id
         found_job_entities = []
 
-        worker_job_limit = 1 or state.get("worker_job_limit", 5)
+        worker_job_limit = 2 or state.get("worker_job_limit", 5)
 
         hash_result = await self.get_ignored_hashes.execute(user_id=user_id, days=30)
         if not hash_result.is_success:

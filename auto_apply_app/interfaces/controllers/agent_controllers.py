@@ -1,10 +1,11 @@
 from dataclasses import dataclass
+from uuid import UUID
 from typing import List, Optional
 
 from auto_apply_app.domain.value_objects import ContractType
 from auto_apply_app.interfaces.viewmodels.base import OperationResult
 from auto_apply_app.application.common.result import Result
-from auto_apply_app.interfaces.presenters.base_presenter import AgentPresenter, JobPresenter
+from auto_apply_app.interfaces.presenters.base_presenter import AgentPresenter, JobPresenter, JobSearchPresenter
 from auto_apply_app.application.use_cases.agent_use_cases import (
     ApproveJobUseCase,
     DiscardJobUseCase,
@@ -12,7 +13,8 @@ from auto_apply_app.application.use_cases.agent_use_cases import (
     StartJobSearchAgentUseCase,
     ResumeJobApplicationUseCase,
     KillJobSearchUseCase,
-    UpdateCoverLetterUseCase
+    UpdateCoverLetterUseCase,
+    ListRecentSearchesUseCase
 )
 # 🚨 Make sure all these are imported!
 from auto_apply_app.application.dtos.agent_dtos import (
@@ -37,8 +39,10 @@ class AgentController:
     update_cover_letter_use_case: UpdateCoverLetterUseCase
     approve_job_use_case: ApproveJobUseCase
     discard_job_use_case: DiscardJobUseCase
+    list_recent_searches_use_case: ListRecentSearchesUseCase
     presenter: AgentPresenter
     job_presenter: JobPresenter
+    search_presenter: JobSearchPresenter
 
     # ---------- START AGENT ----------
     async def handle_start_agent(
@@ -249,7 +253,30 @@ class AgentController:
 
         except ValueError as e:
             return self._present_validation_exception(e)
-        
+
+
+    # ---------- LIST RECENT SEARCHES ----------
+    async def handle_list_recent_searches(
+        self,
+        user_id: str,
+        limit: int = 5,
+    ) -> OperationResult:
+        """Return the user's 5 most recent SEARCHING searches (README §4a)."""
+        try:
+            result = await self.list_recent_searches_use_case.execute(
+                user_id=UUID(user_id),
+                limit=limit,
+            )
+
+            if result.is_success:
+                vms = self.search_presenter.present_search_list(result.value)
+                return OperationResult.succeed(value=vms)
+
+            return self._present_error(result)
+
+        except ValueError as e:
+            # covers a malformed user_id UUID too
+            return self._present_validation_exception(e)
 
     # --- Private Helpers ---
     def _present_error(self, result: Result) -> OperationResult:

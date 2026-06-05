@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from auto_apply_app.domain.entities.job_search import JobSearch
 from auto_apply_app.domain.entities.job_offer import JobOffer
 from auto_apply_app.application.repositories.job_search_repo import JobSearchRepository
+from auto_apply_app.domain.value_objects import SearchStatus
 from auto_apply_app.infrastructures.persistence.database.models.schema import JobSearchDB, JobOfferDB
 from auto_apply_app.domain.exceptions import JobSearchNotFoundError
 
@@ -103,6 +104,41 @@ class JobSearchRepoDB(JobSearchRepository):
         if search_db is None:
             raise JobSearchNotFoundError(f"Job search {search_id} not found")
         await self.session.delete(search_db)
+
+
+    async def list_recent_by_user(
+        self,
+        user_id: UUID,
+        status: SearchStatus,
+        limit: int = 5,
+    ) -> List[JobSearch]:
+        result = await self.session.execute(
+            select(JobSearchDB)
+            .where(
+                JobSearchDB.user_id == user_id,
+                JobSearchDB.search_status == status,
+            )
+            .order_by(JobSearchDB.updated_at.desc())
+            .limit(limit)
+        )
+        return [self._map_to_summary_entity(search_db) for search_db in result.scalars().all()]
+
+
+    def _map_to_summary_entity(self, search_db: JobSearchDB) -> JobSearch:
+        """Map without touching the job_offers relationship (avoids async lazy-load)."""
+        search = JobSearch(
+            user_id=search_db.user_id,
+            job_title=search_db.job_title,
+            job_boards=list(search_db.job_boards) if search_db.job_boards else [],
+            _matched_jobs={},  # intentionally empty for list views
+            search_status=search_db.search_status,
+            contract_types=list(search_db.contract_types) if search_db.contract_types else [],
+            min_salary=search_db.min_salary,
+            location=search_db.location,
+            updated_at=search_db.updated_at,
+        )
+        search.id = search_db.id
+        return search
 
     def _map_to_entity(self, search_db: JobSearchDB) -> JobSearch:
         matched_jobs = {

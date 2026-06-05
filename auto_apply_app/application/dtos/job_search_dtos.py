@@ -3,7 +3,7 @@ from typing import Optional, Dict, List, Self
 from uuid import UUID
 
 from auto_apply_app.domain.entities.job_search import JobSearch
-from auto_apply_app.domain.value_objects import ContractType, SearchStatus
+from auto_apply_app.domain.value_objects import ContractType, SearchStatus, JobBoard
 
 @dataclass(frozen=True)
 class CreateJobSearchRequest:
@@ -128,3 +128,48 @@ class UpdateJobSearchRequest:
             params["contract_types"] = self.contract_types
 
         return params
+
+
+
+@dataclass(frozen=True)
+class JobSearchSummaryResponse:
+    """Data carrier: Domain Layer -> Application Layer (list/summary view)."""
+
+    job_search_id: str
+    job_title: str
+    job_seeker_id: str
+    search_status: SearchStatus
+    contract_types: List[ContractType]
+    job_boards: List[JobBoard]
+    location: str
+    min_salary: int
+    updated_at: Optional[str]
+
+    @classmethod
+    def from_entity(cls, job_search: JobSearch) -> Self:
+        return cls(
+            job_search_id=str(job_search.id),
+            job_title=job_search.job_title,
+            job_seeker_id=str(job_search.user_id),
+            search_status=job_search.search_status,
+            contract_types=list(job_search.contract_types or []),
+            job_boards=list(job_search.job_boards or []),
+            location=job_search.location,
+            min_salary=job_search.min_salary,
+            updated_at=job_search.updated_at.isoformat() if job_search.updated_at else None,
+        )
+    
+@dataclass(frozen=True)
+class ListRecentSearchesRequest:
+    """Application Layer -> Domain Layer"""
+    job_seeker_id: str  # UUID as string
+    limit: int = 5
+
+    def __post_init__(self) -> None:
+        if not self.job_seeker_id.strip():
+            raise ValueError("Job seeker ID is required")
+        if self.limit < 1:
+            raise ValueError("limit must be >= 1")
+
+    def to_execution_params(self) -> Dict:
+        return {"user_id": UUID(self.job_seeker_id), "limit": self.limit}
