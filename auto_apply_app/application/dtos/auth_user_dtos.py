@@ -33,7 +33,7 @@ class RegisterUserRequest:
         Returns all parameters needed for execution.
         """
         return {
-            "email": self.auth_email,                      
+            "email": self.auth_email.lower().strip(),                      
             "password": self.auth_password,
             "firstname": self.firstname,  
             "lastname": self.lastname
@@ -59,7 +59,7 @@ class LoginRequest:
 
     def to_execution_params(self) -> Dict:
         return {
-            "email": self.auth_email,
+            "email": self.auth_email.lower().strip(),
             "password": self.auth_password
         }
     
@@ -122,7 +122,7 @@ class ResetPasswordRequest:
     new_password: str
     
 
-dataclass(frozen=True)
+@dataclass(frozen=True)
 class VerifyCodeRequest:
     """
     Data carrier for verifying a 6-digit email verification code.
