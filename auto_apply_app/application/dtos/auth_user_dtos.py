@@ -25,7 +25,7 @@ class RegisterUserRequest:
         if not self.firstname:
             raise ValueError("Firstname is required")
         
-        if not self.firstname:
+        if not self.lastname:
             raise ValueError("Lastname is required")
 
     def to_execution_params(self) -> Dict:
@@ -59,7 +59,7 @@ class LoginRequest:
 
     def to_execution_params(self) -> Dict:
         return {
-            "email": self.auth_email.lower().strip(),
+            "email": self.auth_email,
             "password": self.auth_password
         }
     
