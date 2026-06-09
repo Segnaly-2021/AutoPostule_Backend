@@ -14,7 +14,9 @@ class ErrorViewModel:
     """
 
     message: str
-    code: Optional[str] = None
+    code: Optional[str] = None    
+    reason: Optional[str] = None
+    details: Optional[dict] = None
 
 
 @dataclass
@@ -91,14 +93,16 @@ class OperationResult(Generic[T]):
         return cls(success=value)
 
     @classmethod
-    def fail(cls, message: str, code: Optional[str] = None) -> "OperationResult[T]":
+    def fail(cls, message: str, code: Optional[str] = None, reason: Optional[str] = None, details: Optional[dict] = None) -> "OperationResult[T]":
         """Creates a failed result with the given error message and optional code.
 
         Args:
             message: The error message
             code: An optional error code
+            reason: An optional error reason for more granular error handling
+            details: Optional additional error details
 
         Returns:
             A new OperationResult instance representing failure
         """
-        return cls(error=ErrorViewModel(message, code))
+        return cls(error=ErrorViewModel(message, code, reason, details))

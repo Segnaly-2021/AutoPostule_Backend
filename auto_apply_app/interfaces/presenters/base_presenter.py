@@ -17,7 +17,6 @@ from auto_apply_app.interfaces.viewmodels.user_vm import (
 from auto_apply_app.interfaces.viewmodels.base import ErrorViewModel
 from auto_apply_app.application.dtos.auth_user_dtos import LoginResponse
 from auto_apply_app.application.dtos.job_offer_dtos import JobOfferResponse
-from auto_apply_app.application.dtos.job_search_dtos import JobSearchResponse
 from auto_apply_app.interfaces.viewmodels.job_offer_vm import JobOfferViewModel, DashboardViewModel
 from auto_apply_app.interfaces.viewmodels.job_search_vm import JobSearchViewModel, JobSearchSummaryViewModel
 from auto_apply_app.interfaces.viewmodels.agent_vm import AgentViewModel
@@ -50,7 +49,7 @@ class UserPresenter(ABC):
 
 
   @abstractmethod
-  def present_error(self, message: str, error_code: Optional[str]=None) -> ErrorViewModel:
+  def present_error(self, message: str, error_code: Optional[str]=None, reason: Optional[str]=None) -> ErrorViewModel:
     pass
 
 class JobPresenter(ABC):
@@ -68,7 +67,7 @@ class JobPresenter(ABC):
 
 
   @abstractmethod
-  def present_error(self, message: str, error_code: Optional[str]=None) -> ErrorViewModel:
+  def present_error(self, message: str, error_code: Optional[str]=None, reason: Optional[str]=None) -> ErrorViewModel:
     pass
 
 class JobSearchPresenter(ABC):
@@ -83,7 +82,7 @@ class JobSearchPresenter(ABC):
         pass
 
     @abstractmethod
-    def present_error(self, message: str, error_code: Optional[str] = None) -> ErrorViewModel:
+    def present_error(self, message: str, error_code: Optional[str] = None, reason: Optional[str] = None) -> ErrorViewModel:
         pass
 
 class SubPresenter(ABC):
@@ -92,7 +91,7 @@ class SubPresenter(ABC):
     pass
 
   @abstractmethod
-  def present_error(self, message: str, error_code: Optional[str]=None) -> ErrorViewModel:
+  def present_error(self, message: str, error_code: Optional[str]=None, reason: Optional[str]=None) -> ErrorViewModel:
     pass
 
 
@@ -117,7 +116,7 @@ class AgentPresenter(ABC):
         pass
     
     @abstractmethod
-    def present_error(self, message: str, error_code: Optional[str] = None) -> ErrorViewModel:
+    def present_error(self, message: str, error_code: Optional[str] = None, reason: Optional[str] = None) -> ErrorViewModel:
         """Format error into ViewModel."""
         pass
 
@@ -131,7 +130,7 @@ class PreferencesPresenter(ABC):
         pass
 
     @abstractmethod
-    def present_error(self, message: str, error_code: Optional[str] = None) -> ErrorViewModel:
+    def present_error(self, message: str, error_code: Optional[str] = None, reason: Optional[str] = None) -> ErrorViewModel:
         pass
     
 
@@ -169,5 +168,5 @@ class AgentStatePresenter(ABC):
         pass
 
     @abstractmethod
-    def present_error(self, message: str, error_code: Optional[str] = None) -> ErrorViewModel:
+    def present_error(self, message: str, error_code: Optional[str] = None, reason: Optional[str] = None) -> ErrorViewModel:
         pass

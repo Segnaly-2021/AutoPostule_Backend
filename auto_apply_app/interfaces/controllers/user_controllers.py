@@ -138,12 +138,19 @@ class UserController:
     # --- Private Helpers for Consistent Error Handling ---
 
     def _present_error(self, result: Result) -> OperationResult:
-        """Maps Application-layer Error objects to ViewModels."""
+        err = result.error
+        reason = err.reason.value if err.reason else None
         error_vm = self.presenter.present_error(
-            result.error.message, 
-            str(result.error.code.name)
+            err.message,
+            str(err.code.name),
+            reason,
         )
-        return OperationResult.fail(error_vm.message, error_vm.code)
+        return OperationResult.fail(
+            error_vm.message,
+            error_vm.code,
+            error_vm.reason,
+            details=err.details,
+        )
 
     def _present_validation_exception(self, e: ValueError) -> OperationResult:
         """Maps DTO/Data validation errors to ViewModels."""

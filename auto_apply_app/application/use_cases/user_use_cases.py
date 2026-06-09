@@ -6,7 +6,7 @@ import secrets
 import re
 
 from auto_apply_app.application.dtos.operations import DeletionOutcome
-from auto_apply_app.application.common.result import Error, Result
+from auto_apply_app.application.common.result import Error, ErrorReason, Result
 from auto_apply_app.domain.entities.user import User
 from auto_apply_app.domain.exceptions import (
     UserNotFoundError,
@@ -99,20 +99,24 @@ class RegisterUserUseCase:
     uow: UnitOfWork
     password_service: PasswordServicePort
     email_service: EmailServicePort
- 
+
     async def execute(self, request: RegisterUserRequest) -> Result:
         try:
             params = request.to_execution_params()
- 
+
             # Generate code BEFORE the transaction so we can hash + persist atomically.
             raw_code = _generate_verification_code()
             code_hash = self.password_service.get_password_hash(raw_code)
- 
+
             async with self.uow:
                 existing_auth = await self.uow.auth_repo.get_by_email(params["email"])
                 if existing_auth:
-                    return Result.failure(Error.conflict("User with this email already exists"))
- 
+                    logger.info("Registration rejected: email already exists %s", params["email"])
+                    return Result.failure(Error.conflict(
+                        message="Registration: email already exists",
+                        reason=ErrorReason.EMAIL_ALREADY_EXISTS,
+                    ))
+
                 user = User(
                     firstname=params["firstname"],
                     lastname=params["lastname"],
@@ -124,11 +128,11 @@ class RegisterUserUseCase:
                     major=None,
                     study_level=None,
                 )
- 
+
                 raw_password = params.pop("password")
                 hashed_password = self.password_service.get_password_hash(raw_password)
                 user_id = user.id
- 
+
                 auth_user = AuthUser(
                     user_id=user_id,
                     email=params["email"],
@@ -136,15 +140,15 @@ class RegisterUserUseCase:
                 )
                 # Issue the verification code on the entity (sets hash, expiry, attempts=0)
                 auth_user.set_verification_code(code_hash)
- 
+
                 sub_user = UserSubscription(user_id=user_id, email=params["email"])
                 user_prefs = UserPreferences(user_id=user.id)
- 
+
                 await self.uow.user_repo.save(user)
                 await self.uow.auth_repo.save(auth_user)
                 await self.uow.subscription_repo.save(sub_user)
                 await self.uow.user_pref_repo.save(user_prefs)
- 
+
             # Send code outside UoW — email failure must not roll back registration.
             try:
                 await self.email_service.send_verification_email(
@@ -152,17 +156,15 @@ class RegisterUserUseCase:
                     code=raw_code,
                 )
             except Exception:
-                logger.exception("Failed to send verification email to %s", params["email"])
- 
+                logger.exception("Registration: failed to send verification email to %s", params["email"])
+
             return Result.success(UserResponse.from_entity(user))
- 
+
         except ValidationError as e:
             return Result.failure(Error.validation_error(str(e)))
         except Exception:
             logger.exception("CRITICAL: Failed to register user")
             return Result.failure(Error.system_error("Could not complete registration."))
- 
-
 
 @dataclass
 class LoginUserUseCase:
@@ -176,19 +178,26 @@ class LoginUserUseCase:
 
             async with self.uow:
                 auth_user = await self.uow.auth_repo.get_by_email(params["email"])
-                
+
                 if not auth_user:
-                    # Same generic response for "not found" vs "wrong password" — anti-enumeration
-                    return Result.failure(Error.unauthorized("Invalid credentials"))
+                    logger.info("Login failed: this email does not exist - %s", params["email"])
+                    return Result.failure(Error.unauthorized(
+                        message="Login failed: email does not exist",
+                        reason=ErrorReason.INVALID_CREDENTIALS,
+                    ))
 
                 if not self.password_service.verify(params["password"], auth_user.password_hash):
-                    return Result.failure(Error.unauthorized("Invalid credentials"))
-
-                # NEW: block unverified accounts
-                if not auth_user.is_verified:
+                    logger.info("Login failed: password not correct - %s", params["email"])
                     return Result.failure(Error.unauthorized(
-                        "Please verify your email before logging in. "
-                        "Check your inbox for the verification link."
+                        message="Login failed: password not correct",
+                        reason=ErrorReason.INVALID_CREDENTIALS,
+                    ))
+
+                if not auth_user.is_verified:
+                    logger.info("Login failed: account not verified yet - %s", params["email"])
+                    return Result.failure(Error.unauthorized(
+                        message="Login failed: account not verified yet",
+                        reason=ErrorReason.EMAIL_NOT_VERIFIED,
                     ))
 
                 auth_user.record_login()
@@ -203,10 +212,10 @@ class LoginUserUseCase:
 
         except ValueError as e:
             return Result.failure(Error.validation_error(str(e)))
+        
         except Exception:
-            logger.exception("CRITICAL: Failed to login user")
-            return Result.failure(Error.system_error("Could not complete login."))
-
+            logger.exception("CRITICAL: Login failed: something went wrong")
+            return Result.failure(Error.system_error(message="Login failed: unexpected error"))
 
 @dataclass
 class RequestPasswordResetUseCase:
@@ -219,9 +228,10 @@ class RequestPasswordResetUseCase:
             async with self.uow:
                 # 1. Find the user
                 auth_user = await self.uow.auth_repo.get_by_email(request.email)
-                
-                # SECURITY NOTE: Do not reveal if the email exists to prevent enumeration.
+
+                # SECURITY NOTE: Do not reveal whether the email exists — anti-enumeration.
                 if not auth_user:
+                    logger.info("Password reset requested for unknown email (silently ignored)")
                     return Result.success({"message": "If an account exists, a reset link has been sent."})
 
                 # 2. Generate a 15-minute reset token
@@ -232,18 +242,22 @@ class RequestPasswordResetUseCase:
                 )
 
                 # 3. Send the email
-                await self.email_service.send_password_reset_email(
-                    to_email=auth_user.email, 
-                    reset_token=reset_token
-                )
+                try:
+                    await self.email_service.send_password_reset_email(
+                        to_email=auth_user.email,
+                        reset_token=reset_token,
+                    )
+                except Exception:
+                    logger.exception("Password reset: failed to send reset email to %s", auth_user.email)
 
-            # Return a dictionary instead of a raw string
+            logger.info("Password reset email dispatched")
             return Result.success({"message": "If an account exists, a reset link has been sent."})
 
         except Exception:
-            logger.exception(f"CRITICAL: Failed to reset password for user {request.email}")
-            return Result.failure(Error.system_error("An unexpected error occurred while requesting a password reset."))
-
+            logger.exception("CRITICAL: Password reset request crashed")
+            return Result.failure(Error.system_error(
+                message="Password reset request: unexpected error",
+            ))
 
 @dataclass
 class ConfirmPasswordResetUseCase:
@@ -255,20 +269,32 @@ class ConfirmPasswordResetUseCase:
         try:
             # 1. Validate Token
             payload = self.token_provider.decode_token(request.token)
-            
+
             # Security check: Ensure this is a reset token
             if payload.get("purpose") != "password_reset":
-                return Result.failure(Error.unauthorized("Invalid token type."))
-                
+                logger.warning("Password reset failed: wrong token purpose")
+                return Result.failure(Error.unauthorized(
+                    message="Password reset: token purpose is not 'password_reset'",
+                    reason=ErrorReason.INVALID_TOKEN,
+                ))
+
             user_id = payload.get("sub")
             if not user_id:
-                return Result.failure(Error.unauthorized("Invalid token payload."))
+                logger.warning("Password reset failed: token payload missing subject")
+                return Result.failure(Error.unauthorized(
+                    message="Password reset: token payload missing 'sub'",
+                    reason=ErrorReason.INVALID_TOKEN,
+                ))
 
             async with self.uow as uow:
                 # 2. Fetch User
                 auth_user = await uow.auth_repo.get_by_id(UUID(user_id))
                 if not auth_user:
-                    return Result.failure(Error.not_found("User", str(user_id)))
+                    logger.warning("Password reset failed: no user for valid token sub=%s", user_id)
+                    return Result.failure(Error.unauthorized(
+                        message="Password reset: no user matches token subject",
+                        reason=ErrorReason.INVALID_TOKEN,
+                    ))
 
                 # 3. Hash New Password
                 new_hashed_password = self.password_service.get_password_hash(request.new_password)
@@ -279,14 +305,19 @@ class ConfirmPasswordResetUseCase:
                 # 5. Persist
                 await uow.auth_repo.save(auth_user)
 
-            # Return a dictionary instead of a raw string
             return Result.success({"message": "Password reset successfully."})
 
         except InvalidTokenException:
-            return Result.failure(Error.unauthorized("Token is invalid or has expired."))
+            logger.info("Password reset failed: token invalid or expired")
+            return Result.failure(Error.unauthorized(
+                message="Password reset: token invalid or expired",
+                reason=ErrorReason.INVALID_TOKEN,
+            ))
         except Exception:
-            logger.exception("CRITICAL: Failed to confirm password reset")
-            return Result.failure(Error.system_error("An unexpected error occurred while processing the password reset."))
+            logger.exception("CRITICAL: Password reset confirmation crashed")
+            return Result.failure(Error.system_error(
+                message="Password reset: unexpected error",
+            ))
 
 
 @dataclass
@@ -320,10 +351,9 @@ class LogoutUseCase:
             logger.exception("Failed during logout token invalidation.")
             # Still returning nothing as we fail silently for logouts
 
-
 @dataclass
 class ChangePasswordUseCase:
-    
+
     password_service: PasswordServicePort
     uow: UnitOfWork
 
@@ -333,34 +363,52 @@ class ChangePasswordUseCase:
             async with self.uow as uow:
                 # 1. Fetch User by ID (from Token)
                 auth_user = await uow.auth_repo.get_by_id(params["user_id"])
-                
+
                 if not auth_user:
-                    return Result.failure(Error.not_found("User", str(params["user_id"])))
+                    # Authenticated user not found in auth table — should never happen.
+                    logger.error(
+                        "Change password failed: authenticated user not found user_id=%s",
+                        params["user_id"],
+                    )
+                    return Result.failure(Error.not_found(
+                        entity="User",
+                        entity_id=str(params["user_id"]),
+                        reason=ErrorReason.RESOURCE_NOT_FOUND,
+                    ))
 
                 # 2. Security Check: Verify OLD Password
-                # This ensures the user actually owns the account
                 if not self.password_service.verify(params["old_password"], auth_user.password_hash):
-                    return Result.failure(Error.unauthorized("Invalid old password"))
+                    logger.info(
+                        "Change password failed: incorrect old password user_id=%s",
+                        params["user_id"],
+                    )
+                    return Result.failure(Error.unauthorized(
+                        message="Change password: old password is incorrect",
+                        reason=ErrorReason.INVALID_OLD_PASSWORD,
+                    ))
 
                 # 3. Hash the NEW Password
                 new_hashed_password = self.password_service.get_password_hash(params["new_password"])
 
                 # 4. Domain Logic: Update Entity
-                # This handles setting the new hash and updating 'updated_at'
                 auth_user.change_password(new_hashed_password)
 
                 # 5. Persist Changes
                 await uow.auth_repo.save(auth_user)
 
-            # 6. Response
             return Result.success("Password changed successfully")
 
         except ValidationError as e:
-            return Result.failure(Error.validation_error(str(e)))
+            logger.info("Change password failed: validation error - %s", e)
+            return Result.failure(Error.validation_error(
+                message=str(e),
+                reason=ErrorReason.VALIDATION_ERROR,
+            ))
         except Exception:
-            logger.exception(f"CRITICAL: Failed to change password for user {request.user_id}")
-            return Result.failure(Error.system_error("An unexpected error occurred while changing the password."))
-
+            logger.exception("CRITICAL: Change password crashed for user_id=%s", params.get("user_id"))
+            return Result.failure(Error.system_error(
+                message="Change password: unexpected error",
+            ))
 
 @dataclass
 class GetUserUseCase:
@@ -370,16 +418,22 @@ class GetUserUseCase:
     async def execute(self, request: GetUserRequest) -> Result:
         try:
             params = request.to_execution_params()
-            async with self.uow as uow:                
-                user = await uow.user_repo.get(params["user_id"])      
+            async with self.uow as uow:
+                user = await uow.user_repo.get(params["user_id"])
             return Result.success(UserResponse.from_entity(user))
 
         except UserNotFoundError:
-            return Result.failure(Error.not_found("User", str(params["user_id"])))
+            logger.error("Get user failed: user not found user_id=%s", params["user_id"])
+            return Result.failure(Error.not_found(
+                entity="User",
+                entity_id=str(params["user_id"]),
+                reason=ErrorReason.RESOURCE_NOT_FOUND,
+            ))
         except Exception:
-            logger.exception(f"GetUserUseCase failed for user {request.user_id}")
-            return Result.failure(Error.system_error("An unexpected error occurred while retrieving user details."))
-
+            logger.exception("Get user crashed for user_id=%s", params.get("user_id"))
+            return Result.failure(Error.system_error(
+                message="Get user: unexpected error",
+            ))
 
 @dataclass
 class UploadUserResumeUseCase:
@@ -448,48 +502,73 @@ class UploadUserResumeUseCase:
             return Result.failure(Error.system_error("Failed to process resume."))
 
 
+
 @dataclass
 class UpdateUserUseCase:
 
-  uow: UnitOfWork
+    uow: UnitOfWork
 
-  async def execute(self, request: UpdateUserRequest) -> Result:
-    try:
-        async with self.uow as uow:
-            params = request.to_execution_params() 
-            user_id = params.pop("user_id")                  
-            user = await uow.user_repo.update(user_id, params)
-        return Result.success(UserResponse.from_entity(user))
+    async def execute(self, request: UpdateUserRequest) -> Result:
+        user_id = None
+        try:
+            async with self.uow as uow:
+                params = request.to_execution_params()
+                user_id = params.pop("user_id")
+                user = await uow.user_repo.update(user_id, params)
+            return Result.success(UserResponse.from_entity(user))
 
-    except UserNotFoundError:
-        return Result.failure(Error.not_found("User", str(user_id)))
-    except ValidationError as e:
-        return Result.failure(Error.validation_error(str(e)))
-    except BusinessRuleViolation as e:
-        return Result.failure(Error.business_rule_violation(str(e)))
-    except Exception:
-        logger.exception("UpdateUserUseCase failed")
-        return Result.failure(Error.system_error("An unexpected error occurred while updating the user profile."))
+        except UserNotFoundError:
+            logger.error("Update user failed: user not found user_id=%s", user_id)
+            return Result.failure(Error.not_found(
+                entity="User",
+                entity_id=str(user_id),
+                reason=ErrorReason.RESOURCE_NOT_FOUND,
+            ))
+        except ValidationError as e:
+            logger.info("Update user failed: validation error user_id=%s - %s", user_id, e)
+            return Result.failure(Error.validation_error(
+                message=str(e),
+                reason=ErrorReason.VALIDATION_ERROR,
+            ))
+        except BusinessRuleViolation as e:
+            logger.info("Update user failed: business rule user_id=%s - %s", user_id, e)
+            return Result.failure(Error.business_rule_violation(
+                message=str(e),
+                reason=ErrorReason.BUSINESS_RULE_VIOLATION,
+            ))
+        except Exception:
+            logger.exception("Update user crashed for user_id=%s", user_id)
+            return Result.failure(Error.system_error(
+                message="Update user: unexpected error",
+            ))
+
 
 
 @dataclass
 class DeleteUserUseCase:
-  """Use case for deleting a user"""
-  uow: UnitOfWork
+    """Use case for deleting a user"""
+    uow: UnitOfWork
 
-  async def execute(self, request: GetUserRequest) -> Result:
-    try:
-      async with self.uow as uow:
-        params = request.to_execution_params()
-        await uow.user_repo.delete(params["user_id"])
-      return Result.success(DeletionOutcome(params["user_id"]))
-    
-    except UserNotFoundError:
-      return Result.failure(Error.not_found("User", str(params["user_id"])))
-    except Exception:
-      logger.exception("DeleteUserUseCase failed")
-      return Result.failure(Error.system_error("An unexpected error occurred while deleting the user."))
+    async def execute(self, request: GetUserRequest) -> Result:
+        params = {}
+        try:
+            async with self.uow as uow:
+                params = request.to_execution_params()
+                await uow.user_repo.delete(params["user_id"])
+            return Result.success(DeletionOutcome(params["user_id"]))
 
+        except UserNotFoundError:
+            logger.error("Delete user failed: user not found user_id=%s", params.get("user_id"))
+            return Result.failure(Error.not_found(
+                entity="User",
+                entity_id=str(params.get("user_id")),
+                reason=ErrorReason.RESOURCE_NOT_FOUND,
+            ))
+        except Exception:
+            logger.exception("Delete user crashed for user_id=%s", params.get("user_id"))
+            return Result.failure(Error.system_error(
+                message="Delete user: unexpected error",
+            ))
 
 @dataclass
 class VerifyCodeUseCase:
@@ -506,52 +585,73 @@ class VerifyCodeUseCase:
             params = request.to_execution_params()
             email = params["email"]
             code = params["code"]
- 
+
             async with self.uow:
                 auth_user = await self.uow.auth_repo.get_by_email(email)
- 
-                # Anti-enumeration: generic "invalid_code" for missing user / already verified.
+
                 if not auth_user:
-                    return Result.failure(Error.unauthorized("invalid_code"))
- 
+                    logger.info("Email verification failed: no account for %s", email)
+                    return Result.failure(Error.unauthorized(
+                        message="Email verification: no account for given email",
+                        reason=ErrorReason.INVALID_CODE,
+                    ))
+
                 if auth_user.is_verified:
-                    return Result.failure(Error.unauthorized("invalid_code"))
- 
+                    logger.info("Email verification failed: already verified %s", email)
+                    return Result.failure(Error.unauthorized(
+                        message="Email verification: account already verified",
+                        reason=ErrorReason.INVALID_CODE,
+                    ))
+
                 if not auth_user.has_pending_verification():
-                    return Result.failure(Error.unauthorized("expired_code"))
- 
+                    logger.info("Email verification failed: expired/no pending code for %s", email)
+                    return Result.failure(Error.unauthorized(
+                        message="Email verification: no pending or expired code",
+                        reason=ErrorReason.EXPIRED_CODE,
+                    ))
+
                 if auth_user.has_exceeded_attempts():
                     auth_user.clear_verification_code()
                     await self.uow.auth_repo.save(auth_user)
-                    return Result.failure(Error.unauthorized("too_many_attempts"))
- 
+                    logger.warning("Email verification failed: too many attempts %s", email)
+                    return Result.failure(Error.unauthorized(
+                        message="Email verification: exceeded attempts",
+                        reason=ErrorReason.TOO_MANY_ATTEMPTS,
+                    ))
+
                 if not self.password_service.verify(code, auth_user.verification_code_hash):
                     auth_user.register_failed_attempt()
                     if auth_user.has_exceeded_attempts():
                         auth_user.clear_verification_code()
                         await self.uow.auth_repo.save(auth_user)
-                        return Result.failure(Error.unauthorized("too_many_attempts"))
+                        logger.warning("Email verification failed: too many attempts (final) %s", email)
+                        return Result.failure(Error.unauthorized(
+                            message="Email verification: exceeded attempts after wrong code",
+                            reason=ErrorReason.TOO_MANY_ATTEMPTS,
+                        ))
                     await self.uow.auth_repo.save(auth_user)
-                    return Result.failure(Error.unauthorized("invalid_code"))
- 
-                # Success — verify, clear code, record login, mint token.
+                    logger.info("Email verification failed: wrong code %s", email)
+                    return Result.failure(Error.unauthorized(
+                        message="Email verification: code mismatch",
+                        reason=ErrorReason.INVALID_CODE,
+                    ))
+
                 auth_user.mark_verified()
                 await self.uow.auth_repo.save(auth_user)
- 
                 token = self.token_provider.encode_token(
                     user_id=auth_user.user_id,
                     claims={"email": auth_user.email},
                 )
- 
+
             return Result.success(LoginResponse(access_token=token, token_type="Bearer"))
- 
+
         except BusinessRuleViolation as e:
             return Result.failure(Error.business_rule_violation(str(e)))
         except Exception:
             logger.exception("CRITICAL: Failed to verify code")
             return Result.failure(Error.system_error("Could not verify code."))
- 
- 
+
+
 @dataclass
 class ResendVerificationEmailUseCase:
     """
@@ -562,7 +662,7 @@ class ResendVerificationEmailUseCase:
     password_service: PasswordServicePort
     email_service: EmailServicePort
     rate_limiter: RateLimiterPort
- 
+
     async def execute(self, request: ResendVerificationRequest) -> Result:
         try:
             params = request.to_execution_params()
@@ -570,7 +670,7 @@ class ResendVerificationEmailUseCase:
             generic_response = {
                 "message": "If an account exists and is not yet verified, a new code has been sent."
             }
- 
+
             # 1) Rate limit FIRST — prevents email enumeration via timing too.
             rate_key = f"resend_verification:{normalized_email}"
             allowed, retry_after = await self.rate_limiter.try_acquire(
@@ -578,26 +678,31 @@ class ResendVerificationEmailUseCase:
                 window_seconds=RESEND_COOLDOWN_SECONDS,
             )
             if not allowed:
+                logger.info(
+                    "Resend verification blocked: rate limit hit for %s (retry_after=%ss)",
+                    normalized_email, retry_after,
+                )
                 return Result.failure(
-                    Error.rate_limited(
-                        message="rate_limited",
-                        retry_after=retry_after,
+                    Error.too_many_requests(
+                        message="Resend verification: rate limit cooldown active",
+                        reason=ErrorReason.RATE_LIMITED,
+                        details={"retry_after": retry_after},
                     )
                 )
- 
+
             # 2) Generate code + hash outside the transaction.
             raw_code = _generate_verification_code()
             code_hash = self.password_service.get_password_hash(raw_code)
- 
+
             should_send = False
             async with self.uow:
                 auth_user = await self.uow.auth_repo.get_by_email(normalized_email)
- 
+
                 if auth_user and not auth_user.is_verified:
                     auth_user.set_verification_code(code_hash)
                     await self.uow.auth_repo.save(auth_user)
                     should_send = True
- 
+
             if should_send:
                 try:
                     await self.email_service.send_verification_email(
@@ -605,10 +710,14 @@ class ResendVerificationEmailUseCase:
                         code=raw_code,
                     )
                 except Exception:
-                    logger.exception("Failed to resend verification email to %s", normalized_email)
- 
+                    logger.exception(
+                        "Resend verification: failed to send email to %s", normalized_email
+                    )
+
             return Result.success(generic_response)
- 
+
         except Exception:
-            logger.exception("CRITICAL: Failed to resend verification code")
-            return Result.failure(Error.system_error("Could not resend verification code."))
+            logger.exception("CRITICAL: Resend verification failed unexpectedly")
+            return Result.failure(Error.system_error(
+                message="Resend verification: unexpected error",
+            ))

@@ -105,13 +105,15 @@ class WebUserPresenter(UserPresenter):
             
         )
 
-    def present_error(self, message: str, error_code: Optional[str] = None) -> ErrorViewModel:
+    def present_error(self, message: str, error_code: Optional[str] = None, reason: Optional[str] = None) -> ErrorViewModel:
         """
         Standardizes error responses for the frontend.
+        `message` is developer/log-facing; `reason` is the stable key the UI maps to EN/FR.
         """
         return ErrorViewModel(
             message=message,
-            code=error_code            
+            code=error_code,
+            reason=reason,
         )
 
     def present_message(self, value) -> MessageViewModel:

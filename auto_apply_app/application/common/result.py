@@ -11,6 +11,7 @@ from typing import Any, Optional, Generic, TypeVar, Self
 
 T = TypeVar('T')  # Success type
 
+
 class ErrorCode(Enum):
     """Enumeration of possible error codes in the application layer."""
 
@@ -21,6 +22,46 @@ class ErrorCode(Enum):
     CONFLICT = "CONFLICT"
     SYSTEMERROR = "SYSTEMERROR"
     TOO_MANY_REQUESTS = "TOO_MANY_REQUESTS"
+
+
+
+class ErrorReason(Enum):
+    """
+    Specific, machine-readable failure reasons.
+    Stable contract with the frontend — these strings are i18n keys.
+    Never translate or rephrase these; the frontend maps them to EN/FR.
+    """
+    # Email verification
+    INVALID_CODE = "invalid_code"
+    EXPIRED_CODE = "expired_code"
+    TOO_MANY_ATTEMPTS = "too_many_attempts"
+    EMAIL_ALREADY_EXISTS = "email_already_exists"
+
+    # Login
+    INVALID_CREDENTIALS = "invalid_credentials"
+    EMAIL_NOT_VERIFIED = "email_not_verified"
+
+    # Rate limiting
+    RATE_LIMITED = "rate_limited"
+
+    # Password reset
+    INVALID_TOKEN = "invalid_token"
+    EXPIRED_TOKEN = "expired_token"
+
+    # Account / password management
+    INVALID_OLD_PASSWORD = "invalid_old_password"
+    RESOURCE_NOT_FOUND = "resource_not_found"
+    VALIDATION_ERROR = "validation_error"
+
+    # Resume upload
+    EMPTY_FILE = "empty_file"
+    FILE_TOO_LARGE = "file_too_large"
+    INVALID_FILE_TYPE = "invalid_file_type"
+    INVALID_PDF = "invalid_pdf"
+    BUSINESS_RULE_VIOLATION = "business_rule_violation"
+
+    
+
 
 
 # 🚨 Single source of truth for your default English fallbacks
@@ -50,18 +91,21 @@ class Error:
     """
 
     code: ErrorCode
-    message: str
+    message: str    
     details: Optional[dict[str, Any]] = None
+    reason: Optional[ErrorReason] = None
 
     @classmethod
-    def conflict(cls, message: Optional[str] = None) -> Self:
+    def conflict(cls, message: Optional[str] = None, reason: Optional[ErrorReason] = None) -> Self:
         return cls(
             code=ErrorCode.CONFLICT,
-            message=message or DEFAULT_ERROR_MESSAGES[ErrorCode.CONFLICT]
+            message=message or DEFAULT_ERROR_MESSAGES[ErrorCode.CONFLICT],
+            reason=reason
         )
 
     @classmethod
-    def not_found(cls, entity: Optional[str] = None, entity_id: Optional[str] = None) -> Self:
+    def not_found(cls, entity: Optional[str] = None, entity_id: Optional[str] = None,
+                  reason: Optional[ErrorReason] = None) -> Self:
         """Create a NOT_FOUND error for a specific entity."""
         if entity and entity_id:
             msg = f"{entity} with id {entity_id} not found."
@@ -69,28 +113,32 @@ class Error:
             msg = f"{entity} not found."
         else:
             msg = DEFAULT_ERROR_MESSAGES[ErrorCode.NOT_FOUND]
-            
+
         return cls(
             code=ErrorCode.NOT_FOUND,
             message=msg,
+            reason=reason,
+        )
+    @classmethod
+    def validation_error(cls, message: Optional[str] = None,
+                         reason: Optional[ErrorReason] = None) -> Self:
+        return cls(
+            code=ErrorCode.VALIDATION_ERROR,
+            message=message or DEFAULT_ERROR_MESSAGES[ErrorCode.VALIDATION_ERROR],
+            reason=reason,
         )
 
+    
     @classmethod
-    def validation_error(cls, message: Optional[str] = None) -> Self:
-        """Create a VALIDATION_ERROR with the specified message."""
+    def business_rule_violation(cls, message: Optional[str] = None,
+                               reason: Optional[ErrorReason] = None) -> Self:
         return cls(
-            code=ErrorCode.VALIDATION_ERROR, 
-            message=message or DEFAULT_ERROR_MESSAGES[ErrorCode.VALIDATION_ERROR]
-        )
-
-    @classmethod
-    def business_rule_violation(cls, message: Optional[str] = None) -> Self:
-        """Create a BUSINESS_RULE_VIOLATION error with the specified message."""
-        return cls(
-            code=ErrorCode.BUSINESS_RULE_VIOLATION, 
-            message=message or DEFAULT_ERROR_MESSAGES[ErrorCode.BUSINESS_RULE_VIOLATION]
+            code=ErrorCode.BUSINESS_RULE_VIOLATION,
+            message=message or DEFAULT_ERROR_MESSAGES[ErrorCode.BUSINESS_RULE_VIOLATION],
+            reason=reason,
         )
     
+
     @classmethod
     def system_error(cls, message: Optional[str] = None) -> Self:
         """Create a SYSTEMERROR. Uses a generic default message if none is provided."""
@@ -100,19 +148,26 @@ class Error:
         )
     
     @classmethod
-    def unauthorized(cls, message: Optional[str] = None) -> Self:
+    def unauthorized(cls, message: Optional[str] = None, reason: Optional[ErrorReason] = None) -> Self:
         """Create an UNAUTHORIZED error."""
         return cls(
             code=ErrorCode.UNAUTHORIZED, 
-            message=message or DEFAULT_ERROR_MESSAGES[ErrorCode.UNAUTHORIZED]
+            message=message or DEFAULT_ERROR_MESSAGES[ErrorCode.UNAUTHORIZED],
+            reason=reason
         )
 
     @classmethod
-    def too_many_requests(cls, message: Optional[str] = None) -> Self:
-        """Create a TOO_MANY_REQUESTS error (rate limit / quota / cooldown)."""
+    def too_many_requests(
+        cls,
+        message: Optional[str] = None,
+        reason: Optional[ErrorReason] = None,
+        details: Optional[dict[str, Any]] = None,
+    ) -> Self:
         return cls(
-            code=ErrorCode.TOO_MANY_REQUESTS, 
-            message=message or DEFAULT_ERROR_MESSAGES[ErrorCode.TOO_MANY_REQUESTS]
+            code=ErrorCode.TOO_MANY_REQUESTS,
+            message=message or DEFAULT_ERROR_MESSAGES[ErrorCode.TOO_MANY_REQUESTS],
+            reason=reason,
+            details=details,
         )
 
 
