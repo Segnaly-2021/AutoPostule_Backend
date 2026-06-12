@@ -949,6 +949,8 @@ class ApecWorker():
                             await self.page.wait_for_selector('button[title="Postuler"]', state="visible", timeout=60000)
                             await human_click(self.page.locator('button[title="Postuler"]'))                        
                             await self.page.wait_for_selector('#formUpload, .form-check.uploadFile.profil-selection', state="attached", timeout=90000)
+                            form_loaded = True   # ← THE FIX
+                            self._plog("form loaded after clicking 'Postuler'")
                             break
                         
                         
