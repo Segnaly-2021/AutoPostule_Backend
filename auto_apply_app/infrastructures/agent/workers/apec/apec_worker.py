@@ -215,7 +215,7 @@ class ApecWorker():
 
     # --- HELPER: Nav Back ---
     async def nav_back(self, url: str):
-        await self.page.goto(url, wait_until="networkidle", timeout=120000)
+        await self.page.goto(url, wait_until="networkidle")
 
         try:
             await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=10000)
@@ -286,7 +286,7 @@ class ApecWorker():
             await human_click(self.page.locator('a[id="advancedSearch"]'))
             await self.page.wait_for_load_state("networkidle", timeout=90000)
 
-            await self.page.wait_for_selector('input[id="keywords"]', state="visible", timeout=45000)
+            await self.page.wait_for_selector('input[id="keywords"]', state="visible", timeout=15000)
             await human_type(self.page.locator('input[id="keywords"]'), job_title)
 
             contract_map = {
@@ -299,7 +299,7 @@ class ApecWorker():
 
             for attempt in range(3):
                 try:
-                    await self.page.wait_for_selector('apec-slider input[class*="pull-left"]', state="attached", timeout=45000)
+                    await self.page.wait_for_selector('apec-slider input.pull-left', state="attached", timeout=45000)
                     logger.info("[APEC] Full Angular form rendered")
                     break
                 except Exception:
@@ -319,8 +319,8 @@ class ApecWorker():
                         break
 
             if min_salary > 0:
-                await self.page.locator('apec-slider input[class*="pull-left"]').scroll_into_view_if_needed()
-                salary_input = self.page.locator('apec-slider input[class*="pull-left"]')
+                await self.page.locator('apec-slider input.pull-left').scroll_into_view_if_needed()
+                salary_input = self.page.locator('apec-slider input.pull-left')
                 if await salary_input.count() > 0:
                     salary_k = str(min_salary // 1000) if min_salary >= 1000 else str(min_salary)
                     await human_delay(300, 700)
@@ -366,7 +366,7 @@ class ApecWorker():
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless= not preferences.browser_headless,
+                headless= preferences.browser_headless,
                 args=['--disable-blink-features=AutomationControlled'],
             )
 
@@ -411,7 +411,7 @@ class ApecWorker():
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless= not state["preferences"].browser_headless,
+                headless= state["preferences"].browser_headless,
                 args=['--disable-blink-features=AutomationControlled'],
             )
 
@@ -529,7 +529,6 @@ class ApecWorker():
                 # RETRY UNIT 1: Open login modal
                 for attempt in range(3):
                     try:
-                        await self._handle_cookies()
                         await self.page.wait_for_selector('li[id="header-monespace"]', state="visible", timeout=30000)
                         await human_click(self.page.locator('li[id="header-monespace"]'))
                         await self.page.wait_for_selector('input[id="emailid"]', state="visible", timeout=15000)
@@ -642,7 +641,7 @@ class ApecWorker():
         search_id = state["job_search"].id
         found_job_entities = []
 
-        worker_job_limit = 1 or state.get("worker_job_limit", 5)
+        worker_job_limit = 5 or state.get("worker_job_limit", 5)
 
         hash_result = await self.get_ignored_hashes.execute(user_id=user_id, days=30)
         if not hash_result.is_success:
@@ -795,8 +794,6 @@ class ApecWorker():
         logger.info("[APEC] Scraping complete. Returning %s jobs.", len(found_job_entities))
         return {"found_raw_offers": found_job_entities}
 
-    
-    
     # --- NODE 7: Submit Applications ---
     async def submit_applications(self, state: JobApplicationState):
         await self._emit(state, "Submitting Applications")
@@ -828,21 +825,19 @@ class ApecWorker():
                         await self.page.goto(offer.form_url, wait_until='networkidle', timeout=90000)
                         await human_delay(1500, 3500)
                         try:
-                            await self.page.wait_for_selector('#formUpload, .form-check.uploadFile.profil-selection', state="attached", timeout=60000)
+                            await self.page.wait_for_selector('#formUpload, .form-check.uploadFile.profil-selection', state="attached", timeout=90000)
                         except Exception:
                             pass
 
                         if await self.page.locator('#formUpload input[type="file"]').count() > 0 or await self.page.locator('.form-check.uploadFile.profil-selection').count() > 0:
                             form_loaded = True
-                        
+                            break
                         else:
                             await self.page.wait_for_selector('button[title="Postuler"]', state="visible", timeout=60000)
                             await human_click(self.page.locator('button[title="Postuler"]'))
-                            await self.page.wait_for_load_state("networkidle", timeout=60000)
+                            await self.page.wait_for_load_state("networkidle")
                             await self.page.wait_for_selector('#formUpload, .form-check.uploadFile.profil-selection', state="attached", timeout=90000)
-                            form_loaded = True
-                        
-                        break
+                            break
                         
                         
                     except Exception:
@@ -919,6 +914,9 @@ class ApecWorker():
                     except Exception:
                         pass
 
+                    
+
+                   
                 # C. Cover Letter
                 try:
                     has_radio_version = await self.page.locator('input[formcontrolname="choixLm"]').count() > 0
