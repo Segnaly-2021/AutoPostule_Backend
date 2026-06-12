@@ -75,10 +75,9 @@ class ApecWorker():
     # =========================================================================
 
     def _plog(self, task: str, user_id=None):
-        """Strategic print logging: [Worker - Timestamp] for [user_id] : task"""
-        uid = user_id if user_id is not None else self._uid
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        print(f"[{self._source_name} - {ts}] for [{uid}] : {task}", flush=True)
+        """Strategic print logging: [Worker for user_id] : task"""
+        uid = user_id if user_id is not None else self._uid        
+        print(f"[{self._source_name} for {uid}] : {task}", flush=True)
 
     async def route_node_exit(self, state: JobApplicationState) -> str:
         if state.get("error"):
@@ -932,7 +931,7 @@ class ApecWorker():
             try:
                 # RETRY: form entry as one critical unit
                 form_loaded = False
-                self._plog("loading application form")
+                self._plog(f"loading application form for offer: '{offer.job_title}' in {offer.form_url}")
                 for attempt in range(3):
                     try:
                         await self.page.goto(offer.form_url, wait_until='networkidle', timeout=90000)
@@ -948,8 +947,7 @@ class ApecWorker():
                         else:
                             self._plog("form not directly reachable -> clicking 'Postuler' first")
                             await self.page.wait_for_selector('button[title="Postuler"]', state="visible", timeout=60000)
-                            await human_click(self.page.locator('button[title="Postuler"]'))
-                            await self.page.wait_for_load_state("networkidle")
+                            await human_click(self.page.locator('button[title="Postuler"]'))                        
                             await self.page.wait_for_selector('#formUpload, .form-check.uploadFile.profil-selection', state="attached", timeout=90000)
                             break
                         
