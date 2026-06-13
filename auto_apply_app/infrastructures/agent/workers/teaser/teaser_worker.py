@@ -6,7 +6,6 @@ import asyncio
 import pdfplumber
 from typing import Optional
 from langgraph.graph import StateGraph, END
-from playwright_stealth import Stealth
 from playwright.async_api import Locator, async_playwright, Page, Browser, BrowserContext, Playwright
 from langchain_core.language_models import BaseChatModel
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -68,9 +67,17 @@ class JobTeaserWorker:
         self._progress_callback = None
         self._source_name = "JOBTEASER"
 
+        # Current user id for print logging (set at node entry)
+        self._uid = "unknown"
+
     # =========================================================================
     # HELPERS
     # =========================================================================
+
+    def _plog(self, task: str, user_id=None):
+        """Strategic print logging: [Worker for user_id] : task"""
+        uid = user_id if user_id is not None else self._uid
+        print(f"[{self._source_name} for {uid}] : {task}", flush=True)
 
     def _get_llm(self, preferences: UserPreferences) -> BaseChatModel:
         return ChatGoogleGenerativeAI(
@@ -121,6 +128,7 @@ class JobTeaserWorker:
             path = self._get_session_file_path(user_id)
             await self.context.storage_state(path=path)
             logger.info("[JOBTEASER] Session saved for user %s", user_id)
+            self._plog("session cookies saved to disk", user_id)
 
     def _get_auth_state_path(self, user_id: str) -> str | None:
         path = self._get_session_file_path(user_id)
@@ -136,11 +144,11 @@ class JobTeaserWorker:
                 state='attached',
                 timeout=10000,
             )
-            print("[JOBTEASER] Cookie popup detected, attempting to handle it...")
+            self._plog("cookie popup detected -> attempting to handle it")
         except Exception:
             logger.debug("[JOBTEASER] No cookie popup detected")
             return
-        
+
 
         # 1) Preferred: use Didomi's own consent API (most reliable, no click needed)
         try:
@@ -153,11 +161,11 @@ class JobTeaserWorker:
             }""")
             if handled:
                 await self.page.wait_for_timeout(1000)
-                print("[JOBTEASER] Consent accepted via Didomi API")
+                self._plog("consent accepted via Didomi API")
                 logger.debug("[JOBTEASER] Consent accepted via Didomi API")
-                return 
+                return
         except Exception:
-            print("[JOBTEASER] Didomi API not available, falling back to click")
+            self._plog("Didomi API not available -> falling back to button click")
             logger.debug("[JOBTEASER] Didomi API not available, falling back to click")
             handled = False
 
@@ -169,16 +177,15 @@ class JobTeaserWorker:
                     agree_button_selector, state='visible', timeout=3000
                 )
                 await human_click(self.page.locator(agree_button_selector))
-                print("[JOBTEASER] Consent accepted via button click")
+                self._plog("consent accepted via button click")
                 await self.page.wait_for_timeout(500)
                 logger.debug("[JOBTEASER] Consent accepted via button click")
             except Exception:
-                print("[JOBTEASER] Agree button not clickable, removing overlay")
+                self._plog("agree button not clickable -> removing overlay")
                 logger.debug("[JOBTEASER] Agree button not clickable, removing overlay")
 
         # 3) Last resort: forcibly remove the overlay and unlock the body
         try:
-            print("[JOBTEASER] Forcibly removing Didomi overlay")
             removed = await self.page.evaluate("""() => {
                 let removed = 0;
                 document.querySelectorAll(
@@ -190,15 +197,16 @@ class JobTeaserWorker:
                 return removed;
             }""")
             if removed:
-                print(f"[JOBTEASER] Removed {removed} Didomi element(s)")
+                self._plog(f"forcibly removed {removed} Didomi element(s)")
                 logger.debug("[JOBTEASER] Removed %s Didomi element(s)", removed)
         except Exception:
             logger.debug("[JOBTEASER] Nothing to clean up")
 
-        
+
 
     async def force_cleanup(self):
         logger.info("[JOBTEASER] Force cleanup initiated")
+        self._plog("force cleanup initiated")
         try:
             if self.page:
                 await self.page.close()
@@ -220,6 +228,7 @@ class JobTeaserWorker:
         except Exception:
             logger.exception("[JOBTEASER] Playwright stop error")
         logger.info("[JOBTEASER] Force cleanup complete")
+        self._plog("force cleanup complete -> browser fully closed")
 
     async def _get_job_attribute(self, selector: str, default_value: str = None):
         try:
@@ -267,23 +276,28 @@ class JobTeaserWorker:
             nav = self.page.locator('nav[data-testid="job-ads-pagination"]')
             if await nav.count() == 0:
                 logger.info("[JOBTEASER] No pagination nav. Single page of results.")
+                self._plog("no pagination nav -> single page of results")
                 return False
 
             next_control = nav.locator('> *:last-child')
             if await next_control.count() == 0:
                 logger.info("[JOBTEASER] No next control found.")
+                self._plog(f"no next control on page {page_number} -> reached last page")
                 return False
 
             tag_name = await next_control.evaluate("el => el.tagName.toLowerCase()")
             if tag_name == "button":
                 logger.info("[JOBTEASER] Next button disabled. Reached last page.")
+                self._plog(f"next button disabled on page {page_number} -> reached last page")
                 return False
 
             if tag_name != "a":
                 logger.warning("[JOBTEASER] Unexpected last pagination element: <%s>", tag_name)
+                self._plog(f"unexpected pagination element <{tag_name}> -> stopping pagination")
                 return False
 
             logger.info("[JOBTEASER] Moving to page %s", page_number + 1)
+            self._plog(f"pagination -> moving to page {page_number + 1}")
             await human_delay(1500, 3500)
 
             for attempt in range(3):
@@ -295,7 +309,9 @@ class JobTeaserWorker:
                 except Exception:
                     if attempt == 2:
                         logger.exception("[JOBTEASER] Pagination failed after 3 attempts")
+                        self._plog("pagination click failed after 3 attempts -> stopping pagination")
                         return False
+                    self._plog(f"pagination click attempt {attempt + 1} failed -> retrying")
                     await asyncio.sleep(2 ** attempt)
 
             await self._handle_cookies()
@@ -303,12 +319,14 @@ class JobTeaserWorker:
 
         except Exception:
             logger.exception("[JOBTEASER] Pagination error")
+            self._plog("unexpected pagination error -> stopping pagination")
             return False
 
     async def _apply_filters(self, contract_types: list[ContractType], location: str = ""):
         try:
             # ---------- 1. CONTRACT TYPES ----------
             if contract_types:
+                self._plog("opening contract type filter")
                 try:
                     await self.page.wait_for_selector(
                         'div[data-testid="job-ads-contract-filter"] > button',
@@ -329,12 +347,14 @@ class JobTeaserWorker:
                         teaser_name = self.TEASER_CONTRACT_NAME_MAP.get(str(contract.value))
                         if not teaser_name:
                             logger.warning("[JOBTEASER] No mapping for contract '%s', skipping.", contract.value)
+                            self._plog(f"no JobTeaser mapping for contract '{contract.value}' -> skipping")
                             continue
                         try:
                             checkbox = self.page.locator(
                                 f'ul#multi-select-container-options input[name="{teaser_name}"]'
                             )
                             if await checkbox.count() > 0 and await checkbox.get_attribute("aria-checked") == "false":
+                                self._plog(f"checking contract type: {contract.value}")
                                 cb_id = await checkbox.get_attribute("id")
                                 label = self.page.locator(f'ul#multi-select-container-options label[for="{cb_id}"]')
                                 await human_delay(300, 700)
@@ -342,14 +362,17 @@ class JobTeaserWorker:
                                 await self.page.wait_for_load_state("domcontentloaded")
                         except Exception:
                             logger.warning("[JOBTEASER] Could not check contract '%s'", contract.value)
+                            self._plog(f"could not check contract '{contract.value}'")
 
                     await self.page.keyboard.press("Enter")
                     await self.page.wait_for_load_state("domcontentloaded")
                 except Exception:
                     logger.exception("[JOBTEASER] Contract filter step failed")
+                    self._plog("contract filter step failed -> continuing")
 
             # ---------- 2. LOCATION ----------
             if location and location.strip():
+                self._plog(f"applying location filter: '{location.strip()}'")
                 try:
                     await self.page.wait_for_selector('input#location-filter', state="visible", timeout=10000)
                     location_input = self.page.locator('input#location-filter')
@@ -366,8 +389,10 @@ class JobTeaserWorker:
                     await self.page.wait_for_load_state("domcontentloaded")
                 except Exception:
                     logger.exception("[JOBTEASER] Location filter step failed")
+                    self._plog("location filter step failed -> continuing")
 
             # ---------- 3. SECONDARY FILTERS MODAL ----------
+            self._plog("opening secondary filters modal")
             for attempt in range(3):
                 try:
                     modal_open_btn = self.page.locator(
@@ -384,20 +409,25 @@ class JobTeaserWorker:
                 except Exception:
                     if attempt == 2:
                         logger.exception("[JOBTEASER] Could not open secondary filters modal")
+                        self._plog("secondary filters modal never opened -> aborting filters")
                         raise
+                    self._plog(f"secondary filters modal attempt {attempt + 1} failed -> retrying")
                     await asyncio.sleep(2 ** attempt)
 
             try:
                 simplifiee_id = "job-ads-candidacy-type-filter-INTERNAL"
                 checkbox = self.page.locator(f'input#{simplifiee_id}')
                 if await checkbox.count() > 0 and await checkbox.get_attribute("aria-checked") == "false":
+                    self._plog("selecting 'Candidature simplifiée' (internal applications only)")
                     await human_delay(300, 700)
                     await self.page.locator(f'label[for="{simplifiee_id}"]').click()
             except Exception:
                 logger.warning("[JOBTEASER] Could not select 'Candidature simplifiée'")
+                self._plog("could not select 'Candidature simplifiée'")
 
             await human_delay(800, 1800)
 
+            self._plog("submitting secondary filters")
             for attempt in range(3):
                 try:
                     apply_btn = self.page.locator(
@@ -406,10 +436,12 @@ class JobTeaserWorker:
                     await apply_btn.click()
                     await self.page.wait_for_load_state("domcontentloaded")
                     await self.page.wait_for_selector(self.CARD_SELECTOR, state="attached", timeout=15000)
+                    self._plog("filters applied -> results refreshed")
                     break
                 except Exception:
                     if attempt == 2:
                         logger.exception("[JOBTEASER] Filter modal submit failed after 3 attempts")
+                        self._plog("filter modal submit failed after 3 attempts -> aborting")
                         raise
                     await asyncio.sleep(2 ** attempt)
 
@@ -417,11 +449,13 @@ class JobTeaserWorker:
 
         except Exception:
             logger.exception("[JOBTEASER] Error applying filters")
+            self._plog("error while applying filters -> raising")
             raise
 
     async def nav_back(self, url: str) -> bool:
         try:
             if await self.page.locator('a[title="Retourner aux résultats"]').count() > 0:
+                self._plog("navigating back via 'Retourner aux résultats' link")
                 await self.page.locator('a[title="Retourner aux résultats"]').click()
                 await self.page.wait_for_load_state("domcontentloaded")
                 await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=15000)
@@ -431,6 +465,7 @@ class JobTeaserWorker:
         except Exception:
             pass
 
+        self._plog("navigating back to results via direct URL")
         for attempt in range(3):
             try:
                 await self.page.goto(url, wait_until="networkidle")
@@ -441,12 +476,14 @@ class JobTeaserWorker:
             except Exception:
                 if attempt == 2:
                     logger.warning("[JOBTEASER] Could not return to search results after 3 attempts")
+                    self._plog("could not return to results after 3 attempts -> last-chance reload")
                     try:
                         await self.page.reload(wait_until="networkidle")
                         await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=10000)
                         await self._handle_cookies()
                         return True
                     except Exception:
+                        self._plog("reload failed too -> giving up on nav back")
                         return False
                 await asyncio.sleep(2 ** attempt)
         return False
@@ -454,6 +491,7 @@ class JobTeaserWorker:
     async def route_node_exit(self, state: JobApplicationState) -> str:
         if state.get("error"):
             logger.warning("[JOBTEASER] Circuit breaker tripped: %s", state["error"])
+            self._plog(f"circuit breaker tripped -> routing to cleanup ({state['error']})")
             return "error"
 
         user_id = state["user"].id
@@ -462,12 +500,14 @@ class JobTeaserWorker:
         killed_result = await self.is_agent_killed_for_search.execute(user_id, search_id)
         if killed_result.is_success and killed_result.value:
             logger.info("[JOBTEASER] Kill switch detected for search %s. Aborting gracefully.", search_id)
+            self._plog(f"kill switch detected for search {search_id} -> aborting gracefully")
             return "error"
 
         return "continue"
 
     def route_action_intent(self, state: JobApplicationState):
         intent = state.get("action_intent", "SCRAPE")
+        self._plog(f"routing intent: {intent}", user_id=state["user"].id)
         if intent == "SUBMIT":
             return "start_with_session"
         return "start"
@@ -486,6 +526,8 @@ class JobTeaserWorker:
     async def start_session(self, state: JobApplicationState):
         await self._emit(state, "Initializing Browser")
         logger.info("[JOBTEASER] Starting session")
+        self._uid = str(state["user"].id)
+        self._plog("NODE start_session -> launching browser (SCRAPE track, no stealth/fingerprint)")
 
         preferences = state["preferences"]
 
@@ -523,15 +565,19 @@ class JobTeaserWorker:
             # await stealth.apply_stealth_async(self.context)
             self.page = await self.context.new_page()
 
+            self._plog("browser session ready")
             return {}
         except Exception:
             logger.exception("[JOBTEASER] Session error")
+            self._plog("browser session failed to start")
             await self._emit(state, stage="Failed", status="error", error="Failed to start the secure browsing session.", error_code="BROWSER_START_FAILED")
             return {"error": "Failed to start the secure browsing session.", "error_code": "BROWSER_START_FAILED"}
 
     async def start_session_with_auth(self, state: JobApplicationState):
         await self._emit(state, "Initializing Secure Browser")
         logger.info("[JOBTEASER] Booting browser (session injection)")
+        self._uid = str(state["user"].id)
+        self._plog("NODE start_session_with_auth -> booting browser (SUBMIT track)")
         #user_id = str(state["user"].id)
 
         #fingerprint = state.get("user_fingerprint")
@@ -578,6 +624,7 @@ class JobTeaserWorker:
             # await stealth.apply_stealth_async(self.context)
             self.page = await self.context.new_page()
 
+            self._plog("navigating to jobteaser.com homepage (expecting logged-in greeting)")
             for attempt in range(3):
                 try:
                     await self.page.goto(self.base_url, wait_until="domcontentloaded", timeout=120000)
@@ -591,12 +638,15 @@ class JobTeaserWorker:
                 except Exception:
                     if attempt == 2:
                         logger.exception("[JOBTEASER] Auth boot failed after 3 attempts")
+                        self._plog("logged-in greeting never appeared after 3 attempts -> aborting")
                         await self._emit(state, stage="Failed", status="error", error="Failed to reach JobTeaser.", error_code="JOB_BOARD_UNAVAILABLE")
                         return {"error": "Failed to reach JobTeaser after multiple attempts.", "error_code": "JOB_BOARD_UNAVAILABLE"}
+                    self._plog(f"homepage load attempt {attempt + 1} failed -> retrying")
                     await asyncio.sleep(2 ** attempt)
 
             await human_warmup(self.page, self.base_url)
 
+            self._plog("clicking 'Offres' nav link")
             offres_link = self.page.locator(
                 'a[class*="Nav_app-Nav__link"]:has-text("Offres")'
             ).first
@@ -615,6 +665,7 @@ class JobTeaserWorker:
             location = getattr(search_entity, 'location', "")
 
             try:
+                self._plog(f"typing search keywords: '{job_title}'")
                 search_field = self.page.locator('input[id="job-ads-autocomplete-keyword-search"]')
 
                 await human_click(search_field)
@@ -637,43 +688,51 @@ class JobTeaserWorker:
                 try:
                     await self.page.wait_for_selector(self.CARD_SELECTOR, state="attached", timeout=30000)
                     logger.info("[JOBTEASER] Dummy search complete — session warmed up")
+                    self._plog("dummy search complete -> session warmed up")
                 except Exception:
                     logger.info("[JOBTEASER] Dummy search ran but no cards found. Continuing.")
+                    self._plog("dummy search ran but no cards found -> continuing")
 
                 return {}
             except Exception:
                 logger.exception("[JOBTEASER] Initial search failed during session boot")
+                self._plog("initial search failed during session boot -> continuing anyway")
                 return {}
 
         except Exception:
             logger.exception("[JOBTEASER] Browser auth init error")
+            self._plog("browser auth initialization failed")
             await self._emit(state, stage="Failed", status="error", error="Failed to initialize browser with session.", error_code="BROWSER_AUTH_FAILED")
             return {"error": "Failed to initialize JobTeaser browser with session.", "error_code": "BROWSER_AUTH_FAILED"}
 
     async def go_to_job_board(self, state: JobApplicationState):
         await self._emit(state, "Navigating to Job Board")
         logger.info("[JOBTEASER] Navigating")
+        self._plog("NODE go_to_job_board -> navigating to jobteaser.com")
         try:
             for attempt in range(3):
                 try:
-                    print(f"Attempt {attempt+1}: Navigating to {self.base_url}")
+                    self._plog(f"navigation attempt {attempt + 1} to {self.base_url}")
                     await self.page.goto(self.base_url, wait_until="domcontentloaded", timeout=90000)
-                
+
                     await self._handle_cookies()
-                    
+
                     await self.page.wait_for_selector('button[id="UnloggedUserDropdownButton"]', state="visible", timeout=30000)
                     break
                 except Exception as e:
-                    print(f"⚠️ Attempt {attempt + 1} failed: {str(e)}")
+                    self._plog(f"navigation attempt {attempt + 1} failed: {str(e)}")
                     if attempt == 2:
+                        self._plog("jobteaser.com unreachable after 3 attempts -> aborting")
                         await self._emit(state, stage="Failed", status="error", error="Could not reach JobTeaser.", error_code="JOB_BOARD_UNAVAILABLE")
                         return {"error": "Could not reach JobTeaser. The job board might be down or undergoing maintenance.", "error_code": "JOB_BOARD_UNAVAILABLE"}
                     await asyncio.sleep(2 ** attempt)
 
+            self._plog("homepage loaded -> performing human warmup")
             await human_warmup(self.page, self.base_url)
             return {}
         except Exception:
             logger.exception("[JOBTEASER] Navigation error")
+            self._plog("unexpected navigation error -> aborting")
             await self._emit(state, stage="Failed", status="error", error="Could not reach JobTeaser.", error_code="JOB_BOARD_UNAVAILABLE")
             return {"error": "Navigation failed.", "error_code": "JOB_BOARD_UNAVAILABLE"}
 
@@ -685,23 +744,26 @@ class JobTeaserWorker:
         user_id = str(state["user"].id)
 
         logger.info("[JOBTEASER] Login phase")
+        self._plog("NODE request_login -> entering login phase")
 
         await self._handle_cookies()
 
         if prefs.is_full_automation and creds["jobteaser"]:
+            self._plog("full automation mode -> attempting auto-login")
             login_plain = None
             pass_plain = None
 
             try:
+                self._plog("opening login form (dropdown -> signin -> connect)")
                 for attempt in range(3):
                     try:
                         await human_click(self.page.locator('button#UnloggedUserDropdownButton'))
                         await self.page.wait_for_selector('a[data-testid="signinLink"]', state="visible", timeout=90000)
 
-                        await human_click(self.page.locator('a[data-testid="signinLink"]'))                        
+                        await human_click(self.page.locator('a[data-testid="signinLink"]'))
                         await self.page.wait_for_load_state("domcontentloaded", timeout=120000)
 
-                        
+
                         await self.page.wait_for_selector('a[href*="/users/auth/connect"]', state="visible", timeout=120000)
                         connect_btn = self.page.locator('a[href*="/users/auth/connect"]')
                         await human_click(connect_btn)
@@ -712,15 +774,17 @@ class JobTeaserWorker:
                     except Exception as e:
                         if attempt == 2:
                             await self._emit(state, stage="Failed", status="error", error="Could not reach the login form.", error_code="LOGIN_MODAL_FAILED")
-                            print("⚠️ Login form not available yet, retrying...", str(e))
+                            self._plog(f"login form never reached after 3 attempts -> aborting ({str(e)})")
                             return {"error": "Login failed. Could not reach the login form.", "error_code": "LOGIN_MODAL_FAILED"}
                         await self.page.reload(wait_until="commit", timeout=90000)
-                        print("⚠️ Login form not available yet, retrying...", str(e))
+                        self._plog(f"login form attempt {attempt + 1} failed -> reloading and retrying ({str(e)})")
                         await asyncio.sleep(2 ** attempt)
 
                 login_plain = await self.encryption_service.decrypt(creds["jobteaser"].login_encrypted)
                 pass_plain = await self.encryption_service.decrypt(creds["jobteaser"].password_encrypted)
+                self._plog("credentials decrypted")
 
+                self._plog("typing credentials")
                 for attempt in range(3):
                     try:
                         await human_delay(300, 700)
@@ -735,23 +799,28 @@ class JobTeaserWorker:
                         submit_btn = self.page.locator('form[data-e2e="sign-in-form"] button[type="submit"]')
                         await human_click(submit_btn)
                         await self.page.wait_for_load_state("commit", timeout=60000)
+                        self._plog("credentials submitted")
                         break
                     except Exception:
                         if attempt == 2:
+                            self._plog("credential submission failed after 3 attempts -> aborting login")
                             await self._emit(state, stage="Failed", status="error", error="Could not submit credentials.", error_code="LOGIN_SUBMIT_FAILED")
                             return {"error": "Login failed. Could not submit credentials.", "error_code": "LOGIN_SUBMIT_FAILED"}
                         await asyncio.sleep(2 ** attempt)
 
+                self._plog("waiting for logged-in greeting to confirm login")
                 for attempt in range(3):
                     try:
                         await self.page.wait_for_selector('span[class*="Greeting_firstWord"]', state="attached", timeout=60000)
                         break
                     except Exception:
                         if attempt == 2:
+                            self._plog("login confirmation never received -> bad credentials?")
                             await self._emit(state, stage="Failed", status="error", error="Please check your JobTeaser credentials.", error_code="INVALID_CREDENTIALS")
                             return {"error": "Login failed. Please check your JobTeaser credentials in your settings.", "error_code": "INVALID_CREDENTIALS"}
                         await asyncio.sleep(2 ** attempt)
 
+                self._plog("login confirmed -> clicking 'Offres' nav link")
                 offres_link = self.page.locator(
                     'a[class*="Nav_app-Nav__link"]:has-text("Offres")'
                 ).first
@@ -760,11 +829,13 @@ class JobTeaserWorker:
                 #await self.page.wait_for_load_state("networkidle")
 
                 logger.info("[JOBTEASER] Auto-login successful")
+                self._plog("auto-login successful")
                 await self._save_auth_state(user_id)
                 return {}
 
             except Exception:
                 logger.exception("[JOBTEASER] Auto-login failed")
+                self._plog("auto-login crashed with unexpected error")
                 await self._emit(state, stage="Failed", status="error", error="Please check your JobTeaser credentials.", error_code="INVALID_CREDENTIALS")
                 return {"error": "Failed to log into JobTeaser. Please check your credentials.", "error_code": "INVALID_CREDENTIALS"}
 
@@ -775,15 +846,18 @@ class JobTeaserWorker:
                     del pass_plain
 
         else:
+            self._plog("semi-automation mode -> waiting for manual login (90s)")
             try:
                 await self.page.locator('button#UnloggedUserDropdownButton').click()
                 await self.page.locator('a[data-testid="signinLink"]').click()
                 logger.info("[JOBTEASER] ACTION REQUIRED: Manual login required (waiting 90s)")
                 await asyncio.sleep(90)
                 await self._save_auth_state(user_id)
+                self._plog("manual login window elapsed -> session saved")
                 return {}
             except Exception:
                 logger.exception("[JOBTEASER] Manual login error")
+                self._plog("manual login timed out or failed")
                 await self._emit(state, stage="Failed", status="error", error="Manual login timed out.", error_code="LOGIN_TIMEOUT")
                 return {"error": "Manual login timed out.", "error_code": "LOGIN_TIMEOUT"}
 
@@ -796,6 +870,7 @@ class JobTeaserWorker:
         location = getattr(search_entity, 'location', "")
 
         logger.info("[JOBTEASER] Starting search")
+        self._plog(f"NODE search_jobs -> searching '{job_title}'" + (f" in '{location}'" if location and location.strip() else ""))
 
         try:
             await human_warmup(self.page, self.base_url)
@@ -818,11 +893,14 @@ class JobTeaserWorker:
                     await first_suggestion.wait_for(state="visible", timeout=8000)
                     await human_click(first_suggestion)
                     await self.page.wait_for_load_state("networkidle")
+                    self._plog("keyword search submitted via autocomplete suggestion")
                     break
                 except Exception:
                     if attempt == 2:
+                        self._plog("search failed after 3 attempts -> aborting")
                         await self._emit(state, stage="Failed", status="error", error="We encountered an issue applying your search filters.", error_code="SEARCH_FILTERS_FAILED")
                         return {"error": f"Failed to execute search for '{job_title}' on JobTeaser.", "error_code": "SEARCH_FILTERS_FAILED"}
+                    self._plog(f"search attempt {attempt + 1} failed -> reloading and retrying")
                     await self.page.reload(wait_until="networkidle")
                     await asyncio.sleep(2 ** attempt)
 
@@ -833,7 +911,9 @@ class JobTeaserWorker:
             try:
                 await self.page.wait_for_selector(self.CARD_SELECTOR, state="attached", timeout=90000)
                 logger.info("[JOBTEASER] Search results loaded")
+                self._plog("search results loaded")
             except Exception:
+                self._plog("no results found for this search")
                 return {"error": "No new matching jobs were found for this search today.", "error_code": "NO_JOBS_FOUND"}
 
             await self._handle_cookies()
@@ -841,6 +921,7 @@ class JobTeaserWorker:
 
         except Exception:
             logger.exception("[JOBTEASER] Search error")
+            self._plog("search filters failed -> layout may have changed")
             await self._emit(state, stage="Failed", status="error", error="We encountered an issue applying your search filters.", error_code="SEARCH_FILTERS_FAILED")
             return {"error": f"Failed to execute search for '{job_title}' on JobTeaser.", "error_code": "SEARCH_FILTERS_FAILED"}
 
@@ -849,6 +930,7 @@ class JobTeaserWorker:
         logger.info("[JOBTEASER] Scraping jobs")
 
         user_id = state["user"].id
+        self._uid = str(user_id)
         search_id = state["job_search"].id
         found_job_entities = []
 
@@ -857,11 +939,13 @@ class JobTeaserWorker:
         hash_result = await self.get_ignored_hashes.execute(user_id=user_id, days=30)
         if not hash_result.is_success:
             logger.warning("[JOBTEASER] Could not fetch ignored hashes: %s", hash_result.error.message)
+            self._plog("could not fetch ignored hashes -> deduplication disabled for this run")
             ignored_hashes = set()
         else:
             ignored_hashes = hash_result.value
 
         logger.info("[JOBTEASER] Target: %s jobs. Ignored hashes: %s", worker_job_limit, len(ignored_hashes))
+        self._plog(f"NODE get_matched_jobs -> scraping starts (target: {worker_job_limit} jobs, {len(ignored_hashes)} ignored hashes)")
 
         page_number = 1
         max_pages = 20
@@ -872,26 +956,32 @@ class JobTeaserWorker:
                 # 🚨 INJECTED KILL CHECK: Before processing a new page
                 if await self._is_killed(state):
                     logger.info("[JOBTEASER] Kill switch detected. Halting pagination.")
+                    self._plog(f"kill switch detected mid-scrape -> returning {len(found_job_entities)} offers found so far")
                     return {"error": "Agent has been stopped.", "error_code": "AGENT_STOPPED", "found_raw_offers": found_job_entities}
 
                 logger.info("[JOBTEASER] Processing page %s", page_number)
+                self._plog(f"processing results page {page_number}")
 
                 try:
                     await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=15000)
                 except Exception:
                     if page_number == 1:
                         logger.info("[JOBTEASER] No results found on page 1")
+                        self._plog("no job cards visible on page 1 -> nothing to scrape")
                         return {"found_raw_offers": []}
+                    self._plog(f"no job cards visible on page {page_number} -> stopping")
                     break
 
                 cards = self.page.locator(self.CARD_SELECTOR)
                 count = await cards.count()
+                self._plog(f"found {count} cards on page {page_number}")
                 result_url = self.page.url
 
                 for i in range(count):
                     # 🚨 INJECTED KILL CHECK: Before clicking a new card
                     if await self._is_killed(state):
                         logger.info("[JOBTEASER] Kill switch detected. Halting card processing.")
+                        self._plog(f"kill switch detected mid-page -> returning {len(found_job_entities)} offers found so far")
                         return {"error": "Agent has been stopped.", "error_code": "AGENT_STOPPED", "found_raw_offers": found_job_entities}
 
                     if len(found_job_entities) >= worker_job_limit:
@@ -906,10 +996,14 @@ class JobTeaserWorker:
                         raw_company, raw_title, raw_location = await self.get_raw_job_data(card)
 
                         if not raw_title:
+                            self._plog(f"card {i + 1}/{count}: no title extracted -> skipping")
                             continue
+
+                        self._plog(f"card {i + 1}/{count}: '{raw_title}' @ {raw_company}")
 
                         fast_hash = self._generate_fast_hash(raw_company, raw_title, str(user_id))
                         if fast_hash in ignored_hashes:
+                            self._plog(f"card {i + 1}/{count}: already seen in last 30 days -> skipping")
                             continue
 
                         click_success = False
@@ -929,6 +1023,7 @@ class JobTeaserWorker:
                             except Exception:
                                 if attempt == 2:
                                     logger.warning("[JOBTEASER] Card click failed after 3 attempts. Skipping.")
+                                    self._plog(f"card {i + 1}/{count}: click failed 3 times (or no internal apply button) -> skipping")
                                     break
                                 await asyncio.sleep(2 ** attempt)
 
@@ -936,6 +1031,7 @@ class JobTeaserWorker:
                             continue
 
                         current_url = self.page.url
+                        self._plog(f"opened offer detail page for '{raw_title}'")
 
                         await human_delay(1500, 3500)
 
@@ -959,6 +1055,7 @@ class JobTeaserWorker:
 
                         if await apply_btn.count() > 0:
                             try:
+                                self._plog("internal apply button found -> probing form URL")
                                 await human_click(apply_btn)
                                 await self.page.wait_for_load_state("networkidle", timeout=30000)
                                 form_url = self.page.url
@@ -976,16 +1073,20 @@ class JobTeaserWorker:
                                     job_desc=job_desc,
                                 )
                                 found_job_entities.append(offer)
+                                self._plog(f"offer captured ({len(found_job_entities)}/{worker_job_limit}): '{raw_title}' @ {raw_company}")
                             except Exception:
                                 logger.warning("[JOBTEASER] Apply click failed for %s", raw_title)
+                                self._plog(f"apply click failed for '{raw_title}' -> skipping")
                         else:
                             logger.warning("[JOBTEASER] No internal apply button on detail page. Skipping.")
+                            self._plog("no internal apply button on detail page -> skipping")
 
                         if not await self.nav_back(result_url):
                             break
 
                     except Exception:
                         logger.exception("[JOBTEASER] Error on card %s", i)
+                        self._plog(f"error processing card {i + 1} on page {page_number} -> going back to results")
                         try:
                             if not await self.nav_back(result_url):
                                 break
@@ -994,6 +1095,7 @@ class JobTeaserWorker:
                         continue
 
                 if len(found_job_entities) >= worker_job_limit:
+                    self._plog(f"job limit reached ({worker_job_limit}) -> stopping scrape")
                     break
 
                 if not await self._handle_teaser_pagination(page_number):
@@ -1002,13 +1104,16 @@ class JobTeaserWorker:
 
         except Exception:
             logger.exception("[JOBTEASER] Fatal scraping error")
+            self._plog("critical scraping error -> halting process")
             await self._emit(state, stage="Failed", status="error", error="A critical error occurred while scanning the job listings.", error_code="SCRAPING_FAILED")
             return {"error": "A critical error occurred while scanning JobTeaser.", "error_code": "SCRAPING_FAILED"}
 
         if not found_job_entities:
+            self._plog("scraping finished with 0 new offers")
             return {"found_raw_offers": []}
 
         logger.info("[JOBTEASER] Scraping complete. Returning %s jobs.", len(found_job_entities))
+        self._plog(f"scraping complete -> returning {len(found_job_entities)} new offers")
         return {"found_raw_offers": found_job_entities}
 
     async def submit_applications(self, state: JobApplicationState):
@@ -1017,6 +1122,7 @@ class JobTeaserWorker:
 
         jobs_to_process = state.get("processed_offers", [])
         user = state["user"]
+        self._uid = str(user.id)
 
         assigned_submit_limit = state.get("worker_job_limit", 5)
 
@@ -1025,8 +1131,11 @@ class JobTeaserWorker:
             if job.job_board == JobBoard.JOBTEASER and job.status == ApplicationStatus.APPROVED
         ]
 
+        self._plog(f"NODE submit_applications -> {len(teaser_jobs)} approved JobTeaser offers in queue (limit: {assigned_submit_limit})")
+
         if not teaser_jobs:
             logger.info("[JOBTEASER] No approved JobTeaser jobs in submission queue")
+            self._plog("nothing to submit -> exiting node")
             return {"status": "no_teaser_jobs_to_submit"}
 
         successful_submissions = []
@@ -1036,14 +1145,19 @@ class JobTeaserWorker:
             # 🚨 INJECTED KILL CHECK: Before starting the next submission
             if await self._is_killed(state):
                 logger.info("[JOBTEASER] Kill switch detected. Halting submissions.")
+                self._plog(f"kill switch detected mid-submission -> returning {len(successful_submissions)} submitted so far")
                 return {"error": "Agent has been stopped.", "error_code": "AGENT_STOPPED", "submitted_offers": successful_submissions}
 
             if len(successful_submissions) >= assigned_submit_limit:
                 logger.info("[JOBTEASER] Reached assigned submission limit (%s)", assigned_submit_limit)
+                self._plog(f"submission limit reached ({assigned_submit_limit}) -> stopping")
                 break
+
+            self._plog(f"processing application {i + 1}/{len(teaser_jobs)}: '{offer.job_title}' @ {offer.company_name}")
 
             try:
                 form_opened = False
+                self._plog("opening offer page and application form")
                 for attempt in range(3):
                     try:
                         await self.page.goto(offer.url, wait_until="commit", timeout=60000)
@@ -1074,17 +1188,23 @@ class JobTeaserWorker:
                     except Exception:
                         if attempt == 2:
                             logger.warning("[JOBTEASER] Form failed to load after 3 attempts. Skipping.")
+                            self._plog("form failed to open after 3 attempts -> skipping offer")
                             break
+                        self._plog(f"form open attempt {attempt + 1} failed -> retrying")
                         await asyncio.sleep(2 ** attempt)
 
                 if not form_opened:
                     i += 1
                     continue
 
+                self._plog("application form opened")
+
                 if user.resume_path:
+                    self._plog("downloading resume from storage")
                     resume_bytes = await self.file_storage.download_file(user.resume_path)
                     human_name = user.resume_file_name or f"{user.firstname}_{user.lastname}_CV.pdf"
 
+                    self._plog(f"uploading resume: {human_name}")
                     resume_input = self.page.locator('input#resume_0[type="file"]')
                     await resume_input.wait_for(state="attached", timeout=10000)
                     await resume_input.set_input_files({
@@ -1097,10 +1217,12 @@ class JobTeaserWorker:
                 cover_textarea = self.page.locator('textarea[name="coverLetterContent"]')
                 if await cover_textarea.count() > 0:
                     if offer.cover_letter:
+                        self._plog("filling cover letter")
                         await human_delay(400, 900)
                         await cover_textarea.fill(offer.cover_letter)
                     else:
                         logger.warning("[JOBTEASER] Form requires cover letter but none generated. Skipping %s.", offer.job_title)
+                        self._plog("form requires a cover letter but none generated -> skipping offer")
                         i += 1
                         continue
 
@@ -1119,8 +1241,10 @@ class JobTeaserWorker:
                     )
                 except Exception:
                     logger.warning("[JOBTEASER] Submit button stayed disabled for %s. Form may be incomplete.", offer.job_title)
+                    self._plog("submit button stayed disabled -> form may be incomplete, skipping offer")
                     continue
 
+                self._plog("clicking submit button (no retry: duplicate risk)")
                 await submit_btn.click()
 
                 try:
@@ -1130,31 +1254,38 @@ class JobTeaserWorker:
                         timeout=45000,
                     )
                     logger.info("[JOBTEASER] Application submitted for %s", offer.job_title)
+                    self._plog(f"application SUBMITTED: '{offer.job_title}' @ {offer.company_name} ({len(successful_submissions) + 1}/{assigned_submit_limit})")
                     offer.status = ApplicationStatus.SUBMITTED
                     successful_submissions.append(offer)
                 except Exception:
                     logger.warning("[JOBTEASER] Submission of %s failed — confirmation not received", offer.url)
+                    self._plog("submission NOT confirmed -> 'already applied' banner never appeared")
                     continue
 
             except Exception:
                 logger.exception("[JOBTEASER] Submission failed for %s", offer.url)
+                self._plog(f"submission crashed for '{offer.job_title}' -> moving to next offer")
 
             i += 1
 
         if not successful_submissions:
+            self._plog("all submission attempts failed")
             await self._emit(state, stage="Failed", status="error", error="All application attempts failed.", error_code="SUBMISSION_FAILED")
             return {"error": "All JobTeaser application attempts failed. Forms may have changed.", "error_code": "SUBMISSION_FAILED"}
 
         logger.info("[JOBTEASER] Successfully submitted %s applications", len(successful_submissions))
+        self._plog(f"submission node done -> {len(successful_submissions)} applications submitted")
         return {"submitted_offers": successful_submissions}
 
     async def cleanup(self, state: JobApplicationState):
         await self._emit(state, "Cleaning Up")
+        self._plog("NODE cleanup -> closing browser session")
         await self.force_cleanup()
 
         # 🚨 Fail-soft cleanup: if the circuit breaker was tripped, scrub the error
         # from state so the master can keep partial worker results from the happy path.
         if state.get("error"):
+            self._plog(f"fail-soft: scrubbing error from state ({state['error']})")
             return {
                 "error": "",
                 "error_code": ""
