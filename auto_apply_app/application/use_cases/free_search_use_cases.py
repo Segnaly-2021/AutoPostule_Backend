@@ -3,7 +3,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from auto_apply_app.application.common.result import Result, Error
+from auto_apply_app.application.common.result import Result, Error, ErrorReason
 from auto_apply_app.application.repositories.unit_of_work import UnitOfWork
 from auto_apply_app.application.dtos.free_search_dtos import FreeSearchRequest
 
@@ -43,7 +43,14 @@ class FreeSearchUseCase:
                 usage = await uow.free_search_usage_repo.get_or_create_for_today(user_id)
                 allowed, reason = usage.can_run()
                 if not allowed:
-                    return Result.failure(Error.too_many_requests(reason))
+                    # `reason` (English string) goes to the dev-facing message;
+                    # ErrorReason.RATE_LIMITED is the stable i18n key the frontend maps.
+                    return Result.failure(
+                        Error.too_many_requests(
+                            message=reason,
+                            reason=ErrorReason.RATE_LIMITED,
+                        )
+                    )
 
             # 2. Run the scraping (outside UoW — long-running)
             search_output = await self.fake_agent.search_all_boards(query, target_count)

@@ -8,15 +8,29 @@ from auto_apply_app.domain.value_objects import JobBoard
 
 
 class FakeHWWorker:
-    """Search-only worker for HelloWork."""
-    
+    """
+    Search-only worker for HelloWork.
+
+    Selectors mirror the production HelloWorkWorker. Two robustness behaviours are
+    ported from the real worker because they fix genuine anonymous-mode bugs:
+
+    1. The card selector is qualified to `li[...]` (not the bare attribute). HelloWork
+       carries `data-id-storage-target="item"` on more than one element per card, so an
+       unqualified selector double-counts cards and runs extraction against non-card
+       nodes.
+    2. `_neutralize_pagination_input()` strips a rogue mobile pagination <input> that
+       auto-submits the search form on blur, causing unexpected page jumps mid-iteration.
+    """
+
+    CARD_SELECTOR = 'li[data-id-storage-target="item"]'
+
     def __init__(self):
         self.base_url = "https://www.hellowork.com/fr-fr/"
         self.playwright: Optional[Playwright] = None
         self.browser: Optional[Browser] = None
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
-    
+
     async def _init_browser(self):
         self.playwright = await async_playwright().start()
         self.browser = await self.playwright.chromium.launch(
@@ -25,7 +39,7 @@ class FakeHWWorker:
         )
         self.context = await self.browser.new_context()
         self.page = await self.context.new_page()
-    
+
     async def _cleanup_browser(self):
         try:
             if self.page:
@@ -38,7 +52,7 @@ class FakeHWWorker:
                 await self.playwright.stop()
         except Exception as e:
             print(f"[Fake HW] Cleanup warning: {e}")
-    
+
     async def _handle_cookies(self):
         try:
             await self.page.wait_for_selector(
@@ -51,14 +65,32 @@ class FakeHWWorker:
                 await btn.click()
         except Exception:
             pass
-    
+
+    async def _neutralize_pagination_input(self):
+        """
+        Remove the rogue mobile pagination input that auto-submits the search form
+        on blur, causing unexpected page jumps during card iteration. Ported from
+        the production worker. Fail-soft: a navigation mid-call is non-fatal.
+        """
+        try:
+            await self.page.evaluate("""() => {
+                document.querySelectorAll(
+                    'input[data-toggle-attribute-attribute-param="name"][data-toggle-attribute-value-param="p"]'
+                ).forEach(el => el.remove());
+            }""")
+        except Exception:
+            pass
+
     async def get_raw_job_data(self, card: Locator):
+        """
+        Extraction mirrors the production worker:
+        the offer anchor carries two <p> tags (title, then company),
+        and location lives in div[data-cy="localisationCard"].
+        """
         try:
             anchor = card.locator('a[data-cy="offerTitle"]')
-            
-            # Two <p> tags inside the anchor's <h3>: first = title, second = company
             paragraphs = anchor.locator('p')
-            
+
             raw_title = await paragraphs.nth(0).inner_text()
             raw_company = await paragraphs.nth(1).inner_text()
             raw_location = await card.locator('div[data-cy="localisationCard"]').inner_text()
@@ -68,7 +100,6 @@ class FakeHWWorker:
         except Exception:
             print("    ⚠️ Offer details not found, skipping card.")
             return None, None, None
-        
 
     async def _handle_hw_pagination(self, page_number: int) -> bool:
         """
@@ -89,78 +120,98 @@ class FakeHWWorker:
                 print("🔚 [HW] Next button disabled. Reached last page.")
                 return False
 
-            print(f"➡️ [HW] Moving to page {page_number + 1}...")            
+            print(f"➡️ [HW] Moving to page {page_number + 1}...")
             await next_button.click()
             await self.page.wait_for_load_state("domcontentloaded")
-            await self.page.wait_for_timeout(3000)
+            await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=15000)
+            await self._neutralize_pagination_input()
             await self._handle_cookies()
             return True
 
         except Exception as e:
             print(f"⚠️ [HW] Pagination error: {e}")
             return False
-        
-
 
     async def search_jobs(self, query: str, max_results: int = 10) -> List[JobSnippet]:
-        print(f"[Fake HW] Searching for '{query}'...")
-        results = []
-        
+        print(f"[Fake HW] Searching for '{query}' (target: {max_results})...")
+        results: List[JobSnippet] = []
+
+        # Guard: the master may pass a quota of 0 for a disabled board.
+        if max_results <= 0:
+            return results
+
         try:
             await self._init_browser()
-            
+
             await self.page.goto(self.base_url, wait_until="domcontentloaded")
             await self._handle_cookies()
-            
+
             # Search
             await self.page.locator('input[id="k"]').fill(query)
             await self.page.keyboard.press("Enter")
             await self.page.wait_for_timeout(3000)
-            
+
             # Wait for results
             try:
-                await self.page.wait_for_selector(
-                    '[data-id-storage-target="item"]',
-                    timeout=5000
-                )
+                await self.page.wait_for_selector(self.CARD_SELECTOR, timeout=5000)
             except Exception:
                 print("[Fake HW] No results found")
                 return results
-            
-            # Pagination loop
+
+            await self._neutralize_pagination_input()
+
             page_number = 1
             max_pages = 20  # Safety limit
-            
+
             while len(results) < max_results and page_number <= max_pages:
                 print(f"[Fake HW] Processing page {page_number}...")
-                
-                # Get cards on current page
-                cards = self.page.locator('[data-id-storage-target="item"]')
+
+                cards = self.page.locator(self.CARD_SELECTOR)
                 count = await cards.count()
-                                
-                # Save current page URL
+                print(f"[Fake HW] Found {count} cards on page {page_number}")
+
+                # Save current results-page URL so we can navigate back after each detail view.
                 search_url = self.page.url
-                
+
                 for i in range(count):
-                    # Stop if we've collected enough
-                    if len(results) >= max_results:            
+                    if len(results) >= max_results:
                         break
-                    
+
                     try:
-                        # Re-locate to avoid stale elements
-                        cards = self.page.locator('[data-id-storage-target="item"]')
+                        # Re-locate each iteration to avoid stale element handles.
+                        cards = self.page.locator(self.CARD_SELECTOR)
                         card = cards.nth(i)
 
-                        company, title, location  = await self.get_raw_job_data(card)                        
+                        company, title, location = await self.get_raw_job_data(card)
                         if not company or not title:
                             continue
-                        
-                        await card.click()
+
+                        # Click the inner offer link (not the whole card) and confirm the
+                        # detail page actually rendered, mirroring the production worker.
+                        link = card.locator('a[data-cy="offerTitle"]')
+                        await link.click()
                         await self.page.wait_for_load_state("domcontentloaded")
-                        await self.page.wait_for_timeout(1000)                        
+
+                        try:
+                            await self.page.wait_for_selector('div[id="content"]', state="visible", timeout=15000)
+                        except Exception:
+                            # Content didn't render — treat as a miss and recover.
+                            print(f"[Fake HW] Detail content didn't load for card {i}, skipping")
+                            await self.page.goto(search_url, wait_until="domcontentloaded")
+                            await self.page.wait_for_timeout(1000)
+                            await self._neutralize_pagination_input()
+                            continue
+
                         url = self.page.url
-                        
-                        
+
+                        # URL sanity check: confirm we landed on a real offer detail page.
+                        if "/fr-fr/emplois/" not in url:
+                            print(f"[Fake HW] Unexpected URL after click ({url}), skipping")
+                            await self.page.goto(search_url, wait_until="domcontentloaded")
+                            await self.page.wait_for_timeout(1000)
+                            await self._neutralize_pagination_input()
+                            continue
+
                         job = JobSnippet(
                             job_title=title,
                             company_name=company,
@@ -169,40 +220,38 @@ class FakeHWWorker:
                             job_board=JobBoard.HELLOWORK,
                             url=url
                         )
-                        
+
                         results.append(job)
                         print(f"[Fake HW] ✓ Scraped ({len(results)}/{max_results}): {title}")
-                        
-                        # Navigate back to search results
+
+                        # Navigate back to the results list.
                         await self.page.goto(search_url, wait_until="domcontentloaded")
                         await self.page.wait_for_timeout(1500)
-                        
+                        await self._neutralize_pagination_input()
+
                     except Exception as e:
                         print(f"[Fake HW] Error on card {i}: {e}")
-                        # Try to recover
                         try:
                             await self.page.goto(search_url, wait_until="domcontentloaded")
                             await self.page.wait_for_timeout(1000)
+                            await self._neutralize_pagination_input()
                         except Exception:
                             pass
                         continue
-                
-                # Check if we need more results and can paginate
-                if len(results) < max_results:
 
-                    # 🚨 PAGINATION (From Fake Agent)
+                # Paginate only if we still need more results.
+                if len(results) < max_results:
                     if not await self._handle_hw_pagination(page_number):
                         break
                     page_number += 1
-                    
                 else:
                     print("[Fake HW] Target reached, stopping pagination")
                     break
-        
+
         except Exception as e:
             print(f"[Fake HW] Fatal error: {e}")
-        
+
         finally:
             await self._cleanup_browser()
-        
+
         return results

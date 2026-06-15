@@ -1,4 +1,4 @@
-# auto_apply_app/infrastructures/api/routes/free_search_routes.py
+# auto_apply_app/infrastructures/api/routes/free_search.py
 
 from fastapi import APIRouter, Depends, Request
 from typing import Annotated
