@@ -80,7 +80,7 @@ class JobOfferController:
     # ---------- TOGGLE STATUS ---------- Inside the controller, we handle the toggle status requests for both response and interview statuses. The controller receives the job ID and the desired status (True/False) and delegates the request to the appropriate use case. It also handles any validation errors that may arise during the process.
     async def handle_toggle_response(self, job_id: str, status: bool) -> OperationResult:
         try:
-            request_dto = ToggleStatusRequest(job_offer_id=job_id, has_response=status)        
+            request_dto = ToggleStatusRequest(job_offer_id=job_id, has_response=status, has_interview=False)        
             result = await self.toggle_response_status_use_case.execute(request_dto)
             
             if result.is_success:
@@ -94,7 +94,7 @@ class JobOfferController:
 
     async def handle_toggle_interview(self, job_id: str, status: bool) -> OperationResult:
         try:
-            request_dto = ToggleStatusRequest(job_offer_id=job_id, has_interview=status)        
+            request_dto = ToggleStatusRequest(job_offer_id=job_id, has_response=False, has_interview=status)        
             result = await self.toggle_interview_status_use_case.execute(request_dto)
             
             if result.is_success:
