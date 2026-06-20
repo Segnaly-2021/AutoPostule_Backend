@@ -34,6 +34,8 @@ class AuthRepoDB(AuthRepository):
             verification_code_hash=auth_user.verification_code_hash,
             verification_code_expires_at=auth_user.verification_code_expires_at,
             verification_attempts=auth_user.verification_attempts,
+            # --- Pending email change ---
+            pending_email=auth_user.pending_email,
         )
         # merge() checks if the PK exists; updates if it does, inserts if it doesn't.
         await self.session.merge(db_auth)
@@ -69,6 +71,8 @@ class AuthRepoDB(AuthRepository):
             verification_code_hash=db_auth.verification_code_hash,
             verification_code_expires_at=db_auth.verification_code_expires_at,
             verification_attempts=db_auth.verification_attempts,
+            # --- Pending email change ---
+            pending_email=db_auth.pending_email,
         )
         # Map the real PK back onto the entity
         auth.id = db_auth.id

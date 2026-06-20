@@ -19,10 +19,12 @@ from auto_apply_app.infrastructures.api.schema.user_schema import (
     LoginSchema,
     RegisterSchema,
     UserUpdateSchema,
-    ForgotPasswordRequestSchema,  
+    ForgotPasswordRequestSchema,
     ResetPasswordConfirmSchema,
     ResendVerificationSchema,
-    VerifyCodeSchema,   
+    VerifyCodeSchema,
+    RequestEmailChangeSchema,
+    ConfirmEmailChangeSchema,
 )
 
 
@@ -189,6 +191,53 @@ async def change_password(
     )
     return handle_result(result)
 
+@router.post(
+    "/request-email-change",
+    status_code=status.HTTP_200_OK,
+    summary="Request an email change",
+    description=(
+        "Starts a verification-gated email change for the authenticated user. "
+        "Sends a 6-digit code to the new address; no live email is changed yet."
+    ),
+)
+@limiter.limit("3/hour")
+async def request_email_change(
+    request: Request,
+    data: RequestEmailChangeSchema,
+    current_user_id: CurrentUserId,
+    auth_controller: AuthControllerDep,
+):
+    result = await auth_controller.handle_request_email_change(
+        user_id=current_user_id,
+        new_email=data.new_email,
+    )
+    return handle_result(result)
+
+
+@router.post(
+    "/confirm-email-change",
+    response_model=UserViewModel,
+    status_code=status.HTTP_200_OK,
+    summary="Confirm an email change",
+    description=(
+        "Confirms the email change with the 6-digit code sent to the new address. "
+        "Updates all three email columns atomically and returns the updated user."
+    ),
+)
+@limiter.limit("10/hour")
+async def confirm_email_change(
+    request: Request,
+    data: ConfirmEmailChangeSchema,
+    current_user_id: CurrentUserId,
+    auth_controller: AuthControllerDep,
+):
+    result = await auth_controller.handle_confirm_email_change(
+        user_id=current_user_id,
+        code=data.code,
+    )
+    return handle_result(result)
+
+
 @router.get(
     "/verify-email",
     status_code=status.HTTP_200_OK,
@@ -304,10 +353,9 @@ async def update_my_profile(
     user_controller: UserControllerDep
 ):
     result = await user_controller.handle_update(
-        user_id=current_user_id,  
+        user_id=current_user_id,
         fname=data.firstname,
         lname=data.lastname,
-        email=data.email,
         address=data.address,
         resume_path=data.resume_path,
         current_position=data.current_position,

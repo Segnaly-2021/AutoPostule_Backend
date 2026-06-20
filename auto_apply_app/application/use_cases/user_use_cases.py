@@ -20,16 +20,19 @@ from auto_apply_app.application.dtos.user_dtos import (
     UserResponse
 )
 from auto_apply_app.application.dtos.auth_user_dtos import (
-    RegisterUserRequest, 
-    LoginResponse, 
+    RegisterUserRequest,
+    LoginResponse,
     VerifyCodeRequest,
     ResendVerificationRequest,
     ChangePasswordRequest,
-    ForgotPasswordRequest, 
-    ResetPasswordRequest
+    ForgotPasswordRequest,
+    ResetPasswordRequest,
+    RequestEmailChangeRequest,
+    ConfirmEmailChangeRequest,
 )
 
 from auto_apply_app.application.service_ports.email_service_port import EmailServicePort
+from auto_apply_app.application.service_ports.payment_port import PaymentPort
 from auto_apply_app.application.repositories.unit_of_work import UnitOfWork
 from auto_apply_app.application.service_ports.password_service_port import PasswordServicePort
 from auto_apply_app.application.service_ports.rate_limiter_port import RateLimiterPort
@@ -743,4 +746,227 @@ class ResendVerificationEmailUseCase:
             logger.exception("CRITICAL: Resend verification failed unexpectedly")
             return Result.failure(Error.system_error(
                 message="Resend verification: unexpected error",
+            ))
+
+
+# ============================================================================
+# EMAIL CHANGE — verification-gated, three-table-atomic, post-commit Stripe sync
+# ============================================================================
+
+
+async def _email_in_use(uow: UnitOfWork, email: str) -> bool:
+    """
+    True if `email` is already taken by any account. `auth_users.email` and
+    `users.email` are the unique-constrained sources of truth; `user_subscriptions.email`
+    always mirrors them, so checking these two covers all three tables.
+    """
+    if await uow.auth_repo.get_by_email(email):
+        return True
+    try:
+        await uow.user_repo.get_by_email(email)
+        return True
+    except UserNotFoundError:
+        return False
+
+
+@dataclass
+class RequestEmailChangeUseCase:
+    """
+    Initiates an email change: validates the new address is free, stages it as
+    pending_email + issues a verification code to it. No live email is touched.
+    """
+    uow: UnitOfWork
+    password_service: PasswordServicePort
+    email_service: EmailServicePort
+    rate_limiter: RateLimiterPort
+
+    async def execute(self, request: RequestEmailChangeRequest) -> Result:
+        try:
+            params = request.to_execution_params()
+            user_id = params["user_id"]
+            new_email = params["new_email"]
+
+            # 1) Per-user rate limit (mirrors resend cooldown).
+            rate_key = f"email_change_request:{user_id}"
+            allowed, retry_after = await self.rate_limiter.try_acquire(
+                key=rate_key,
+                window_seconds=RESEND_COOLDOWN_SECONDS,
+            )
+            if not allowed:
+                logger.info(
+                    "Email change blocked: rate limit hit for user_id=%s (retry_after=%ss)",
+                    user_id, retry_after,
+                )
+                return Result.failure(Error.too_many_requests(
+                    message="Email change request: rate limit cooldown active",
+                    reason=ErrorReason.RATE_LIMITED,
+                    details={"retry_after": retry_after},
+                ))
+
+            # 2) Generate code + hash outside the transaction.
+            raw_code = _generate_verification_code()
+            code_hash = self.password_service.get_password_hash(raw_code)
+
+            async with self.uow:
+                auth_user = await self.uow.auth_repo.get_by_id(user_id)
+                if not auth_user:
+                    logger.error("Email change failed: no auth account for user_id=%s", user_id)
+                    return Result.failure(Error.not_found(
+                        entity="User",
+                        entity_id=str(user_id),
+                        reason=ErrorReason.RESOURCE_NOT_FOUND,
+                    ))
+
+                if new_email == auth_user.email:
+                    return Result.failure(Error.validation_error(
+                        message="Email change: new email equals current email",
+                        reason=ErrorReason.SAME_EMAIL,
+                    ))
+
+                # Uniqueness pre-check — clean 409, never a DB IntegrityError/500.
+                if await _email_in_use(self.uow, new_email):
+                    logger.info("Email change rejected: %s already in use", new_email)
+                    return Result.failure(Error.conflict(
+                        message="Email change: address already in use",
+                        reason=ErrorReason.EMAIL_ALREADY_EXISTS,
+                    ))
+
+                auth_user.set_email_change_code(new_email, code_hash)
+                await self.uow.auth_repo.save(auth_user)
+                # No live email touched — only pending_email + code persisted.
+
+            # 3) Send the code to the NEW address (post-commit, best-effort).
+            try:
+                await self.email_service.send_verification_email(
+                    to_email=new_email,
+                    code=raw_code,
+                )
+            except Exception:
+                logger.exception("Email change: failed to send code to %s", new_email)
+
+            return Result.success({
+                "message": "A verification code was sent to your new address."
+            })
+
+        except Exception:
+            logger.exception("CRITICAL: Request email change failed unexpectedly")
+            return Result.failure(Error.system_error(
+                message="Request email change: unexpected error",
+            ))
+
+
+@dataclass
+class ConfirmEmailChangeUseCase:
+    """
+    Confirms an email change: verifies the code (expiry + attempt limits), then in a
+    single transaction updates users.email, auth_users.email and user_subscriptions.email
+    and clears pending_email. After commit, syncs Stripe and notifies the old address.
+    """
+    uow: UnitOfWork
+    password_service: PasswordServicePort
+    payment_port: PaymentPort
+    email_service: EmailServicePort
+
+    async def execute(self, request: ConfirmEmailChangeRequest) -> Result:
+        try:
+            params = request.to_execution_params()
+            user_id = params["user_id"]
+            code = params["code"]
+
+            old_email = None
+            new_email = None
+            stripe_customer_id = None
+            updated_user = None
+
+            async with self.uow:
+                auth_user = await self.uow.auth_repo.get_by_id(user_id)
+                if not auth_user:
+                    logger.error("Confirm email change failed: no auth account for user_id=%s", user_id)
+                    return Result.failure(Error.not_found(
+                        entity="User",
+                        entity_id=str(user_id),
+                        reason=ErrorReason.RESOURCE_NOT_FOUND,
+                    ))
+
+                if not auth_user.has_pending_email_change():
+                    logger.info("Confirm email change: no pending/expired change for user_id=%s", user_id)
+                    return Result.failure(Error.unauthorized(
+                        message="Confirm email change: no pending or expired code",
+                        reason=ErrorReason.EXPIRED_CODE,
+                    ))
+
+                if auth_user.has_exceeded_attempts():
+                    auth_user.clear_email_change()
+                    await self.uow.auth_repo.save(auth_user)
+                    logger.warning("Confirm email change: too many attempts user_id=%s", user_id)
+                    return Result.failure(Error.unauthorized(
+                        message="Confirm email change: exceeded attempts",
+                        reason=ErrorReason.TOO_MANY_ATTEMPTS,
+                    ))
+
+                if not self.password_service.verify(code, auth_user.verification_code_hash):
+                    auth_user.register_failed_attempt()
+                    if auth_user.has_exceeded_attempts():
+                        auth_user.clear_email_change()
+                        await self.uow.auth_repo.save(auth_user)
+                        logger.warning("Confirm email change: too many attempts (final) user_id=%s", user_id)
+                        return Result.failure(Error.unauthorized(
+                            message="Confirm email change: exceeded attempts after wrong code",
+                            reason=ErrorReason.TOO_MANY_ATTEMPTS,
+                        ))
+                    await self.uow.auth_repo.save(auth_user)
+                    logger.info("Confirm email change: wrong code user_id=%s", user_id)
+                    return Result.failure(Error.unauthorized(
+                        message="Confirm email change: code mismatch",
+                        reason=ErrorReason.INVALID_CODE,
+                    ))
+
+                pending = auth_user.pending_email
+
+                # Race guard: the address may have been claimed between request and confirm.
+                if await _email_in_use(self.uow, pending):
+                    logger.info("Confirm email change rejected: %s now in use", pending)
+                    return Result.failure(Error.conflict(
+                        message="Confirm email change: address already in use",
+                        reason=ErrorReason.EMAIL_ALREADY_EXISTS,
+                    ))
+
+                old_email = auth_user.email
+
+                # Load the subscription before mutating so we have the Stripe id post-commit.
+                subscription = await self.uow.subscription_repo.get_by_user_id(str(user_id))
+
+                # --- Atomic three-table update ---
+                new_email = auth_user.apply_email_change()
+                await self.uow.auth_repo.save(auth_user)
+                updated_user = await self.uow.user_repo.update(user_id, {"email": new_email})
+                if subscription is not None:
+                    subscription.email = new_email
+                    await self.uow.subscription_repo.save(subscription)
+                    stripe_customer_id = subscription.stripe_customer_id
+                # Commit on context exit — all-or-nothing.
+
+            # --- Post-commit side effects (must NOT roll back the DB change) ---
+            if stripe_customer_id:
+                try:
+                    await self.payment_port.update_customer_email(stripe_customer_id, new_email)
+                except Exception:
+                    logger.exception(
+                        "Confirm email change: Stripe sync failed for customer %s", stripe_customer_id
+                    )
+
+            try:
+                await self.email_service.send_email_changed_notification(
+                    to_email=old_email,
+                    new_email=new_email,
+                )
+            except Exception:
+                logger.exception("Confirm email change: failed to notify old address %s", old_email)
+
+            return Result.success(UserResponse.from_entity(updated_user))
+
+        except Exception:
+            logger.exception("CRITICAL: Confirm email change failed unexpectedly")
+            return Result.failure(Error.system_error(
+                message="Confirm email change: unexpected error",
             ))

@@ -56,6 +56,8 @@ from auto_apply_app.application.use_cases.user_use_cases import (
     ConfirmPasswordResetUseCase,
     ResendVerificationEmailUseCase,
     VerifyCodeUseCase,  # CHANGED: was VerifyEmailUseCase
+    RequestEmailChangeUseCase,
+    ConfirmEmailChangeUseCase,
 )
 from auto_apply_app.application.use_cases.agent_use_cases import (
     ApproveJobUseCase,
@@ -263,6 +265,18 @@ class Application:
                 email_service=self.email_service_port,
                 rate_limiter=self.rate_limiter,          # NEW: Redis-backed cooldown
                 # token_provider removed — codes don't use JWTs.
+            ),
+            request_email_change_use_case=RequestEmailChangeUseCase(
+                uow=uow,
+                password_service=self.password_service,
+                email_service=self.email_service_port,
+                rate_limiter=self.rate_limiter,
+            ),
+            confirm_email_change_use_case=ConfirmEmailChangeUseCase(
+                uow=uow,
+                password_service=self.password_service,
+                payment_port=self.payment_port,
+                email_service=self.email_service_port,
             ),
             presenter=self.user_presenter,
         )

@@ -13,6 +13,8 @@ from auto_apply_app.application.use_cases.user_use_cases import (
     ConfirmPasswordResetUseCase,
     VerifyCodeUseCase,
     ResendVerificationEmailUseCase,
+    RequestEmailChangeUseCase,
+    ConfirmEmailChangeUseCase,
 )
 
 from auto_apply_app.application.dtos.auth_user_dtos import (
@@ -23,6 +25,8 @@ from auto_apply_app.application.dtos.auth_user_dtos import (
     ChangePasswordRequest,
     ForgotPasswordRequest,
     ResetPasswordRequest,
+    RequestEmailChangeRequest,
+    ConfirmEmailChangeRequest,
 )
 
 
@@ -36,6 +40,8 @@ class AuthController:
     resend_verification_use_case: ResendVerificationEmailUseCase
     request_password_reset_use_case: RequestPasswordResetUseCase
     confirm_password_reset_use_case: ConfirmPasswordResetUseCase
+    request_email_change_use_case: RequestEmailChangeUseCase
+    confirm_email_change_use_case: ConfirmEmailChangeUseCase
     presenter: UserPresenter
 
     async def handle_register(
@@ -161,6 +167,48 @@ class AuthController:
 
             if result.is_success:
                 view_model = self.presenter.present_message(result.value)
+                return OperationResult.succeed(value=view_model)
+
+            return self._present_error(result)
+
+        except ValueError as e:
+            return self._present_validation_exception(e)
+
+    # --- Email Change (verification-gated) ---
+
+    async def handle_request_email_change(
+        self,
+        user_id: str,
+        new_email: EmailStr,
+    ) -> OperationResult:
+        try:
+            request = RequestEmailChangeRequest(user_id=user_id, new_email=new_email)
+            result = await self.request_email_change_use_case.execute(request)
+
+            if result.is_success:
+                view_model = self.presenter.present_message(result.value)
+                return OperationResult.succeed(value=view_model)
+
+            return self._present_error(result)
+
+        except ValueError as e:
+            return self._present_validation_exception(e)
+
+    async def handle_confirm_email_change(
+        self,
+        user_id: str,
+        code: str,
+    ) -> OperationResult:
+        """
+        On success the use case returns the updated user (UserResponse) so the
+        frontend can refresh its context with the new email.
+        """
+        try:
+            request = ConfirmEmailChangeRequest(user_id=user_id, code=code)
+            result = await self.confirm_email_change_use_case.execute(request)
+
+            if result.is_success:
+                view_model = self.presenter.present_user(result.value)
                 return OperationResult.succeed(value=view_model)
 
             return self._present_error(result)

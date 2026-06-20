@@ -93,3 +93,31 @@ class ResendEmailService(EmailServicePort):
             subject=f"Votre code de vérification : {code}",
             html_content=html_content,
         )
+
+    async def send_email_changed_notification(self, to_email: str, new_email: str) -> None:
+        """
+        Security notice sent to the OLD address after the account email is changed,
+        so a legitimate owner can react if the change wasn't them.
+        """
+        html_content = f"""
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1a1a1a;">
+            <h2 style="margin-bottom: 16px;">Votre adresse e-mail a été modifiée</h2>
+            <p>Bonjour,</p>
+            <p>
+                L'adresse e-mail associée à votre compte AutoPostule vient d'être changée pour
+                <strong>{new_email}</strong>.
+            </p>
+            <p>
+                Si vous êtes à l'origine de cette modification, aucune action n'est requise.
+            </p>
+            <p style="color: #b00020; font-weight: bold; margin-top: 24px;">
+                Si vous n'avez pas effectué ce changement, contactez immédiatement notre support
+                pour sécuriser votre compte.
+            </p>
+        </div>
+        """
+        await self._send(
+            to_email=to_email,
+            subject="Votre adresse e-mail AutoPostule a été modifiée",
+            html_content=html_content,
+        )

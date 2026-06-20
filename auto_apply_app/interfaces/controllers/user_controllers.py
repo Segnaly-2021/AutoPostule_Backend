@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 from typing import Optional
-from pydantic import EmailStr
 
 from auto_apply_app.interfaces.viewmodels.base import OperationResult
 from auto_apply_app.application.common.result import Result
@@ -46,11 +45,10 @@ class UserController:
             return self._present_validation_exception(e)
 
     async def handle_update(
-        self, 
+        self,
         user_id: str,
         fname: Optional[str] = None,
         lname: Optional[str] = None,
-        email: Optional[EmailStr] = None,
         current_position: Optional[str] = None,
         current_company: Optional[str] = None,
         address: Optional[str] = None,
@@ -67,7 +65,6 @@ class UserController:
                 user_id=user_id,
                 user_firstname=fname,
                 user_lastname=lname,
-                user_email=email,
                 user_address=address,
                 user_resume_dir=resume_path,
                 user_current_position=current_position,

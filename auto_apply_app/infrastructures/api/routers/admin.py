@@ -108,12 +108,13 @@ async def update_user_profile(
     # ✅ AUTHORIZATION CHECK: Ensure user can only update their own data
     authorize_user_access(user_id, current_user_id)
     
+    # NOTE: email is intentionally not updatable here — it goes through the
+    # verification-gated flow (/request-email-change + /confirm-email-change).
     result = await user_controller.handle_update(
         user_id=user_id,
         fname=data.firstname,
         lname=data.lastname,
-        email=data.email,
-        resume_dir=data.resume_dir,
+        resume_path=data.resume_path,
         phone_number=data.phone_number
     )
     return handle_result(result)

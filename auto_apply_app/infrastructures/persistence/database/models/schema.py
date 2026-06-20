@@ -97,7 +97,12 @@ class AuthUserDB(Base):
         nullable=True,
     )
     verification_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
- 
+
+    # --- Pending email change (verification-gated) ---
+    # Not unique: transient, not the source of truth. Uniqueness is enforced by
+    # the live email columns + the pre-check in RequestEmailChangeUseCase.
+    pending_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
     user: Mapped["UserDB"] = relationship("UserDB", back_populates="auth_account")
 
 

@@ -33,6 +33,14 @@ class PaymentPort(ABC):
         pass
 
     @abstractmethod
+    async def update_customer_email(self, stripe_customer_id: str, email: str) -> None:
+        """
+        Syncs the customer's email with the payment provider. Called post-commit:
+        a provider failure must NOT roll back a successful DB email change.
+        """
+        pass
+
+    @abstractmethod
     def parse_webhook_event(self, payload: bytes, sig_header: str) -> Dict[str, Any]:
         """
         Verifies the authenticity of the provider's webhook and returns

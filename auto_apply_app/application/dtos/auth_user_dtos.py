@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import Dict
+from uuid import UUID
 from pydantic import EmailStr
 
 
@@ -160,4 +161,52 @@ class ResendVerificationRequest:
  
     def to_execution_params(self) -> Dict:
         return {"email": self.email.lower().strip()}
- 
+
+
+@dataclass(frozen=True)
+class RequestEmailChangeRequest:
+    """
+    Data carrier for initiating an email change. user_id comes from the
+    authenticated session; new_email is the address to verify.
+    """
+    user_id: str
+    new_email: str
+
+    def __post_init__(self) -> None:
+        if not self.user_id:
+            raise ValueError("User ID is required")
+
+        if not self.new_email or "@" not in self.new_email:
+            raise ValueError("A valid email is required")
+
+    def to_execution_params(self) -> Dict:
+        return {
+            "user_id": UUID(self.user_id),
+            "new_email": self.new_email.lower().strip(),
+        }
+
+
+@dataclass(frozen=True)
+class ConfirmEmailChangeRequest:
+    """
+    Data carrier for confirming an email change with the 6-digit code sent
+    to the new address. user_id comes from the authenticated session.
+    """
+    user_id: str
+    code: str
+
+    def __post_init__(self) -> None:
+        if not self.user_id:
+            raise ValueError("User ID is required")
+
+        if not self.code:
+            raise ValueError("Code is required")
+
+        if len(self.code) != 6 or not self.code.isdigit():
+            raise ValueError("Code must be exactly 6 digits")
+
+    def to_execution_params(self) -> Dict:
+        return {
+            "user_id": UUID(self.user_id),
+            "code": self.code,
+        }

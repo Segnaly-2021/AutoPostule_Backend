@@ -37,6 +37,9 @@ class ErrorReason(Enum):
     TOO_MANY_ATTEMPTS = "too_many_attempts"
     EMAIL_ALREADY_EXISTS = "email_already_exists"
 
+    # Email change
+    SAME_EMAIL = "same_email"  # new email == current email
+
     # Login
     INVALID_CREDENTIALS = "invalid_credentials"
     EMAIL_NOT_VERIFIED = "email_not_verified"

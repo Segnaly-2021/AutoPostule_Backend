@@ -11,3 +11,8 @@ class EmailServicePort(ABC):
     async def send_verification_email(self, to_email: str, verification_token: str) -> None:
         """Sends an email containing the email-verification link."""
         pass
+
+    @abstractmethod
+    async def send_email_changed_notification(self, to_email: str, new_email: str) -> None:
+        """Notifies the OLD address that the account email was changed (security notice)."""
+        pass

@@ -1,9 +1,12 @@
 import stripe
+import logging
 from typing import Any, Dict, Optional
 from uuid import UUID
 import os
 
 from auto_apply_app.application.service_ports.payment_port import PaymentPort
+
+logger = logging.getLogger(__name__)
 
 
 class StripePaymentAdapter(PaymentPort):
@@ -64,6 +67,16 @@ class StripePaymentAdapter(PaymentPort):
             return_url=self.return_url,
         )
         return session.url
+
+    async def update_customer_email(self, stripe_customer_id: str, email: str) -> None:
+        """
+        Syncs the Stripe customer's email. Best-effort: any Stripe failure is
+        logged and swallowed so it can never roll back a committed DB change.
+        """
+        try:
+            stripe.Customer.modify(stripe_customer_id, email=email)
+        except Exception:
+            logger.exception("Stripe customer email sync failed for %s", stripe_customer_id)
 
     def parse_webhook_event(self, payload: bytes, sig_header: str) -> Dict[str, Any]:
         """

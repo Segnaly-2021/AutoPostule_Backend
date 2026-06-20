@@ -82,11 +82,26 @@ class ResendVerificationSchema(BaseModel):
     """
     email: EmailStr
 
+
+# --- Email Change (verification-gated) ---
+class RequestEmailChangeSchema(BaseModel):
+    """Body for POST /request-email-change."""
+    new_email: EmailStr
+
+
+class ConfirmEmailChangeSchema(BaseModel):
+    """Body for POST /confirm-email-change."""
+    code: str = Field(..., min_length=6, max_length=6, pattern=r"^\d{6}$")
+
+
 class UserUpdateSchema(BaseModel):
-    """Schema for partial updates to the user profile."""
+    """Schema for partial updates to the user profile.
+
+    NOTE: `email` is intentionally absent — email changes go through the
+    verification-gated flow (/request-email-change + /confirm-email-change).
+    """
     firstname: Optional[str] = Field(None, min_length=0, max_length=50)
     lastname: Optional[str] = Field(None, min_length=0, max_length=50)
-    email: Optional[EmailStr] = None
     resume_path: Optional[str] = None
     current_position: Optional[str] = None
     current_company: Optional[str] = None

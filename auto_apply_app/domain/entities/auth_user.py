@@ -30,6 +30,9 @@ class AuthUser(Entity):
     verification_code_expires_at: Optional[datetime] = None
     verification_attempts: int = 0
 
+    # --- Pending email change (verification-gated) ---
+    pending_email: Optional[str] = None
+
     def change_password(self, new_password_hash: str) -> None:
         self.password_hash = new_password_hash
         self.updated_at = datetime.now(timezone.utc)
@@ -87,6 +90,51 @@ class AuthUser(Entity):
 
     def clear_verification_code(self) -> None:
         """Invalidate the current code without verifying. Used when attempts are exceeded."""
+        self.verification_code_hash = None
+        self.verification_code_expires_at = None
+        self.verification_attempts = 0
+        self.updated_at = datetime.now(timezone.utc)
+
+    # ------------------------------------------------------------------
+    # Email change (verification-gated)
+    #
+    # Reuses the verification_code_* columns. Safe to share with registration
+    # verification: an email change only happens on an already-verified account
+    # (is_verified == True), while registration verification only runs while
+    # is_verified == False — the two states are mutually exclusive.
+    # ------------------------------------------------------------------
+
+    def set_email_change_code(self, new_email: str, code_hash: str) -> None:
+        """Stage a pending email change and issue a verification code for it."""
+        self.pending_email = new_email
+        self.verification_code_hash = code_hash
+        self.verification_code_expires_at = (
+            datetime.now(timezone.utc) + timedelta(minutes=VERIFICATION_CODE_TTL_MINUTES)
+        )
+        self.verification_attempts = 0
+        self.updated_at = datetime.now(timezone.utc)
+
+    def has_pending_email_change(self) -> bool:
+        return (
+            self.pending_email is not None
+            and self.verification_code_hash is not None
+            and not self.is_verification_code_expired()
+        )
+
+    def apply_email_change(self) -> str:
+        """Promote pending_email to the live email and clear all code state. Returns the new email."""
+        new_email = self.pending_email
+        self.email = new_email
+        self.pending_email = None
+        self.verification_code_hash = None
+        self.verification_code_expires_at = None
+        self.verification_attempts = 0
+        self.updated_at = datetime.now(timezone.utc)
+        return new_email
+
+    def clear_email_change(self) -> None:
+        """Abort a pending email change (e.g. when attempts are exceeded)."""
+        self.pending_email = None
         self.verification_code_hash = None
         self.verification_code_expires_at = None
         self.verification_attempts = 0

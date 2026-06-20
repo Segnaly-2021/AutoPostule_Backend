@@ -55,7 +55,9 @@ class UpdateUserRequest:
     user_id: str
     user_firstname: str = None
     user_lastname: str = None
-    user_email: EmailStr = None
+    # NOTE: email is intentionally NOT updatable here. Email changes go through the
+    # verification-gated flow (Request/ConfirmEmailChangeUseCase) so the three email
+    # columns + Stripe stay in sync. This DTO handles simple profile fields only.
     user_address: Optional[str] = None  # <-- NEW FIELD
     user_current_position: str = None
     user_current_company: str = None
@@ -86,8 +88,6 @@ class UpdateUserRequest:
             params["firstname"] = self.user_firstname.strip()
         if self.user_lastname is not None:
             params["lastname"] = self.user_lastname.strip()
-        if self.user_email is not None:
-            params["email"] = self.user_email 
         if self.user_address is not None:  # <-- NEW MAPPING
             params["address"] = self.user_address 
         if self.user_resume_dir is not None:
