@@ -144,7 +144,7 @@ class UserController:
             err.message,
             str(err.code.name),
             reason,
-        )
+    )
         return OperationResult.fail(
             error_vm.message,
             error_vm.code,

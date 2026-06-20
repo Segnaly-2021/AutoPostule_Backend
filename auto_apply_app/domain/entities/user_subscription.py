@@ -71,10 +71,10 @@ class UserSubscription(Entity):
     def daily_limit(self) -> int:
         """Logic for limits lives here."""
         if self.account_type == ClientType.PREMIUM:
-            return 50
+            return 25
         if self.account_type == ClientType.BASIC:
-            return 15 
-        
+            return 10
+
         return 0 # FREE users
     
 
@@ -85,13 +85,13 @@ class UserSubscription(Entity):
         Logic for AI generation limits per billing cycle (Cost Control).
         Includes a buffer of bonus credits for unsubmitted generations.
         """
-        # Premium: Monthly (30 days) * (50 limit + 10 bonus) = 1800 credits
+        # Premium: Monthly (30 days) * (25 limit + 10 bonus) = 1050 credits
         if self.account_type == ClientType.PREMIUM:
-            return 1800
-            
-        # Basic: Weekly (7 days) * (15 limit + 3 bonus) = 126 credits
+            return 1050
+
+        # Basic: Monthly (30 days) * (10 limit + 3 bonus) = 390 credits
         if self.account_type == ClientType.BASIC:
-            return 126
+            return 390
             
         return 0
 

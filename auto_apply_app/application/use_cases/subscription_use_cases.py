@@ -192,9 +192,9 @@ class HandlePaymentWebhookUseCase:
                 if not account_type:                        
                     amount_paid = data.get("amount_total") 
                     
-                    if amount_paid == 990:          # €9.90 Basic Plan
+                    if amount_paid == 2000:         # €20 Basic Plan
                         account_type = "BASIC"
-                    elif amount_paid == 4990:       # €49.90 Premium Plan
+                    elif amount_paid == 3500:       # €35 Premium Plan
                         account_type = "PREMIUM"
 
                 subscription.account_type = ClientType(account_type)                    

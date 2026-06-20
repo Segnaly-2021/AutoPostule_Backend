@@ -173,8 +173,19 @@ class AuthController:
     def _present_error(self, result: Result) -> OperationResult:
         err = result.error
         reason = err.reason.value if err.reason else None
-        error_vm = self.presenter.present_error(err.message, str(err.code.name), reason)
-        return OperationResult.fail(error_vm.message, error_vm.code, error_vm.reason, details=err.details)
+        error_vm = self.presenter.present_error(
+            err.message,
+            str(err.code.name),
+            reason,
+        )
+        # `details` comes straight from the domain Error (carries e.g. retry_after),
+        # not from the presenter — so the 3-arg present_error stays untouched.
+        return OperationResult.fail(
+            error_vm.message,
+            error_vm.code,
+            error_vm.reason,
+            details=err.details,
+        )
 
     def _present_validation_exception(self, e: ValueError) -> OperationResult:
         error_vm = self.presenter.present_error(str(e), "VALIDATION_ERROR")

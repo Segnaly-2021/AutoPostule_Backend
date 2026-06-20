@@ -421,7 +421,7 @@ class SaveJobApplicationsUseCase:
             
             async with self.uow as uow:
                 for offer in offers:                
-                    if not offer.application_date and offer.status in [ApplicationStatus.SUBMITTED]:
+                    if offer.application_date and offer.status ==ApplicationStatus.SUBMITTED:
                         offer.application_date = datetime.now(timezone.utc)
                         offer.followup_date = offer.application_date + timedelta(days=7) 
                         

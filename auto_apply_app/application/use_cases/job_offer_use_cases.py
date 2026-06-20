@@ -72,15 +72,13 @@ class ToggleResponseStatusUseCase:
                 # We use the specific repo method you defined
                 job = await self.uow.job_repo.update_response_status(
                     job_id=request.job_offer_id,
-                    has_response=request.status
+                    has_response=request.has_response,
                 )
                 
-                # Commit the transaction (if the repo method doesn't auto-commit)
-                # In strict UoW patterns, changes are only persisted on exit/commit
-                
+                await self.uow.commit()
                 return Result.success({
                     "id": job.id,
-                    "has_response": request.status
+                    "has_response": job.has_response,
                 })
                 
         except JobNotFoundError:
@@ -99,13 +97,13 @@ class ToggleInterviewStatusUseCase:
             async with self.uow:
                 job = await self.uow.job_repo.update_interview_status(
                     job_id=request.job_offer_id,
-                    has_interview=request.status
+                    has_interview=request.has_interview                    
                 )
                 await self.uow.commit()
                 
                 return Result.success({
                     "id": job.id,
-                    "has_interview": request.status
+                    "has_interview": job.has_interview
                 })
                 
         except JobNotFoundError:

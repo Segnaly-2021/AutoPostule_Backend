@@ -141,7 +141,9 @@ class GetUserApplicationsRequest:
 @dataclass(frozen=True)
 class ToggleStatusRequest:
     job_offer_id: str
-    status: bool
+    has_response: bool
+    has_interview: bool
+    
 
 @dataclass(frozen=True)
 class GetAnalyticsRequest:
