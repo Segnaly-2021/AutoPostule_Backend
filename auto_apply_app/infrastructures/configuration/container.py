@@ -224,7 +224,7 @@ class Application:
         return UserController(
             get_user_use_case=GetUserUseCase(uow),
             update_user_use_case=UpdateUserUseCase(uow),
-            delete_user_use_case=DeleteUserUseCase(uow),
+            delete_user_use_case=DeleteUserUseCase(uow, self.file_storage_port),
             upload_resume_use_case=UploadUserResumeUseCase(uow, self.file_storage_port),
             presenter=self.user_presenter,
         )
