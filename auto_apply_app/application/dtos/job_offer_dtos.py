@@ -138,12 +138,14 @@ class GetUserApplicationsRequest:
             "pagination": {"page": self.page, "limit": self.limit}
         }
 
+
+# The DTO
 @dataclass(frozen=True)
 class ToggleStatusRequest:
     job_offer_id: str
-    has_response: bool
-    has_interview: bool
-    
+    has_response: Optional[bool] = None
+    has_interview: Optional[bool] = None
+
 
 @dataclass(frozen=True)
 class GetAnalyticsRequest:
