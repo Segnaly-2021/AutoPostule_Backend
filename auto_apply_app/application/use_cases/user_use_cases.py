@@ -543,18 +543,39 @@ class UpdateUserUseCase:
             ))
 
 
-
 @dataclass
 class DeleteUserUseCase:
     """Use case for deleting a user"""
     uow: UnitOfWork
+    storage_port: FileStoragePort  # ← inject the storage port
 
     async def execute(self, request: GetUserRequest) -> Result:
         params = {}
         try:
             async with self.uow as uow:
                 params = request.to_execution_params()
-                await uow.user_repo.delete(params["user_id"])
+                user_id = params["user_id"]
+
+                # Capture the resume path BEFORE deleting the row
+                user = await uow.user_repo.get(user_id)
+                if not user:
+                    raise UserNotFoundError()
+                resume_path = user.resume_path
+
+                await uow.user_repo.delete(user_id)
+
+            # DB delete committed successfully — now remove the physical file.
+            if resume_path:
+                try:
+                    await self.storage_port.delete_file(resume_path)
+                except Exception:
+                    # Don't fail the whole deletion if file cleanup fails;
+                    # log it so it can be reconciled.
+                    logger.exception(
+                        "User row deleted but resume file cleanup failed for user_id=%s path=%s",
+                        user_id, resume_path,
+                    )
+
             return Result.success(DeletionOutcome(params["user_id"]))
 
         except UserNotFoundError:
@@ -569,6 +590,8 @@ class DeleteUserUseCase:
             return Result.failure(Error.system_error(
                 message="Delete user: unexpected error",
             ))
+
+
 
 @dataclass
 class VerifyCodeUseCase:

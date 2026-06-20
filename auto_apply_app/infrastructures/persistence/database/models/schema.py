@@ -37,29 +37,32 @@ class UserDB(Base):
 
     # Relationships
     subscription: Mapped["UserSubscriptionDB"] = relationship(
-        "UserSubscriptionDB", back_populates="user", uselist=False
+        "UserSubscriptionDB", back_populates="user", uselist=False,
+        cascade="all, delete-orphan", passive_deletes=True,
     )
     auth_account: Mapped["AuthUserDB"] = relationship(
-        "AuthUserDB", back_populates="user", uselist=False
+        "AuthUserDB", back_populates="user", uselist=False,
+        cascade="all, delete-orphan", passive_deletes=True,
     )
     preferences: Mapped["UserPreferencesDB"] = relationship(
-        "UserPreferencesDB", back_populates="user", uselist=False
+        "UserPreferencesDB", back_populates="user", uselist=False,
+        cascade="all, delete-orphan", passive_deletes=True,
     )
     board_credentials: Mapped[List["BoardCredentialDB"]] = relationship(
-        "BoardCredentialDB", back_populates="user"
+        "BoardCredentialDB", back_populates="user",
+        cascade="all, delete-orphan", passive_deletes=True,
     )
     job_offers: Mapped[List["JobOfferDB"]] = relationship(
-        "JobOfferDB", back_populates="user", cascade="all, delete-orphan"
+        "JobOfferDB", back_populates="user",
+        cascade="all, delete-orphan", passive_deletes=True,
     )
     agent_states: Mapped[List["AgentStateDB"]] = relationship(
-        "AgentStateDB",
-        back_populates="user",
-        cascade="all, delete-orphan",
+        "AgentStateDB", back_populates="user",
+        cascade="all, delete-orphan", passive_deletes=True,
     )
-
-     # 🚨 ADD THIS:
     fingerprint: Mapped[Optional["UserFingerprintDB"]] = relationship(
-        "UserFingerprintDB", back_populates="user", uselist=False, cascade="all, delete-orphan"
+        "UserFingerprintDB", back_populates="user", uselist=False,
+        cascade="all, delete-orphan", passive_deletes=True,
     )
 
  
