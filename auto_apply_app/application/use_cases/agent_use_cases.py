@@ -91,14 +91,14 @@ class StartJobSearchAgentUseCase:
                         Error.unauthorized("Subscription invalid or expired")
                     )
 
-                # # 3. NEW: Daily quota + cooldown check (atomic with usage row)
-                # usage = await uow.agent_usage_repo.get_or_create_for_today(user.id)
-                # allowed, reason = usage.can_start_run(
-                #     daily_limit=subscription.agent_daily_limit,
-                #     base_cooldown_minutes=subscription.agent_cooldown_base_minutes,
-                # )
-                # if not allowed:
-                #     return Result.failure(Error.too_many_requests(reason))
+                # 3. NEW: Daily quota + cooldown check (atomic with usage row)
+                usage = await uow.agent_usage_repo.get_or_create_for_today(user.id)
+                allowed, reason = usage.can_start_run(
+                    daily_limit=subscription.agent_daily_limit,
+                    base_cooldown_minutes=subscription.agent_cooldown_base_minutes,
+                )
+                if not allowed:
+                    return Result.failure(Error.too_many_requests(reason))
 
                 # 4. Fetch User Preferences
                 preferences = await uow.user_pref_repo.get_by_user_id(user.id)
