@@ -23,6 +23,7 @@ from auto_apply_app.domain.entities.user_preferences import UserPreferences
 
 # 2. Imports from Infrastructure
 from auto_apply_app.infrastructures.agent.state import JobApplicationState
+from auto_apply_app.infrastructures.agent.stage_codes import StageCode
 from auto_apply_app.application.use_cases.agent_state_use_cases import IsAgentKilledForSearchUseCase
 from auto_apply_app.application.service_ports.encryption_port import EncryptionServicePort
 from auto_apply_app.application.service_ports.file_storage_port import FileStoragePort
@@ -101,6 +102,7 @@ class WelcomeToTheJungleWorker:
         status: str = "in_progress",
         error: str = None,
         error_code: str = None,
+        stage_code: str = None,
     ):
         if not self._progress_callback:
             return
@@ -109,6 +111,7 @@ class WelcomeToTheJungleWorker:
             await self._progress_callback({
                 "source": self._source_name.upper(),
                 "stage": stage,
+                "stage_code": stage_code,
                 "node": self._source_name.lower(),
                 "status": "error" if error else status,
                 "error": error,
@@ -653,7 +656,7 @@ class WelcomeToTheJungleWorker:
     # =========================================================================
 
     async def start_session(self, state: JobApplicationState):
-        await self._emit(state, "Initializing Browser")
+        await self._emit(state, "Initializing Browser", stage_code=StageCode.INITIALIZING_BROWSER)
         logger.info("[WTTJ] Starting session")
         self._uid = str(state["user"].id)
         self._plog("NODE start_session -> launching stealth browser (SCRAPE track)")
@@ -705,7 +708,7 @@ class WelcomeToTheJungleWorker:
             return {"error": "Failed to start the secure browsing session.", "error_code": "BROWSER_START_FAILED"}
 
     async def start_session_with_auth(self, state: JobApplicationState):
-        await self._emit(state, "Initializing Secure Browser")
+        await self._emit(state, "Initializing Secure Browser", stage_code=StageCode.INITIALIZING_BROWSER)
         logger.info("[WTTJ] Booting browser (session injection)")
         user_id = str(state["user"].id)
         self._uid = user_id
@@ -823,7 +826,7 @@ class WelcomeToTheJungleWorker:
             return {"error": "Failed to initialize WTTJ browser with session.", "error_code": "BROWSER_AUTH_FAILED"}
 
     async def go_to_job_board(self, state: JobApplicationState):
-        await self._emit(state, "Navigating to Job Board")
+        await self._emit(state, "Navigating to Job Board", stage_code=StageCode.NAVIGATING)
         logger.info("[WTTJ] Navigating")
         self._plog("NODE go_to_job_board -> navigating to welcometothejungle.com")
         try:
@@ -851,7 +854,7 @@ class WelcomeToTheJungleWorker:
             return {"error": "Navigation failed.", "error_code": "JOB_BOARD_UNAVAILABLE"}
 
     async def request_login(self, state: JobApplicationState):
-        await self._emit(state, "Authenticating")
+        await self._emit(state, "Authenticating", stage_code=StageCode.AUTHENTICATING)
 
         prefs = state["preferences"]
         creds = state.get("credentials")
@@ -978,7 +981,7 @@ class WelcomeToTheJungleWorker:
                 return {"error": "Manual login timed out.", "error_code": "LOGIN_TIMEOUT"}
 
     async def search_jobs(self, state: JobApplicationState):
-        await self._emit(state, "Searching for Jobs")
+        await self._emit(state, "Searching for Jobs", stage_code=StageCode.SEARCHING)
 
         user = state["user"]
         search_entity = state["job_search"]
@@ -1040,7 +1043,7 @@ class WelcomeToTheJungleWorker:
 
 
     async def get_matched_jobs(self, state: JobApplicationState):
-        await self._emit(state, "Extracting Job Data")
+        await self._emit(state, "Extracting Job Data", stage_code=StageCode.EXTRACTING_DATA)
         logger.info("[WTTJ] Scraping jobs")
 
         user_id = state["user"].id
@@ -1473,7 +1476,7 @@ class WelcomeToTheJungleWorker:
             return {}
 
     async def submit_applications(self, state: JobApplicationState):
-        await self._emit(state, "Submitting Applications")
+        await self._emit(state, "Submitting Applications", stage_code=StageCode.SUBMITTING)
         logger.info("[WTTJ] Submitting applications")
 
         jobs_to_process = state.get("processed_offers", [])
@@ -1648,7 +1651,7 @@ class WelcomeToTheJungleWorker:
         return {"submitted_offers": successful_submissions}
 
     async def cleanup(self, state: JobApplicationState):
-        await self._emit(state, "Cleaning Up")
+        await self._emit(state, "Cleaning Up", stage_code=StageCode.CLEANING_UP)
         self._plog("NODE cleanup -> closing browser session")
         await self.force_cleanup()
 

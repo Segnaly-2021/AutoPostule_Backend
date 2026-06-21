@@ -18,6 +18,7 @@ from auto_apply_app.domain.entities.user_preferences import UserPreferences
 
 # 2. Imports from Infrastructure
 from auto_apply_app.infrastructures.agent.state import JobApplicationState
+from auto_apply_app.infrastructures.agent.stage_codes import StageCode
 from auto_apply_app.application.use_cases.agent_state_use_cases import IsAgentKilledForSearchUseCase
 from auto_apply_app.application.service_ports.encryption_port import EncryptionServicePort
 from auto_apply_app.application.service_ports.file_storage_port import FileStoragePort
@@ -93,6 +94,7 @@ class JobTeaserWorker:
         status: str = "in_progress",
         error: str = None,
         error_code: str = None,
+        stage_code: str = None,
     ):
         if not self._progress_callback:
             return
@@ -101,6 +103,7 @@ class JobTeaserWorker:
             await self._progress_callback({
                 "source": self._source_name.upper(),
                 "stage": stage,
+                "stage_code": stage_code,
                 "node": self._source_name.lower(),
                 "status": "error" if error else status,
                 "error": error,
@@ -524,7 +527,7 @@ class JobTeaserWorker:
     # =========================================================================
 
     async def start_session(self, state: JobApplicationState):
-        await self._emit(state, "Initializing Browser")
+        await self._emit(state, "Initializing Browser", stage_code=StageCode.INITIALIZING_BROWSER)
         logger.info("[JOBTEASER] Starting session")
         self._uid = str(state["user"].id)
         self._plog("NODE start_session -> launching browser (SCRAPE track, no stealth/fingerprint)")
@@ -574,7 +577,7 @@ class JobTeaserWorker:
             return {"error": "Failed to start the secure browsing session.", "error_code": "BROWSER_START_FAILED"}
 
     async def start_session_with_auth(self, state: JobApplicationState):
-        await self._emit(state, "Initializing Secure Browser")
+        await self._emit(state, "Initializing Secure Browser", stage_code=StageCode.INITIALIZING_BROWSER)
         logger.info("[JOBTEASER] Booting browser (session injection)")
         self._uid = str(state["user"].id)
         self._plog("NODE start_session_with_auth -> booting browser (SUBMIT track)")
@@ -706,7 +709,7 @@ class JobTeaserWorker:
             return {"error": "Failed to initialize JobTeaser browser with session.", "error_code": "BROWSER_AUTH_FAILED"}
 
     async def go_to_job_board(self, state: JobApplicationState):
-        await self._emit(state, "Navigating to Job Board")
+        await self._emit(state, "Navigating to Job Board", stage_code=StageCode.NAVIGATING)
         logger.info("[JOBTEASER] Navigating")
         self._plog("NODE go_to_job_board -> navigating to jobteaser.com")
         try:
@@ -737,7 +740,7 @@ class JobTeaserWorker:
             return {"error": "Navigation failed.", "error_code": "JOB_BOARD_UNAVAILABLE"}
 
     async def request_login(self, state: JobApplicationState):
-        await self._emit(state, "Authenticating")
+        await self._emit(state, "Authenticating", stage_code=StageCode.AUTHENTICATING)
 
         prefs = state["preferences"]
         creds = state.get("credentials")
@@ -862,7 +865,7 @@ class JobTeaserWorker:
                 return {"error": "Manual login timed out.", "error_code": "LOGIN_TIMEOUT"}
 
     async def search_jobs(self, state: JobApplicationState):
-        await self._emit(state, "Searching for Jobs")
+        await self._emit(state, "Searching for Jobs", stage_code=StageCode.SEARCHING)
 
         search_entity = state["job_search"]
         job_title = search_entity.job_title
@@ -926,7 +929,7 @@ class JobTeaserWorker:
             return {"error": f"Failed to execute search for '{job_title}' on JobTeaser.", "error_code": "SEARCH_FILTERS_FAILED"}
 
     async def get_matched_jobs(self, state: JobApplicationState):
-        await self._emit(state, "Extracting Job Data")
+        await self._emit(state, "Extracting Job Data", stage_code=StageCode.EXTRACTING_DATA)
         logger.info("[JOBTEASER] Scraping jobs")
 
         user_id = state["user"].id
@@ -1117,7 +1120,7 @@ class JobTeaserWorker:
         return {"found_raw_offers": found_job_entities}
 
     async def submit_applications(self, state: JobApplicationState):
-        await self._emit(state, "Submitting Applications")
+        await self._emit(state, "Submitting Applications", stage_code=StageCode.SUBMITTING)
         logger.info("[JOBTEASER] Submitting applications")
 
         jobs_to_process = state.get("processed_offers", [])
@@ -1278,7 +1281,7 @@ class JobTeaserWorker:
         return {"submitted_offers": successful_submissions}
 
     async def cleanup(self, state: JobApplicationState):
-        await self._emit(state, "Cleaning Up")
+        await self._emit(state, "Cleaning Up", stage_code=StageCode.CLEANING_UP)
         self._plog("NODE cleanup -> closing browser session")
         await self.force_cleanup()
 

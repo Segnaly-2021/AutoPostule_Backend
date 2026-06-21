@@ -18,6 +18,7 @@ from auto_apply_app.domain.value_objects import ContractType, JobBoard, Applicat
 # --- INFRA & APP IMPORTS ---
 from auto_apply_app.application.use_cases.agent_state_use_cases import IsAgentKilledForSearchUseCase
 from auto_apply_app.infrastructures.agent.state import JobApplicationState
+from auto_apply_app.infrastructures.agent.stage_codes import StageCode
 from auto_apply_app.application.use_cases.agent_use_cases import (
     GetIgnoredHashesUseCase,
 )
@@ -96,7 +97,15 @@ class ApecWorker():
 
         return "continue"
 
-    async def _emit(self, state: JobApplicationState, stage: str, status: str = "in_progress", error: str = None):
+    async def _emit(
+        self,
+        state: JobApplicationState,
+        stage: str,
+        status: str = "in_progress",
+        error: str = None,
+        error_code: str = None,
+        stage_code: str = None,
+    ):
         if not self._progress_callback:
             return
         try:
@@ -104,9 +113,11 @@ class ApecWorker():
             await self._progress_callback({
                 "source": self._source_name.upper(),
                 "stage": stage,
+                "stage_code": stage_code,
                 "node": self._source_name.lower(),
                 "status": "error" if error else status,
                 "error": error,
+                "error_code": error_code or ("SYSTEMERROR" if error else None),
                 "search_id": search_id,
             })
         except Exception:
@@ -391,7 +402,7 @@ class ApecWorker():
 
     # --- NODE 1: Start Session (SCRAPE track) ---
     async def start_session(self, state: JobApplicationState):
-        await self._emit(state, "Initializing Browser")
+        await self._emit(state, "Initializing Browser", stage_code=StageCode.INITIALIZING_BROWSER)
         logger.info("[APEC] Starting session")
         self._uid = str(state["user"].id)
         self._plog("NODE start_session -> launching stealth browser (SCRAPE track)")
@@ -443,7 +454,7 @@ class ApecWorker():
 
     # --- NODE 1 Bis: Boot & Inject Session (SUBMIT track) ---
     async def start_session_with_auth(self, state: JobApplicationState):
-        await self._emit(state, "Initializing Secure Browser")
+        await self._emit(state, "Initializing Secure Browser", stage_code=StageCode.INITIALIZING_BROWSER)
         logger.info("[APEC] Booting browser (session injection)")
         user_id = str(state["user"].id)
         self._uid = user_id
@@ -539,7 +550,7 @@ class ApecWorker():
 
     # --- NODE 2: Navigation ---
     async def go_to_job_board(self, state: JobApplicationState):
-        await self._emit(state, "Navigating to Job Board")
+        await self._emit(state, "Navigating to Job Board", stage_code=StageCode.NAVIGATING)
         logger.info("[APEC] Navigating to board")
         self._plog("NODE go_to_job_board -> navigating to apec.fr")
         try:
@@ -566,7 +577,7 @@ class ApecWorker():
 
     # --- NODE 3: Login ---
     async def request_login(self, state: JobApplicationState):
-        await self._emit(state, "Authenticating")
+        await self._emit(state, "Authenticating", stage_code=StageCode.AUTHENTICATING)
 
         prefs = state["preferences"]
         creds = state.get("credentials")
@@ -678,7 +689,7 @@ class ApecWorker():
 
     # --- NODE 4: Search ---
     async def search_jobs(self, state: JobApplicationState):
-        await self._emit(state, "Searching for Jobs")
+        await self._emit(state, "Searching for Jobs", stage_code=StageCode.SEARCHING)
         search_entity = state["job_search"]
         job_title = search_entity.job_title
         contract_types = getattr(search_entity, 'contract_types', [])
@@ -713,7 +724,7 @@ class ApecWorker():
 
     # --- NODE 5: Scrape Jobs ---
     async def get_matched_jobs(self, state: JobApplicationState):
-        await self._emit(state, "Extracting Job Data")
+        await self._emit(state, "Extracting Job Data", stage_code=StageCode.EXTRACTING_DATA)
         logger.info("[APEC] Scraping jobs")
 
         user_id = state["user"].id
@@ -900,7 +911,7 @@ class ApecWorker():
 
     # --- NODE 7: Submit Applications ---
     async def submit_applications(self, state: JobApplicationState):
-        await self._emit(state, "Submitting Applications")
+        await self._emit(state, "Submitting Applications", stage_code=StageCode.SUBMITTING)
         logger.info("[APEC] Submitting applications")
 
         jobs_to_process = state.get("processed_offers", [])
@@ -1159,7 +1170,7 @@ class ApecWorker():
 
     # --- NODE 9: Cleanup ---
     async def cleanup(self, state: JobApplicationState):
-        await self._emit(state, "Cleaning Up")
+        await self._emit(state, "Cleaning Up", stage_code=StageCode.CLEANING_UP)
         logger.info("[APEC] Cleanup")
         self._plog("NODE cleanup -> closing browser session")
         await self.force_cleanup()

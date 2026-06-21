@@ -31,6 +31,7 @@ from auto_apply_app.domain.entities.user_subscription import UserSubscription
 from auto_apply_app.domain.entities.board_credentials import BoardCredential
 from auto_apply_app.domain.entities.user_preferences import UserPreferences
 from auto_apply_app.infrastructures.agent.state import JobApplicationState
+from auto_apply_app.infrastructures.agent.stage_codes import StageCode
 from auto_apply_app.application.use_cases.job_offer_use_cases import CleanupUnsubmittedJobsUseCase
 from auto_apply_app.application.use_cases.agent_use_cases import ConsumeAiCreditsUseCase, SaveJobApplicationsUseCase
 from auto_apply_app.infrastructures.agent.workers.wttj.wttj_worker import WelcomeToTheJungleWorker
@@ -438,20 +439,22 @@ class MasterAgent(AgentServicePort):
         return text
     
     # --- HELPER: Unified Explicit Emit ---
-    async def _emit(self, state: JobApplicationState, stage: str, status: str = "in_progress", error: str = None, error_code: str = None):
+    async def _emit(self, state: JobApplicationState, stage: str, status: str = "in_progress", error: str = None, error_code: str = None, stage_code: str = None, count: int = None):
         """Explicit progress emitter with error code mapping."""
         if not self._progress_callback:
             return
         try:
             search_id = str(state["job_search"].id) if "job_search" in state else ""
-            
+
             await self._progress_callback({
                 "source": "MASTER",
                 "stage": stage,
-                "node": "master", 
+                "stage_code": stage_code,
+                "count": count,
+                "node": "master",
                 "status": "error" if error else status,
                 "error": error,
-                "error_code": error_code or ("SYSTEMERROR" if error else None), 
+                "error_code": error_code or ("SYSTEMERROR" if error else None),
                 "search_id": search_id
             })
         except Exception:
@@ -470,7 +473,7 @@ class MasterAgent(AgentServicePort):
             print("🛑 [Master] Kill switch detected before scrape dispatch. Aborting.")
             return []
 
-        await self._emit(state, "Launching Search Workers")
+        await self._emit(state, "Launching Search Workers", stage_code=StageCode.LAUNCHING_WORKERS)
         print("--- [Master] Dispatching Scrape Missions ---")        
         
         active_boards = [board for board, is_active in state["preferences"].active_boards.items() if is_active]
@@ -529,7 +532,7 @@ class MasterAgent(AgentServicePort):
         return sends
 
     async def analyze_and_generate(self, state: JobApplicationState):
-        await self._emit(state, "AI Generating Cover Letters")
+        await self._emit(state, "AI Generating Cover Letters", stage_code=StageCode.GENERATING_LETTERS)
         print("--- [Master Brain] Analyzing Jobs with LLM ---")       
         
         user_id = state["user"].id
@@ -645,7 +648,7 @@ class MasterAgent(AgentServicePort):
             }
 
         if subscription and subscription.account_type.name == "PREMIUM":
-            await self._emit(state, stage="Waiting for User Review", status="paused")
+            await self._emit(state, stage="Waiting for User Review", status="paused", stage_code=StageCode.WAITING_REVIEW)
 
         return {
             "processed_offers": processed_offers
@@ -700,7 +703,12 @@ class MasterAgent(AgentServicePort):
         
         print(f"📊 Global Submit Quota: {remaining_quota} jobs left today. Splitting across {len(boards_needed)} boards.")
         
-        await self._emit(state, stage=f"Dispatching up to {remaining_quota} submissions")
+        await self._emit(
+            state,
+            stage=f"Dispatching up to {remaining_quota} submissions",
+            stage_code=StageCode.DISPATCHING,
+            count=remaining_quota,
+        )
 
         sends = []
         for i, board in enumerate(boards_needed):
@@ -727,7 +735,7 @@ class MasterAgent(AgentServicePort):
 
     async def finalize_batch(self, state: JobApplicationState):
         """Final cleanup and state synchronization."""
-        await self._emit(state, "Saving Final Results")
+        await self._emit(state, "Saving Final Results", stage_code=StageCode.SAVING_RESULTS)
         
         user_id = state["user"].id
         search_id = state["job_search"].id
@@ -809,7 +817,7 @@ class MasterAgent(AgentServicePort):
         """
         Unified launchpad for the Send() fan-out to workers.
         """
-        await self._emit(state, "Launching Submission Workers")
+        await self._emit(state, "Launching Submission Workers", stage_code=StageCode.LAUNCHING_SUBMISSION)
         print("🚀 [Master] Preparing to dispatch submission workers...")
         return {"status": "ready_for_submission"}
 
@@ -835,7 +843,7 @@ class MasterAgent(AgentServicePort):
                 completion_result.error.message,
             )
         
-        await self._emit(state, stage="Job Search Complete", status="finished")
+        await self._emit(state, stage="Job Search Complete", status="finished", stage_code=StageCode.COMPLETE)
         return {"status": "finished"}
 
     async def stop_agent_notification(self, state: JobApplicationState):
@@ -844,11 +852,12 @@ class MasterAgent(AgentServicePort):
         
         # 🚨 NEW: Emit the error_code down the stream
         await self._emit(
-            state, 
-            stage="Agent has been stopped", 
+            state,
+            stage="Agent has been stopped",
             status="killed",
             error="Agent has been stopped.",
-            error_code="AGENT_STOPPED"
+            error_code="AGENT_STOPPED",
+            stage_code=StageCode.STOPPED
         )
         
         # 🚨 NEW: Return the error_code to the LangGraph state
@@ -862,7 +871,7 @@ class MasterAgent(AgentServicePort):
     async def no_jobs_notification(self, state: JobApplicationState):
         """Notifies the frontend that the search completed, but no jobs matched."""
         print("📭 [Master] Emitting 'no jobs found' signal.")
-        await self._emit(state, stage="No Matching Jobs", status="no_jobs_found")
+        await self._emit(state, stage="No Matching Jobs", status="no_jobs_found", stage_code=StageCode.NO_JOBS)
         return {"status": "no_jobs_found"}
 
 
@@ -883,7 +892,7 @@ class MasterAgent(AgentServicePort):
         """Notifies the frontend that the graph hit a fatal error."""
         error_msg = state.get("error", "An unknown error occurred during the job search.")
         print(f"❌ [Master] Emitting error signal: {error_msg}")
-        await self._emit(state, stage="Failed", status="error", error=error_msg)
+        await self._emit(state, stage="Failed", status="error", error=error_msg, stage_code=StageCode.FAILED)
         return {"status": "error"}
 
 
