@@ -96,7 +96,8 @@ class JobOfferRepository(ABC):
 
     @abstractmethod
     async def update_response_status(
-        job_id: str, 
+        job_id: str,
+        user_id: str,
         has_response: bool,
         status: ApplicationStatus = ApplicationStatus.SUBMITTED
     ) -> JobOffer:
@@ -104,7 +105,8 @@ class JobOfferRepository(ABC):
 
     @abstractmethod
     async def update_interview_status(
-        job_id: str, 
+        job_id: str,
+        user_id: str,
         has_interview: bool,
         status: ApplicationStatus = ApplicationStatus.SUBMITTED
     ) -> JobOffer:

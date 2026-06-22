@@ -1,9 +1,7 @@
 from fastapi import APIRouter, UploadFile, File, Depends, status, HTTPException, Request
 from typing import Annotated
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 
-
+from auto_apply_app.infrastructures.api.rate_limit import limiter
 from auto_apply_app.infrastructures.api.dependencies.result import handle_result
 from auto_apply_app.infrastructures.configuration.container import Application
 from auto_apply_app.interfaces.controllers.auth_controllers import AuthController
@@ -28,7 +26,6 @@ from auto_apply_app.infrastructures.api.schema.user_schema import (
 )
 
 
-limiter = Limiter(key_func=get_remote_address)
 router = APIRouter()
 
 

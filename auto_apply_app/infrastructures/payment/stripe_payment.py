@@ -13,7 +13,7 @@ class StripePaymentAdapter(PaymentPort):
     def __init__(self):
         stripe.api_key = os.getenv("STRIPE_API_KEY")
         self.webhook_secret = os.getenv("STRIPE_WEBHOOK_SECRET")
-        self.return_url = os.getenv("APP_RETURN_URL", "http://localhost:5173/job-search/home")
+        self.return_url = os.getenv("APP_RETURN_URL", "https://autopostule.com/job-search/home")
 
     async def create_checkout_session(
         self,

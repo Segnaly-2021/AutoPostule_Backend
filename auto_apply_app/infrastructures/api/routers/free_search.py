@@ -14,11 +14,9 @@ from auto_apply_app.infrastructures.api.schema.free_search_schema import (
 )
 
 # slowapi: per-IP backstop in case auth tokens get leaked or shared
-from slowapi import Limiter
-from slowapi.util import get_remote_address
+from auto_apply_app.infrastructures.api.rate_limit import limiter
 
 router = APIRouter()
-limiter = Limiter(key_func=get_remote_address)
 
 
 def get_free_search_controller(

@@ -72,6 +72,7 @@ class ToggleResponseStatusUseCase:
                 # We use the specific repo method you defined
                 job = await self.uow.job_repo.update_response_status(
                     job_id=request.job_offer_id,
+                    user_id=request.user_id,
                     has_response=request.has_response,
                 )
                 
@@ -97,7 +98,8 @@ class ToggleInterviewStatusUseCase:
             async with self.uow:
                 job = await self.uow.job_repo.update_interview_status(
                     job_id=request.job_offer_id,
-                    has_interview=request.has_interview                    
+                    user_id=request.user_id,
+                    has_interview=request.has_interview
                 )
                 await self.uow.commit()
                 

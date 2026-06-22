@@ -279,22 +279,22 @@ class InMemoryJobOfferRepository(JobOfferRepository):
         return filtered_jobs[start:end], total_filtered, aggregations
 
     async def update_response_status(
-        self, 
-        job_id: str, 
+        self,
+        job_id: str,
+        user_id: str,
         has_response: bool,
         status: ApplicationStatus = ApplicationStatus.SUBMITTED
     ) -> JobOffer:
-        
+
         try:
             uuid_id = UUID(job_id)
         except ValueError:
              raise JobNotFoundError(f"Invalid UUID: {job_id}")
 
         job = self._jobs.get(uuid_id)
-        
-        # Note: We usually don't need to check user_id here if the UUID is unique globally,
-        # but in a real SQL query you might add `AND user_id = :uid` for security.
-        if not job or job.status != status:
+
+        # Scope by user_id so a caller can only mutate their own applications (IDOR guard)
+        if not job or job.status != status or str(job.user_id) != str(user_id):
             raise JobNotFoundError(f"Job {job_id} not found with status {status.name}")
 
         job.update_response_status(has_response)
@@ -302,20 +302,22 @@ class InMemoryJobOfferRepository(JobOfferRepository):
         return job
 
     async def update_interview_status(
-        self, 
-        job_id: str, 
+        self,
+        job_id: str,
+        user_id: str,
         has_interview: bool,
         status: ApplicationStatus = ApplicationStatus.SUBMITTED
     ) -> JobOffer:
-        
+
         try:
             uuid_id = UUID(job_id)
         except ValueError:
              raise JobNotFoundError(f"Invalid UUID: {job_id}")
 
         job = self._jobs.get(uuid_id)
-        
-        if not job or job.status != status:
+
+        # Scope by user_id so a caller can only mutate their own applications (IDOR guard)
+        if not job or job.status != status or str(job.user_id) != str(user_id):
             raise JobNotFoundError(f"Job {job_id} not found with status {status.name}")
 
         job.update_interview_status(has_interview)

@@ -37,7 +37,6 @@ from auto_apply_app.application.use_cases.agent_use_cases import ConsumeAiCredit
 from auto_apply_app.infrastructures.agent.workers.wttj.wttj_worker import WelcomeToTheJungleWorker
 from auto_apply_app.infrastructures.agent.workers.hellowork.hw_worker_v1 import HelloWorkWorker
 from auto_apply_app.infrastructures.agent.workers.apec.apec_worker import ApecWorker
-from auto_apply_app.infrastructures.agent.workers.teaser.teaser_worker import JobTeaserWorker
 from auto_apply_app.infrastructures.config import Config
 from auto_apply_app.application.dtos.job_offer_dtos import GetDailyStatsRequest
 from auto_apply_app.application.use_cases.job_offer_use_cases import GetDailyStatsUseCase
@@ -310,7 +309,6 @@ class MasterAgent(AgentServicePort):
         wttj_worker: WelcomeToTheJungleWorker,
         hellowork_worker: HelloWorkWorker,
         apec_worker: ApecWorker,
-        jobteaser_worker: JobTeaserWorker,
         api_keys: dict,
         file_storage: FileStoragePort,
         consume_credits_use_case: ConsumeAiCreditsUseCase,
@@ -328,7 +326,6 @@ class MasterAgent(AgentServicePort):
         self._wttj = wttj_worker
         self._hw = hellowork_worker
         self._apec = apec_worker
-        self._teaser = jobteaser_worker
 
         self.system_messages = MasterAgent.MASTER_SYSTEM_MESSAGE
         
@@ -525,10 +522,6 @@ class MasterAgent(AgentServicePort):
                 print("🚀 Launching WTTJ Worker...")
                 sends.append(Send("wttj_worker", worker_state))
 
-            elif "jobteaser" in board_name:
-                print("🚀 Launching JobTeaser Worker...")
-                sends.append(Send("jobteaser_worker", worker_state))
-                
         return sends
 
     async def analyze_and_generate(self, state: JobApplicationState):
@@ -726,8 +719,6 @@ class MasterAgent(AgentServicePort):
                 sends.append(Send("hellowork_worker", worker_state))
             elif board == JobBoard.WTTJ:
                 sends.append(Send("wttj_worker", worker_state))
-            elif board == JobBoard.JOBTEASER:
-                sends.append(Send("jobteaser_worker", worker_state))
 
         return sends
     
@@ -904,7 +895,6 @@ class MasterAgent(AgentServicePort):
         workflow.add_node("apec_worker", self._apec.get_graph())
         workflow.add_node("hellowork_worker", self._hw.get_graph())
         workflow.add_node("wttj_worker", self._wttj.get_graph())
-        workflow.add_node("jobteaser_worker", self._teaser.get_graph())
 
         # 2. Register the Hub (Master Nodes)
         workflow.add_node("analyze", self.analyze_and_generate)
@@ -922,15 +912,14 @@ class MasterAgent(AgentServicePort):
         # 🛫 PHASE 1: The Scrape Fan-Out
         workflow.add_conditional_edges(
             START, 
-            self.dispatch_scrape, 
-            ["apec_worker", "hellowork_worker", "wttj_worker", "jobteaser_worker"] 
+            self.dispatch_scrape,
+            ["apec_worker", "hellowork_worker", "wttj_worker"]
         )
 
         # 🛬 PHASE 2 & 4: The Synchronized Fan-In
         workflow.add_conditional_edges("apec_worker", self.worker_return_router, ["analyze", "finalize"])
         workflow.add_conditional_edges("hellowork_worker", self.worker_return_router, ["analyze", "finalize"])
         workflow.add_conditional_edges("wttj_worker", self.worker_return_router, ["analyze", "finalize"])
-        workflow.add_conditional_edges("jobteaser_worker", self.worker_return_router, ["analyze", "finalize"])
 
         # 🧠 PHASE 3A: Brain -> Review Router
         workflow.add_conditional_edges(
@@ -945,8 +934,8 @@ class MasterAgent(AgentServicePort):
         # 📤 PHASE 3C: Launchpad -> Submit Fan-Out
         workflow.add_conditional_edges(
             "prepare_submit", 
-            self.dispatch_submit, 
-            ["apec_worker", "hellowork_worker", "wttj_worker", "jobteaser_worker"]
+            self.dispatch_submit,
+            ["apec_worker", "hellowork_worker", "wttj_worker"]
         )
 
         # 🏁 PHASE 5: The End Routing
@@ -1025,7 +1014,6 @@ class MasterAgent(AgentServicePort):
         self._wttj._progress_callback = progress_callback
         self._hw._progress_callback = progress_callback
         self._apec._progress_callback = progress_callback
-        self._teaser._progress_callback = progress_callback
 
         try:
             await self._execute_with_progress(initial_state, search.id)
@@ -1034,7 +1022,6 @@ class MasterAgent(AgentServicePort):
             self._wttj._progress_callback = None
             self._hw._progress_callback = None
             self._apec._progress_callback = None
-            self._teaser._progress_callback = None
             self._active_workers.pop(str(search.id), None)
 
 
@@ -1067,9 +1054,7 @@ class MasterAgent(AgentServicePort):
             return self._hw
         elif "wttj" in board:
             return self._wttj
-        elif "jobteaser" in board:
-            return self._teaser
-        # Unknown / inactive boards (e.g. 'indeed' before its worker is built)
+        # Unknown / inactive boards (e.g. 'indeed', 'jobteaser' — no worker wired)
         return None
     
 

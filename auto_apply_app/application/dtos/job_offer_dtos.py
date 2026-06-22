@@ -143,6 +143,7 @@ class GetUserApplicationsRequest:
 @dataclass(frozen=True)
 class ToggleStatusRequest:
     job_offer_id: str
+    user_id: str
     has_response: Optional[bool] = None
     has_interview: Optional[bool] = None
 

@@ -28,10 +28,9 @@ class StartAgentRequest:
     
     def to_execution_params(self):
         boards = {
-            "apec": JobBoard.APEC, 
-            "hellowork": JobBoard.HELLOWORK, 
-            "wttj": JobBoard.WTTJ,
-            "jobteaser": JobBoard.JOBTEASER
+            "apec": JobBoard.APEC,
+            "hellowork": JobBoard.HELLOWORK,
+            "wttj": JobBoard.WTTJ
         }
         return {
             "user_id": self.user_id,

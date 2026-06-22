@@ -133,6 +133,7 @@ class JobOfferRepoDB(JobOfferRepository):
     async def update_response_status(
         self,
         job_id: str,
+        user_id: str,
         has_response: bool,
         status: ApplicationStatus = ApplicationStatus.SUBMITTED
     ) -> JobOffer:
@@ -141,9 +142,11 @@ class JobOfferRepoDB(JobOfferRepository):
         except ValueError:
             raise JobNotFoundError(f"Invalid UUID: {job_id}")
 
+        # Scope by user_id so a caller can only mutate their own applications (IDOR guard)
         result = await self.session.execute(
             select(JobOfferDB)
             .where(JobOfferDB.id == uuid_id)
+            .where(JobOfferDB.user_id == UUID(str(user_id)))
             .where(JobOfferDB.status == status)
         )
         offer_db = result.scalar_one_or_none()
@@ -156,6 +159,7 @@ class JobOfferRepoDB(JobOfferRepository):
     async def update_interview_status(
         self,
         job_id: str,
+        user_id: str,
         has_interview: bool,
         status: ApplicationStatus = ApplicationStatus.SUBMITTED
     ) -> JobOffer:
@@ -164,9 +168,11 @@ class JobOfferRepoDB(JobOfferRepository):
         except ValueError:
             raise JobNotFoundError(f"Invalid UUID: {job_id}")
 
+        # Scope by user_id so a caller can only mutate their own applications (IDOR guard)
         result = await self.session.execute(
             select(JobOfferDB)
             .where(JobOfferDB.id == uuid_id)
+            .where(JobOfferDB.user_id == UUID(str(user_id)))
             .where(JobOfferDB.status == status)
         )
         offer_db = result.scalar_one_or_none()

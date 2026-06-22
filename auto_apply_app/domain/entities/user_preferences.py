@@ -21,7 +21,6 @@ class UserPreferences(Entity):
         'hellowork': True,
         'wttj': False,
         'apec': False,
-        'jobteaser': False,
         'indeed': False
     })
     

@@ -3,9 +3,10 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import logging
-from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
+
+from auto_apply_app.infrastructures.api.rate_limit import limiter
 
 from auto_apply_app.infrastructures.config import Config
 from auto_apply_app.infrastructures.configuration.container import create_application
@@ -15,6 +16,7 @@ from auto_apply_app.infrastructures.config import RepositoryType
 # 🚨 NEW: Global exception handlers to prevent raw errors from reaching the frontend
 from auto_apply_app.infrastructures.api.exception_handlers import register_exception_handlers
 from auto_apply_app.infrastructures.api.middleware.ip_blocklist import ip_blocklist_middleware
+from auto_apply_app.infrastructures.api.middleware.security_headers import security_headers_middleware
 
 
 # Import your concrete implementations
@@ -117,7 +119,6 @@ def create_fastapi_app() -> FastAPI:
         lifespan=lifespan
     )
 
-    limiter = Limiter(key_func=get_remote_address)
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -126,6 +127,7 @@ def create_fastapi_app() -> FastAPI:
     register_exception_handlers(app)
 
     app.middleware("http")(ip_blocklist_middleware)
+    app.middleware("http")(security_headers_middleware)
 
     app.add_middleware(
         CORSMiddleware,

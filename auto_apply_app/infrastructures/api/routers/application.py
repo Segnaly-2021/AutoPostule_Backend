@@ -87,7 +87,8 @@ async def toggle_response_status(
     controller: JobControllerDep
 ):
     result = await controller.handle_toggle_response(
-        job_id=application_id, 
+        job_id=application_id,
+        user_id=current_user_id,
         status=data.status
     )
     return handle_result(result)
@@ -104,7 +105,8 @@ async def toggle_interview_status(
     controller: JobControllerDep
 ):
     result = await controller.handle_toggle_interview(
-        job_id=application_id, 
+        job_id=application_id,
+        user_id=current_user_id,
         status=data.status
     )
     return handle_result(result)
