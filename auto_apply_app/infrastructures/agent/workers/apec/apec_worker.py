@@ -847,7 +847,7 @@ class ApecWorker():
         search_id = state["job_search"].id
         found_job_entities = []
 
-        worker_job_limit = state.get("worker_job_limit", 5)
+        worker_job_limit = min(state.get("worker_job_limit",10), 12)
 
         self._plog(f"NODE get_matched_jobs -> scraping starts (target: {worker_job_limit} jobs)")
 
