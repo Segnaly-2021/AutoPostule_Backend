@@ -489,8 +489,11 @@ class MasterAgent(AgentServicePort):
 
         max_jobs = state.get("max_jobs", 20)
         worker_limit = max(1, max_jobs // len(active_boards))
-        remainder = max_jobs % len(active_boards)
-        
+        if len(active_boards) > 1:
+            remainder = max_jobs % len(active_boards)
+        else:
+            remainder = 0
+
         print(f"📊 Workload: {max_jobs} max jobs split across {len(active_boards)} boards "
               f"({worker_limit} jobs per worker).")
 

@@ -20,7 +20,7 @@ class JwtTokenProvider(TokenProviderPort):
         if len(self.secret) < 32:
             raise ValueError(f"JWT_SECRET must be at least 32 bytes (current: {len(self.secret)} bytes)")
         self.algo = "HS256"
-        self.token_lifespan_minutes = 60
+        self.token_lifespan_minutes = 240
 
     def encode_token(self, user_id: UUID, claims: Optional[Dict[str, Any]] = None, expires_delta: Optional[timedelta] = None) -> str:
         # Determine the expiration time dynamically

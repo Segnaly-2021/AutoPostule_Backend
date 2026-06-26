@@ -38,10 +38,19 @@ class ListRecentSearchesUseCase:
 
     async def execute(self, user_id: UUID, limit: int = 5) -> Result:
         try:
+            # Policy: the recent-searches list shows everything that is NOT
+            # COMPLETED (SEARCHING, PENDING, PAUSED, CANCELLED, FAILED).
+            # A COMPLETED search has nothing left to validate — the dashboard
+            # owns that view — so it's excluded here, matching the gate in
+            # GetJobsForReviewUseCase.
+            visible_statuses = [
+                s for s in SearchStatus if s != SearchStatus.COMPLETED
+            ]
+
             async with self.uow as uow:
                 searches = await uow.search_repo.list_recent_by_user(
                     user_id=user_id,
-                    status=SearchStatus.SEARCHING,
+                    statuses=visible_statuses,
                     limit=limit,
                 )
                 summaries = [JobSearchSummaryResponse.from_entity(s) for s in searches]
@@ -434,11 +443,25 @@ class SaveJobApplicationsUseCase:
             logger.exception("SaveJobApplicationsUseCase failed to save batch.")
             return Result.failure(Error.system_error("An unexpected error occurred while saving job applications."))
         
-
 @dataclass
 class GetJobsForReviewUseCase:
     """
-    Fetch all jobs in GENERATED status for Premium user review.
+    Fetch jobs for a search so the Premium user can review/validate them.
+
+    Visibility rule (status-centered):
+      - If the search is COMPLETED, the validation page is not needed
+        (the dashboard owns that view) -> return an empty list so the
+        frontend renders its "all done" state.
+      - Otherwise (SEARCHING / PAUSED / CANCELLED / FAILED / PENDING),
+        return ALL jobs for the search regardless of ApplicationStatus.
+        The frontend colors each job by its status:
+          GENERATED -> neutral/editable, APPROVED -> green,
+          SUBMITTED -> done, REJECTED -> red.
+
+    Why all statuses (not just GENERATED): after an interrupted submission
+    (e.g. auth token expired mid-run) jobs may already be APPROVED while the
+    search is still SEARCHING. Filtering to GENERATED hid them, making the
+    page look "already validated" when work remained.
     """
     uow: UnitOfWork
 
@@ -449,26 +472,30 @@ class GetJobsForReviewUseCase:
 
             async with self.uow as uow:
                 search = await uow.search_repo.get(UUID(search_id.strip()))
-                
+
                 if not search:
                     return Result.failure(Error.not_found("JobSearch", search_id))
-                
+
                 if str(search.user_id) != user_id:
                     return Result.failure(
                         Error.unauthorized(f"Search {search_id} does not belong to user {user_id}")
                     )
-                
-                jobs = await uow.job_repo.get_by_search_and_status(
-                    search_id=search_id,
-                    status=ApplicationStatus.GENERATED
-                )
-                
+
+                # Gate: a COMPLETED search has nothing left to validate
+                # (cleanup_unsubmitted runs before completion, so COMPLETED
+                # implies no GENERATED/APPROVED jobs survive). The dashboard
+                # handles submitted applications.
+                if search.search_status == SearchStatus.COMPLETED:
+                    return Result.success([])
+
+                # Not completed -> return every job, let the FE color by status.
+                jobs = await uow.job_repo.get_by_search(UUID(search_id.strip()))
+
                 return Result.success(jobs)
-                
+
         except Exception:
             logger.exception(f"GetJobsForReviewUseCase failed for search {request.search_id}")
             return Result.failure(Error.system_error("An unexpected error occurred while retrieving jobs for review."))
-
 
 @dataclass
 class UpdateCoverLetterUseCase:

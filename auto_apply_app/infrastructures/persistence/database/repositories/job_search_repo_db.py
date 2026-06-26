@@ -109,14 +109,19 @@ class JobSearchRepoDB(JobSearchRepository):
     async def list_recent_by_user(
         self,
         user_id: UUID,
-        status: SearchStatus,
+        statuses: List[SearchStatus],
         limit: int = 5,
     ) -> List[JobSearch]:
+        """
+        Return the user's most recent searches whose status is in `statuses`,
+        newest first. The caller decides which statuses are "visible" (policy);
+        this method just filters by the given set.
+        """
         result = await self.session.execute(
             select(JobSearchDB)
             .where(
                 JobSearchDB.user_id == user_id,
-                JobSearchDB.search_status == status,
+                JobSearchDB.search_status.in_(statuses),
             )
             .order_by(JobSearchDB.updated_at.desc())
             .limit(limit)

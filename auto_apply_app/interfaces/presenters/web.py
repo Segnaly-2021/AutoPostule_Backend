@@ -233,6 +233,12 @@ class WebJobPresenter(JobPresenter):
         """
         Special presenter method for the Review Page.
         Converts UUIDs and Enums to strings for FastAPI serialization.
+
+        Status is normalized to a clean, UI-friendly token derived from the
+        enum *member name* (GENERATED, APPROVED, SUBMITTED, REJECTED, ...),
+        deliberately NOT the raw value (which carries internal suffixes like
+        "_CL"). This keeps the wire format stable and lets the frontend match
+        on plain tokens for status-based color-coding.
         """
         return JobReviewViewModel(
             id=str(job.id),
@@ -243,7 +249,7 @@ class WebJobPresenter(JobPresenter):
             cover_letter=job.cover_letter or "",
             ranking=int(job.ranking)*10 or 50,
             board=str(job.job_board.value),
-            status=str(job.status.value)
+            status=job.status.name  # normalized: GENERATED / APPROVED / SUBMITTED / REJECTED
         )
     
     def present_daily_stats(self, data: dict) -> DailyStatsViewModel:
