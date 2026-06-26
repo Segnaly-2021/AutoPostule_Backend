@@ -426,6 +426,109 @@ class HelloWorkWorker:
         killed_result = await self.is_agent_killed_for_search.execute(user_id, search_id)
         return killed_result.is_success and killed_result.value
 
+    async def _is_session_valid(self) -> bool:
+        """HelloWork renders summary[data-cy="headerAccountMenu"] ('Se connecter')
+        ONLY when logged out. Logged-in users get the initials-avatar summary with
+        no such data-cy. So: marker present -> expired; marker absent -> valid.
+
+        We test for the logged-OUT marker (not the avatar) because the avatar is
+        populated by an async account-data fetch and can lag on a fresh load,
+        whereas the anonymous marker renders synchronously. state='attached'
+        because the marker carries a 'hidden' class on narrow viewports."""
+        try:
+            await self.page.wait_for_selector(
+                'summary[data-cy="headerAccountMenu"]', state="attached", timeout=45000
+            )
+            self._plog("session check: 'Se connecter' marker present -> session EXPIRED")
+            return False
+        except Exception:
+            self._plog("session check: no 'Se connecter' marker -> session VALID")
+            return True
+
+    async def _perform_auto_login(self, state: JobApplicationState) -> bool:
+        """Full-automation credential login, mirroring request_login's logic.
+        Assumes the browser/page are booted and on the HelloWork homepage with
+        the logged-out account menu present. Returns True on success and
+        re-saves the session. Full-automation only."""
+        creds = state.get("credentials")
+        user_id = str(state["user"].id)
+
+        if not (creds and creds.get("hellowork")):
+            self._plog("re-login: no stored HelloWork credentials -> cannot auto-login")
+            return False
+
+        login_plain = None
+        pass_plain = None
+        try:
+            # Open login modal
+            self._plog("re-login: opening login modal")
+            for attempt in range(3):
+                try:
+                    await human_click(self.page.locator('[data-cy="headerAccountMenu"]'))
+                    await human_click(self.page.locator('[data-cy="headerAccountLogIn"]'))
+                    await self.page.wait_for_selector('input[name="email2"]', state="visible", timeout=30000)
+                    break
+                except Exception:
+                    if attempt == 2:
+                        self._plog("re-login: login modal never opened")
+                        return False
+                    await self.page.reload(wait_until="domcontentloaded")
+                    await asyncio.sleep(2 ** attempt)
+
+            login_plain = await self.encryption_service.decrypt(creds["hellowork"].login_encrypted)
+            pass_plain = await self.encryption_service.decrypt(creds["hellowork"].password_encrypted)
+            self._plog("re-login: credentials decrypted")
+
+            # Fill + submit
+            self._plog("re-login: typing credentials")
+            for attempt in range(3):
+                try:
+                    await self.page.locator('input[name="email2"]').clear()
+                    await human_delay(300, 700)
+                    await human_type(self.page.locator('input[name="email2"]'), login_plain)
+                    await human_delay(400, 900)
+                    await self.page.locator('input[name="password2"]').clear()
+                    await human_delay(200, 500)
+                    await human_type(self.page.locator('input[name="password2"]'), pass_plain)
+                    await human_delay(600, 1500)
+                    await self.page.locator('button[type="button"][class="profile-button"]').click()
+                    await self.page.wait_for_selector('a[data-cy="cpMenuDashboard"]', state="attached", timeout=90000)
+                    self._plog("re-login: credentials submitted -> dashboard menu detected")
+                    break
+                except Exception:
+                    if attempt == 2:
+                        self._plog("re-login: credential submission failed")
+                        return False
+                    await asyncio.sleep(2 ** attempt)
+
+            # Return to homepage to confirm + stabilize
+            self._plog("re-login: returning to homepage to verify")
+            for attempt in range(3):
+                try:
+                    await self.page.goto(self.base_url, wait_until="domcontentloaded", timeout=60000)
+                    await self.page.wait_for_selector('input[id="k"]', state="visible", timeout=20000)
+                    break
+                except Exception:
+                    if attempt == 2:
+                        self._plog("re-login: homepage verification failed")
+                        return False
+                    await asyncio.sleep(2 ** attempt)
+
+            await self._save_auth_state(user_id)
+            self._plog("re-login successful -> session re-saved")
+            return True
+
+        except Exception:
+            logger.exception("[HW] Re-login failed")
+            self._plog("re-login crashed with unexpected error")
+            return False
+
+        finally:
+            if login_plain is not None:
+                del login_plain
+            if pass_plain is not None:
+                del pass_plain
+
     # =========================================================================
     # NODES
     # =========================================================================
@@ -551,8 +654,35 @@ class HelloWorkWorker:
                     self._plog(f"homepage load attempt {attempt + 1} failed -> retrying")
                     await asyncio.sleep(2 ** attempt)
 
+            
             await self._handle_cookies()
+            await self.close_google_auth_popup()
             await human_warmup(self.page, self.base_url)
+
+            # --- SESSION VALIDITY GATE ---
+            # HW's search box is public, so search succeeding does NOT prove auth.
+            # The submit node fills an authenticated application form, so confirm
+            # login here before proceeding.
+            if not await self._is_session_valid():
+                self._plog("session expired -> re-authenticating via auto-login")
+                await self.page.goto(self.base_url, wait_until="domcontentloaded", timeout=120000)
+                if not await self._perform_auto_login(state):
+                    self._plog("auto-login fallback failed -> aborting SUBMIT track")
+                    try:
+                        os.remove(self._get_session_file_path(user_id))
+                    except OSError:
+                        pass
+                    await self._emit(
+                        state, stage="Failed", status="error",
+                        error="Your HelloWork session has expired and we couldn't reconnect automatically. Please check your HelloWork credentials in your settings.",
+                        error_code="INVALID_CREDENTIALS",
+                    )
+                    return {
+                        "error": "Your HelloWork session has expired and we couldn't reconnect automatically. Please check your HelloWork credentials in your settings.",
+                        "error_code": "INVALID_CREDENTIALS",
+                    }
+                self._plog("session recovered via fallback login")
+
 
             search_entity = state["job_search"]
             job_title = search_entity.job_title

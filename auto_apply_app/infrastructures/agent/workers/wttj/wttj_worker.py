@@ -651,6 +651,124 @@ class WelcomeToTheJungleWorker:
         killed_result = await self.is_agent_killed_for_search.execute(user_id, search_id)
         return killed_result.is_success and killed_result.value
 
+
+    async def _is_session_valid(self) -> bool:
+        """WTTJ shows button[data-testid="nav-my-space-button"] ('Mon espace')
+        only when logged in; logged-out users get a[data-testid="nav-sign-in-button"]
+        ('Se connecter') instead. Both are stable test-ids the worker already
+        treats as ground truth, so we check the positive (logged-in) signal."""
+        try:
+            await self.page.wait_for_selector(
+                'button[data-testid="nav-my-space-button"]', state="attached", timeout=45000
+            )
+            self._plog("session check: 'Mon espace' present -> session VALID")
+            return True
+        except Exception:
+            self._plog("session check: no 'Mon espace' -> session EXPIRED")
+            return False
+
+    async def _perform_auto_login(self, state: JobApplicationState) -> bool:
+        """Full-automation credential login, mirroring request_login's logic.
+        Assumes the browser/page are booted on welcometothejungle.com showing the
+        logged-out nav. Returns True on success and re-saves the session.
+        Full-automation only."""
+        creds = state.get("credentials")
+        user_id = str(state["user"].id)
+
+        if not (creds and creds.get("wttj")):
+            self._plog("re-login: no stored WTTJ credentials -> cannot auto-login")
+            return False
+
+        login_plain = None
+        pass_plain = None
+        try:
+            await self._handle_cookies()
+
+            # Open sign-in page
+            self._plog("re-login: opening sign-in page")
+            for attempt in range(3):
+                try:
+                    await human_click(self.page.locator('a[data-testid="nav-sign-in-button"]'))
+                    await self.page.wait_for_load_state("networkidle")
+                    await self.page.wait_for_selector(
+                        'input[data-testid="sign-in-form-email-input"]',
+                        state="visible",
+                        timeout=15000,
+                    )
+                    break
+                except Exception:
+                    if attempt == 2:
+                        self._plog("re-login: sign-in page never opened")
+                        return False
+                    await self.page.reload(wait_until="networkidle")
+                    await asyncio.sleep(2 ** attempt)
+
+            login_plain = await self.encryption_service.decrypt(creds["wttj"].login_encrypted)
+            pass_plain = await self.encryption_service.decrypt(creds["wttj"].password_encrypted)
+            self._plog("re-login: credentials decrypted")
+
+            # Fill + submit
+            self._plog("re-login: typing credentials")
+            for attempt in range(3):
+                try:
+                    email_input = self.page.locator('input[data-testid="sign-in-form-email-input"]')
+                    await email_input.clear()
+                    await human_delay(300, 700)
+                    await human_type(email_input, login_plain)
+
+                    await human_delay(400, 900)
+
+                    pass_input = self.page.locator('input[data-testid="sign-in-form-password-input"]')
+                    await pass_input.clear()
+                    await human_delay(200, 500)
+                    await human_type(pass_input, pass_plain)
+
+                    await human_delay(600, 1500)
+
+                    submit_btn = self.page.locator('button[data-testid="sign-in-form-submit-button"]')
+                    if await submit_btn.count() == 0:
+                        submit_btn = self.page.locator('button[type="submit"]')
+                    await submit_btn.click()
+                    self._plog("re-login: credentials submitted")
+                    break
+                except Exception:
+                    if attempt == 2:
+                        self._plog("re-login: credential submission failed")
+                        return False
+                    await asyncio.sleep(2 ** attempt)
+
+            # Confirm login via the 'my space' button
+            self._plog("re-login: waiting for 'Mon espace' to confirm")
+            for attempt in range(3):
+                try:
+                    await self.page.wait_for_selector(
+                        'button[data-testid="nav-my-space-button"]',
+                        state="visible",
+                        timeout=30000,
+                    )
+                    break
+                except Exception:
+                    if attempt == 2:
+                        self._plog("re-login: confirmation never received -> bad credentials?")
+                        return False
+                    await asyncio.sleep(2 ** attempt)
+
+            await self._handle_cookies()
+            await self._save_auth_state(user_id)
+            self._plog("re-login successful -> session re-saved")
+            return True
+
+        except Exception:
+            logger.exception("[WTTJ] Re-login failed")
+            self._plog("re-login crashed with unexpected error")
+            return False
+
+        finally:
+            if login_plain is not None:
+                del login_plain
+            if pass_plain is not None:
+                del pass_plain
+
     # =========================================================================
     # NODES
     # =========================================================================
@@ -707,6 +825,7 @@ class WelcomeToTheJungleWorker:
             await self._emit(state, stage="Failed", status="error", error="Failed to start the secure browsing session.", error_code="BROWSER_START_FAILED")
             return {"error": "Failed to start the secure browsing session.", "error_code": "BROWSER_START_FAILED"}
 
+    
     async def start_session_with_auth(self, state: JobApplicationState):
         await self._emit(state, "Initializing Secure Browser", stage_code=StageCode.INITIALIZING_BROWSER)
         logger.info("[WTTJ] Booting browser (session injection)")
@@ -761,13 +880,18 @@ class WelcomeToTheJungleWorker:
             await stealth.apply_stealth_async(self.context)
             self.page = await self.context.new_page()
 
-            self._plog("navigating to welcometothejungle.com (expecting logged-in nav)")
+            self._plog("navigating to welcometothejungle.com")
             for attempt in range(3):
                 try:
                     await self.page.goto(self.base_url, wait_until="networkidle", timeout=120000)
                     await self._handle_cookies()
+                    # Wait for EITHER nav state — logged-in ('Mon espace') or
+                    # logged-out ('Se connecter'). Which one we got is decided by
+                    # the session validity gate below, not here. Waiting only for
+                    # the logged-in element would misreport an expired session as
+                    # an unreachable board.
                     await self.page.wait_for_selector(
-                        'button[data-testid="nav-my-space-button"]',
+                        'button[data-testid="nav-my-space-button"], a[data-testid="nav-sign-in-button"]',
                         state="attached",
                         timeout=45000,
                     )
@@ -775,13 +899,37 @@ class WelcomeToTheJungleWorker:
                 except Exception:
                     if attempt == 2:
                         logger.exception("[WTTJ] Auth boot failed after 3 attempts")
-                        self._plog("logged-in nav never appeared after 3 attempts -> aborting")
+                        self._plog("homepage nav never appeared after 3 attempts -> aborting")
                         await self._emit(state, stage="Failed", status="error", error="Failed to reach WTTJ.", error_code="JOB_BOARD_UNAVAILABLE")
                         return {"error": "Failed to reach WTTJ after multiple attempts.", "error_code": "JOB_BOARD_UNAVAILABLE"}
                     self._plog(f"homepage load attempt {attempt + 1} failed -> retrying")
                     await asyncio.sleep(2 ** attempt)
 
             await human_warmup(self.page, self.base_url)
+
+            # --- SESSION VALIDITY GATE ---
+            # The boot above accepts either nav state. If the injected session is
+            # dead, re-login here rather than letting a guest session reach the
+            # application form. On success the nav returns to its logged-in state,
+            # so the 'Trouver un job' flow below is identical for both paths.
+            if not await self._is_session_valid():
+                self._plog("session expired -> re-authenticating via auto-login")
+                if not await self._perform_auto_login(state):
+                    self._plog("auto-login fallback failed -> aborting SUBMIT track")
+                    try:
+                        os.remove(self._get_session_file_path(user_id))
+                    except OSError:
+                        pass
+                    await self._emit(
+                        state, stage="Failed", status="error",
+                        error="Your Welcome to the Jungle session has expired and we couldn't reconnect automatically. Please check your WTTJ credentials in your settings.",
+                        error_code="INVALID_CREDENTIALS",
+                    )
+                    return {
+                        "error": "Your Welcome to the Jungle session has expired and we couldn't reconnect automatically. Please check your WTTJ credentials in your settings.",
+                        "error_code": "INVALID_CREDENTIALS",
+                    }
+                self._plog("session recovered via fallback login")
 
             self._plog("clicking 'Trouver un job' nav button")
             await human_click(self.page.locator('a[data-testid="nav-find-a-job-button"]'))
@@ -824,6 +972,8 @@ class WelcomeToTheJungleWorker:
             self._plog("browser auth initialization failed")
             await self._emit(state, stage="Failed", status="error", error="Failed to initialize browser with session.", error_code="BROWSER_AUTH_FAILED")
             return {"error": "Failed to initialize WTTJ browser with session.", "error_code": "BROWSER_AUTH_FAILED"}
+
+    
 
     async def go_to_job_board(self, state: JobApplicationState):
         await self._emit(state, "Navigating to Job Board", stage_code=StageCode.NAVIGATING)

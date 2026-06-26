@@ -396,6 +396,104 @@ class ApecWorker():
         except Exception:
             return default_value
 
+
+    async def _is_session_valid(self) -> bool:
+        """The logout <li> only renders for an authenticated user.
+        Present -> session live. Absent -> expired."""
+        try:
+            await self.page.wait_for_selector(
+                'li[id="header-logout"]', state="attached", timeout=45000
+            )
+            self._plog("session check: logout button present -> session VALID")
+            return True
+        except Exception:
+            self._plog("session check: no logout button -> session EXPIRED")
+            return False
+
+    
+    async def _perform_auto_login(self, state: JobApplicationState) -> bool:
+        """Full-automation credential login, mirroring request_login's logic.
+        Assumes the browser/page are booted and on the APEC homepage.
+        Returns True on success and re-saves the session."""
+        creds = state.get("credentials")
+        user_id = state["user"].id
+
+        if not (creds and creds.get("apec")):
+            self._plog("re-login: no stored APEC credentials -> cannot auto-login")
+            return False
+
+        login_plain = None
+        pass_plain = None
+        try:
+            login_plain = await self.encryption_service.decrypt(creds["apec"].login_encrypted)
+            pass_plain = await self.encryption_service.decrypt(creds["apec"].password_encrypted)
+            self._plog("re-login: credentials decrypted")
+
+            # Open login modal
+            self._plog("re-login: opening login modal")
+            for attempt in range(3):
+                try:
+                    await self.page.wait_for_selector('li[id="header-monespace"]', state="visible", timeout=30000)
+                    await human_click(self.page.locator('li[id="header-monespace"]'))
+                    await self.page.wait_for_selector('input[id="emailid"]', state="visible", timeout=15000)
+                    break
+                except Exception:
+                    if attempt == 2:
+                        self._plog("re-login: login modal never opened")
+                        return False
+                    await self.page.reload(wait_until="networkidle")
+                    await asyncio.sleep(2 ** attempt)
+
+            # Fill credentials + submit
+            self._plog("re-login: typing credentials")
+            for attempt in range(3):
+                try:
+                    await self.page.locator('input[id="emailid"]').clear()
+                    await human_delay(300, 700)
+                    await human_type(self.page.locator('input[id="emailid"]'), login_plain)
+                    await human_delay(400, 900)
+                    await self.page.locator('input[id="password"]').clear()
+                    await human_delay(200, 500)
+                    await human_type(self.page.locator('input[id="password"]'), pass_plain)
+                    await human_delay(600, 1500)
+                    await self.page.wait_for_selector('button[type="submit"][value="Login"]', state="visible", timeout=10000)
+                    await self.page.locator('button[type="submit"][value="Login"]').first.click()
+                    self._plog("re-login: credentials submitted")
+                    break
+                except Exception:
+                    if attempt == 2:
+                        self._plog("re-login: credential submission failed")
+                        return False
+                    await asyncio.sleep(2 ** attempt)
+
+            # Proof of login
+            self._plog("re-login: waiting for candidat URL confirmation")
+            for attempt in range(3):
+                try:
+                    await self.page.wait_for_url("**/candidat**", timeout=30000)
+                    await self.page.goto(f"{self.base_url}candidat.html", wait_until="networkidle", timeout=90000)
+                    break
+                except Exception:
+                    if attempt == 2:
+                        self._plog("re-login: confirmation never received -> bad credentials?")
+                        return False
+                    await asyncio.sleep(2 ** attempt)
+
+            await self._save_auth_state(str(user_id))
+            self._plog("re-login successful -> session re-saved")
+            return True
+
+        except Exception:
+            logger.exception("[APEC] Re-login failed")
+            self._plog("re-login crashed with unexpected error")
+            return False
+
+        finally:
+            if login_plain is not None:
+                del login_plain
+            if pass_plain is not None:
+                del pass_plain
+
     # =========================================================================
     # NODES
     # =========================================================================
@@ -452,7 +550,6 @@ class ApecWorker():
             self._plog("browser session failed to start")
             return {"error": "Failed to start the secure browsing session. Our servers might be under heavy load, please try again."}
 
-    # --- NODE 1 Bis: Boot & Inject Session (SUBMIT track) ---
     async def start_session_with_auth(self, state: JobApplicationState):
         await self._emit(state, "Initializing Secure Browser", stage_code=StageCode.INITIALIZING_BROWSER)
         logger.info("[APEC] Booting browser (session injection)")
@@ -465,7 +562,7 @@ class ApecWorker():
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless= state["preferences"].browser_headless,
+                headless=state["preferences"].browser_headless,
                 args=['--disable-blink-features=AutomationControlled'],
             )
 
@@ -518,9 +615,27 @@ class ApecWorker():
 
             await self._handle_cookies()
             await human_warmup(self.page, self.base_url)
-            self._plog("clicking 'Je suis candidat'")
-            await human_click(self.page.locator('div[class="card-title"] h2:has-text("Je suis candidat")'))
 
+            # --- SESSION VALIDITY GATE ---
+            if await self._is_session_valid():
+                # Valid session: enter the candidate search area via the homepage card.
+                self._plog("session valid -> clicking 'Je suis candidat'")
+                await human_click(self.page.locator('div[class="card-title"] h2:has-text("Je suis candidat")'))
+            else:
+                # Expired session: re-authenticate using request_login's full-auto logic.
+                self._plog("session expired -> re-authenticating via auto-login")
+                await self.page.goto(self.base_url, wait_until="networkidle", timeout=90000)
+                if not await self._perform_auto_login(state):
+                    self._plog("auto-login fallback failed -> aborting SUBMIT track")
+                    try:
+                        os.remove(self._get_session_file_path(user_id))
+                    except OSError:
+                        pass
+                    return {"error": "Your APEC session has expired and we couldn't reconnect automatically. Please check your APEC credentials in your settings."}
+                # _perform_auto_login lands on candidat.html already logged in;
+                # NO "Je suis candidat" click needed here.
+
+            # --- BOTH PATHS CONVERGE: apply filters + load results ---
             search_entity = state["job_search"]
             job_title = search_entity.job_title
             contract_types = getattr(search_entity, 'contract_types', [])
