@@ -282,6 +282,10 @@ class AgentStateDB(Base):
         index=True,
     )
     is_shutdown: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_heartbeat: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
 
     user: Mapped["UserDB"] = relationship("UserDB", back_populates="agent_states")
     

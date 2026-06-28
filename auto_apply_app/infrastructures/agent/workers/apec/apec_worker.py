@@ -16,7 +16,10 @@ from auto_apply_app.domain.entities.job_offer import JobOffer
 from auto_apply_app.domain.value_objects import ContractType, JobBoard, ApplicationStatus
 
 # --- INFRA & APP IMPORTS ---
-from auto_apply_app.application.use_cases.agent_state_use_cases import IsAgentKilledForSearchUseCase
+from auto_apply_app.application.use_cases.agent_state_use_cases import (
+    IsAgentKilledForSearchUseCase,
+    HeartbeatAgentForSearchUseCase,
+)
 from auto_apply_app.infrastructures.agent.state import JobApplicationState
 from auto_apply_app.infrastructures.agent.stage_codes import StageCode
 from auto_apply_app.application.use_cases.agent_use_cases import (
@@ -50,6 +53,7 @@ class ApecWorker():
         encryption_service: EncryptionServicePort,
         file_storage: FileStoragePort,
         is_agent_killed_for_search: IsAgentKilledForSearchUseCase,
+        heartbeat: HeartbeatAgentForSearchUseCase,
     ):
         # Static Dependencies
         self.get_ignored_hashes = get_ignored_hashes
@@ -57,6 +61,7 @@ class ApecWorker():
         self.base_url = "https://www.apec.fr/"
         self.file_storage = file_storage
         self.is_agent_killed_for_search = is_agent_killed_for_search
+        self.heartbeat = heartbeat
 
         # Runtime State (Lazy Initialization)
         self.playwright: Optional[Playwright] = None
@@ -79,6 +84,13 @@ class ApecWorker():
         """Strategic print logging: [Worker for user_id] : task"""
         uid = user_id if user_id is not None else self._uid        
         print(f"[{self._source_name} for {uid}] : {task}", flush=True)
+
+    async def _beat(self, state: JobApplicationState):
+        """Mark the agent alive. Fail-soft: never blocks or aborts a node."""
+        try:
+            await self.heartbeat.execute(state["job_search"].id)
+        except Exception:
+            pass
 
     async def route_node_exit(self, state: JobApplicationState) -> str:
         if state.get("error"):
@@ -501,6 +513,7 @@ class ApecWorker():
     # --- NODE 1: Start Session (SCRAPE track) ---
     async def start_session(self, state: JobApplicationState):
         await self._emit(state, "Initializing Browser", stage_code=StageCode.INITIALIZING_BROWSER)
+        await self._beat(state)
         logger.info("[APEC] Starting session")
         self._uid = str(state["user"].id)
         self._plog("NODE start_session -> launching stealth browser (SCRAPE track)")
@@ -552,6 +565,7 @@ class ApecWorker():
 
     async def start_session_with_auth(self, state: JobApplicationState):
         await self._emit(state, "Initializing Secure Browser", stage_code=StageCode.INITIALIZING_BROWSER)
+        await self._beat(state)
         logger.info("[APEC] Booting browser (session injection)")
         user_id = str(state["user"].id)
         self._uid = user_id
@@ -666,6 +680,7 @@ class ApecWorker():
     # --- NODE 2: Navigation ---
     async def go_to_job_board(self, state: JobApplicationState):
         await self._emit(state, "Navigating to Job Board", stage_code=StageCode.NAVIGATING)
+        await self._beat(state)
         logger.info("[APEC] Navigating to board")
         self._plog("NODE go_to_job_board -> navigating to apec.fr")
         try:
@@ -693,6 +708,7 @@ class ApecWorker():
     # --- NODE 3: Login ---
     async def request_login(self, state: JobApplicationState):
         await self._emit(state, "Authenticating", stage_code=StageCode.AUTHENTICATING)
+        await self._beat(state)
 
         prefs = state["preferences"]
         creds = state.get("credentials")
@@ -805,6 +821,7 @@ class ApecWorker():
     # --- NODE 4: Search ---
     async def search_jobs(self, state: JobApplicationState):
         await self._emit(state, "Searching for Jobs", stage_code=StageCode.SEARCHING)
+        await self._beat(state)
         search_entity = state["job_search"]
         job_title = search_entity.job_title
         contract_types = getattr(search_entity, 'contract_types', [])
@@ -840,6 +857,7 @@ class ApecWorker():
     # --- NODE 5: Scrape Jobs ---
     async def get_matched_jobs(self, state: JobApplicationState):
         await self._emit(state, "Extracting Job Data", stage_code=StageCode.EXTRACTING_DATA)
+        await self._beat(state)
         logger.info("[APEC] Scraping jobs")
 
         user_id = state["user"].id
@@ -867,6 +885,7 @@ class ApecWorker():
 
         try:
             while len(found_job_entities) < worker_job_limit and page_number <= max_pages:
+                await self._beat(state)
                 logger.info("[APEC] Processing page %s", page_number)
                 self._plog(f"processing results page {page_number}")
 
@@ -887,6 +906,8 @@ class ApecWorker():
                 for i in range(count):
                     if len(found_job_entities) >= worker_job_limit:
                         break
+
+                    await self._beat(state)
 
                     cards = self.page.locator(self.CARD_SELECTOR)
                     card = cards.nth(i)
@@ -1027,6 +1048,7 @@ class ApecWorker():
     # --- NODE 7: Submit Applications ---
     async def submit_applications(self, state: JobApplicationState):
         await self._emit(state, "Submitting Applications", stage_code=StageCode.SUBMITTING)
+        await self._beat(state)
         logger.info("[APEC] Submitting applications")
 
         jobs_to_process = state.get("processed_offers", [])
@@ -1047,6 +1069,7 @@ class ApecWorker():
 
         i = 0
         for offer in apec_jobs:
+            await self._beat(state)
             if len(successful_submissions) >= assigned_submit_limit:
                 logger.info("[APEC] Reached assigned submission limit (%s)", assigned_submit_limit)
                 self._plog(f"submission limit reached ({assigned_submit_limit}) -> stopping")

@@ -19,7 +19,8 @@ from auto_apply_app.infrastructures.api.schema.agent_schema import (
     AgentViewModel,
 )
 from auto_apply_app.interfaces.viewmodels.job_offer_vm import JobReviewViewModel
-from auto_apply_app.interfaces.viewmodels.job_search_vm import JobSearchSummaryViewModel
+from auto_apply_app.interfaces.viewmodels.job_search_vm import JobSearchSummaryViewModel, SearchStatusViewModel
+from auto_apply_app.interfaces.viewmodels.agent_state_vm import AgentLivenessViewModel
 
 
 logger = logging.getLogger(__name__)
@@ -243,6 +244,24 @@ async def get_jobs_for_review(
     return handle_result(result)
 
 
+@router.get(
+    "/{search_id}/status",
+    response_model=SearchStatusViewModel,
+    status_code=status.HTTP_200_OK,
+    summary="Get the terminal status of a search (complete vs failed)",
+)
+async def get_search_status(
+    search_id: str,
+    current_user_id: CurrentUserId,
+    controller: AgentControllerDep,
+):
+    result = await controller.handle_get_search_status(
+        user_id=current_user_id,
+        search_id=search_id,
+    )
+    return handle_result(result)
+
+
 @router.patch(
     "/jobs/{job_id}/cover-letter",
     status_code=status.HTTP_200_OK,
@@ -312,5 +331,28 @@ async def list_recent_searches(
     result = await controller.handle_list_recent_searches(
         user_id=current_user_id,
         limit=limit,
+    )
+    return handle_result(result)
+
+
+# ============================================================================
+# AGENT LIVENESS (SSE reconnection poll)
+# ============================================================================
+
+@router.get(
+    "/{search_id}/liveness",
+    response_model=AgentLivenessViewModel,
+    status_code=status.HTTP_200_OK,
+    summary="Poll whether the agent for this search is still alive",
+)
+async def get_agent_liveness(
+    search_id: str,
+    current_user_id: CurrentUserId,
+    container: Annotated[Application, Depends(get_container)],
+):
+    controller = container.agent_state_controller
+    result = await controller.handle_get_liveness(
+        user_id=current_user_id,
+        search_id=search_id,
     )
     return handle_result(result)

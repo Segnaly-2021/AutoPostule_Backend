@@ -498,6 +498,33 @@ class GetJobsForReviewUseCase:
             return Result.failure(Error.system_error("An unexpected error occurred while retrieving jobs for review."))
 
 @dataclass
+class GetSearchStatusUseCase:
+    """
+    Returns ONLY the search_status for one search, for the frontend's terminal
+    disambiguation (complete vs failed). Ownership-checked.
+    """
+    uow: UnitOfWork
+
+    async def execute(self, user_id: UUID, search_id: UUID) -> Result:
+        try:
+            async with self.uow as uow:
+                search = await uow.search_repo.get(search_id)
+                if not search:
+                    return Result.failure(Error.not_found("JobSearch", str(search_id)))
+                if search.user_id != user_id:
+                    return Result.failure(
+                        Error.unauthorized("You do not own this job search.")
+                    )
+                # SearchStatus enum → stable token (name), e.g. "COMPLETED".
+                return Result.success({"search_status": search.search_status.name})
+        except Exception:
+            logger.exception("GetSearchStatusUseCase failed for %s", search_id)
+            return Result.failure(
+                Error.system_error("Could not retrieve search status.")
+            )
+
+
+@dataclass
 class UpdateCoverLetterUseCase:
     """
     Update the cover letter for a job application.
@@ -671,3 +698,30 @@ class ConsumeAiCreditsUseCase:
         except Exception:
             logger.exception(f"ConsumeAiCreditsUseCase failed for user {user_id}")
             return Result.failure(Error.system_error("An unexpected error occurred while updating AI credits."))
+
+
+@dataclass
+class SetSearchStatusUseCase:
+    """
+    Persists a terminal search_status (PAUSED/FAILED) for a search.
+    Called by the master at terminal transitions that are emitted over SSE but
+    were never saved to the DB. Fail-soft: a status write miss must never crash
+    or abort the agent run.
+    """
+    uow: UnitOfWork
+
+    async def execute(self, search_id: UUID, status: SearchStatus) -> Result:
+        try:
+            async with self.uow as uow:
+                search = await uow.search_repo.get(search_id)
+                if not search:
+                    return Result.failure(Error.not_found("JobSearch", str(search_id)))
+                # Direct assignment: PAUSED/FAILED have no guarded domain methods,
+                # matching the pattern used in UpdateJobSearchUseCase.
+                search.search_status = status
+                await uow.search_repo.save(search)
+            return Result.success(True)
+        except Exception:
+            logger.exception("SetSearchStatusUseCase failed for %s", search_id)
+            # Fail-soft: a status write miss should not crash the run.
+            return Result.success(False)

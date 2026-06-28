@@ -71,6 +71,8 @@ from auto_apply_app.application.use_cases.agent_use_cases import (
     UpdateCoverLetterUseCase,
     ConsumeAiCreditsUseCase,
     ListRecentSearchesUseCase,  # NEW
+    SetSearchStatusUseCase,  # NEW
+    GetSearchStatusUseCase,  # NEW
 )
 from auto_apply_app.application.use_cases.subscription_use_cases import (
     GetUserSubscriptionUseCase,
@@ -96,6 +98,8 @@ from auto_apply_app.application.use_cases.agent_state_use_cases import (
     CreateAgentStateForSearchUseCase,
     RequestAgentShutdownUseCase,
     IsAgentKilledForSearchUseCase,
+    GetAgentLivenessForSearchUseCase,  # NEW
+    HeartbeatAgentForSearchUseCase,  # NEW
 )
 
 from auto_apply_app.application.use_cases.agent_usage_use_cases import CompleteAgentRunUseCase
@@ -304,6 +308,8 @@ class Application:
 
         is_agent_killed_uc = IsAgentKilledForSearchUseCase(uow)
         complete_agent_run_uc = CompleteAgentRunUseCase(uow)
+        heartbeat_uc = HeartbeatAgentForSearchUseCase(uow)  # NEW
+        set_search_status_uc = SetSearchStatusUseCase(uow)  # NEW
 
         agent_service = create_agent(
             results_saver=SaveJobApplicationsUseCase(uow),
@@ -315,6 +321,8 @@ class Application:
             create_agent_state_use_case=CreateAgentStateForSearchUseCase(uow),
             is_agent_killed_for_search_use_case=is_agent_killed_uc,
             complete_agent_run_use_case=complete_agent_run_uc,
+            heartbeat_use_case=heartbeat_uc,  # NEW
+            set_search_status_use_case=set_search_status_uc,  # NEW
             get_daily_stats_use_case=GetDailyStatsUseCase(uow),
             cleanup_unsubmitted_use_case=CleanupUnsubmittedJobsUseCase(uow),
             get_or_create_fingerprint_use_case=get_or_create_fingerprint_uc,
@@ -330,6 +338,7 @@ class Application:
             approve_job_use_case=ApproveJobUseCase(uow),
             discard_job_use_case=DiscardJobUseCase(uow),
             list_recent_searches_use_case=ListRecentSearchesUseCase(uow),  # NEW
+            get_search_status_use_case=GetSearchStatusUseCase(uow),  # NEW
             presenter=self.agent_presenter,
             job_presenter=self.job_presenter,
             search_presenter=self.search_presenter,  # NEW
@@ -362,6 +371,7 @@ class Application:
         return AgentStateController(
             get_agent_state_use_case=GetAgentStateUseCase(uow),
             request_shutdown_use_case=RequestAgentShutdownUseCase(uow),
+            get_liveness_use_case=GetAgentLivenessForSearchUseCase(uow),  # NEW
             presenter=self.agent_state_presenter,
         )
 

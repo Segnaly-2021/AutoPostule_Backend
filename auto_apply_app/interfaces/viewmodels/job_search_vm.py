@@ -43,3 +43,9 @@ class JobSearchSummaryViewModel:
     location: str
     min_salary: int
     updated_at: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class SearchStatusViewModel:
+    """Single-field VM for terminal disambiguation (complete vs failed)."""
+    searchStatus: str

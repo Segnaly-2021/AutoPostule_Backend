@@ -29,6 +29,7 @@ class AgentStateRepoDB(AgentStateRepository):
             user_id=agent_state.user_id,
             search_id=agent_state.search_id,
             is_shutdown=agent_state.is_shutdown,
+            last_heartbeat=agent_state.last_heartbeat,
         )
         await self.session.merge(agent_state_db)
 
@@ -39,4 +40,5 @@ class AgentStateRepoDB(AgentStateRepository):
         )
         state.id = agent_state_db.id
         state.is_shutdown = agent_state_db.is_shutdown
+        state.last_heartbeat = agent_state_db.last_heartbeat
         return state

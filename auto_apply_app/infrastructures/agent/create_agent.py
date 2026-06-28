@@ -19,7 +19,9 @@ from auto_apply_app.application.use_cases.agent_state_use_cases import (
     GetAgentStateUseCase,
     CreateAgentStateForSearchUseCase,
     IsAgentKilledForSearchUseCase,
+    HeartbeatAgentForSearchUseCase,  # NEW
 )
+from auto_apply_app.application.use_cases.agent_use_cases import SetSearchStatusUseCase  # NEW
 from auto_apply_app.application.use_cases.agent_usage_use_cases import CompleteAgentRunUseCase
 from auto_apply_app.application.use_cases.fingerprint_use_cases import GetOrCreateUserFingerprintUseCase
 
@@ -38,6 +40,8 @@ def create_agent(
     create_agent_state_use_case: CreateAgentStateForSearchUseCase,     # NEW
     is_agent_killed_for_search_use_case: IsAgentKilledForSearchUseCase, # NEW
     complete_agent_run_use_case: CompleteAgentRunUseCase,               # NEW
+    heartbeat_use_case: HeartbeatAgentForSearchUseCase,                 # NEW
+    set_search_status_use_case: SetSearchStatusUseCase,                 # NEW
     cleanup_unsubmitted_use_case: CleanupUnsubmittedJobsUseCase,
     get_daily_stats_use_case: GetDailyStatsUseCase,
     get_or_create_fingerprint_use_case: GetOrCreateUserFingerprintUseCase,
@@ -56,13 +60,15 @@ def create_agent(
        encryption_service=encryption_service,
        file_storage=file_storage,
        is_agent_killed_for_search=is_agent_killed_for_search_use_case,  # CHANGED
+       heartbeat=heartbeat_use_case,  # NEW
     )
-    
+
     hw_worker = HelloWorkWorker(
         get_ignored_hashes=get_ignored_hashes_use_case,
         encryption_service=encryption_service,
         file_storage=file_storage,
         is_agent_killed_for_search=is_agent_killed_for_search_use_case,  # CHANGED
+        heartbeat=heartbeat_use_case,  # NEW
     )
 
     wttj_worker = WelcomeToTheJungleWorker(
@@ -71,6 +77,7 @@ def create_agent(
         file_storage=file_storage,
         api_keys=api_keys,
         is_agent_killed_for_search=is_agent_killed_for_search_use_case,  # CHANGED
+        heartbeat=heartbeat_use_case,  # NEW
     )
     
     return MasterAgent(
@@ -86,6 +93,8 @@ def create_agent(
         create_agent_state=create_agent_state_use_case,
         is_agent_killed_for_search=is_agent_killed_for_search_use_case,
         complete_agent_run=complete_agent_run_use_case,
+        heartbeat=heartbeat_use_case,  # NEW
+        set_search_status=set_search_status_use_case,  # NEW
         get_daily_stats=get_daily_stats_use_case,
         get_or_create_fingerprint=get_or_create_fingerprint_use_case,
         proxy_service=proxy_service,

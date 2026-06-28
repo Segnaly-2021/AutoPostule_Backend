@@ -14,3 +14,11 @@ class AgentStateMessageViewModel:
     message: str
     isShutdown: bool
     searchId: Optional[str] = None  # NEW
+
+
+@dataclass
+class AgentLivenessViewModel:
+    searchId: str
+    isAlive: bool
+    isShutdown: bool
+    lastHeartbeat: Optional[str] = None

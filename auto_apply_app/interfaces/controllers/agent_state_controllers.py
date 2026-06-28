@@ -8,6 +8,7 @@ from auto_apply_app.interfaces.presenters.base_presenter import AgentStatePresen
 from auto_apply_app.application.use_cases.agent_state_use_cases import (
     GetAgentStateUseCase,
     RequestAgentShutdownUseCase,
+    GetAgentLivenessForSearchUseCase,
 )
 
 
@@ -15,6 +16,7 @@ from auto_apply_app.application.use_cases.agent_state_use_cases import (
 class AgentStateController:
     get_agent_state_use_case: GetAgentStateUseCase
     request_shutdown_use_case: RequestAgentShutdownUseCase
+    get_liveness_use_case: GetAgentLivenessForSearchUseCase
     presenter: AgentStatePresenter
 
     async def handle_get(self, user_id: str) -> OperationResult:
@@ -23,6 +25,18 @@ class AgentStateController:
             if result.is_success:
                 view_model = self.presenter.present_state(result.value)
                 return OperationResult.succeed(value=view_model)
+            return self._present_error(result)
+        except ValueError as e:
+            return self._present_validation_exception(e)
+
+    async def handle_get_liveness(self, user_id: str, search_id: str) -> OperationResult:
+        try:
+            result = await self.get_liveness_use_case.execute(
+                UUID(user_id.strip()), UUID(search_id.strip()),
+            )
+            if result.is_success:
+                vm = self.presenter.present_liveness(result.value)
+                return OperationResult.succeed(value=vm)
             return self._present_error(result)
         except ValueError as e:
             return self._present_validation_exception(e)

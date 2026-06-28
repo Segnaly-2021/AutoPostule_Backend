@@ -19,7 +19,10 @@ from auto_apply_app.domain.value_objects import ContractType, JobBoard, Applicat
 # --- INFRA & APP IMPORTS ---
 from auto_apply_app.infrastructures.agent.state import JobApplicationState
 from auto_apply_app.infrastructures.agent.stage_codes import StageCode
-from auto_apply_app.application.use_cases.agent_state_use_cases import IsAgentKilledForSearchUseCase
+from auto_apply_app.application.use_cases.agent_state_use_cases import (
+    IsAgentKilledForSearchUseCase,
+    HeartbeatAgentForSearchUseCase,
+)
 from auto_apply_app.application.service_ports.encryption_port import EncryptionServicePort
 from auto_apply_app.application.service_ports.file_storage_port import FileStoragePort
 from auto_apply_app.application.use_cases.agent_use_cases import GetIgnoredHashesUseCase
@@ -45,12 +48,14 @@ class HelloWorkWorker:
         encryption_service: EncryptionServicePort,
         file_storage: FileStoragePort,
         is_agent_killed_for_search: IsAgentKilledForSearchUseCase,
+        heartbeat: HeartbeatAgentForSearchUseCase,
     ):
         self.get_ignored_hashes = get_ignored_hashes
         self.encryption_service = encryption_service
         self.base_url = "https://www.hellowork.com/fr-fr/"
         self.file_storage = file_storage
         self.is_agent_killed_for_search = is_agent_killed_for_search
+        self.heartbeat = heartbeat
 
         self.playwright: Optional[Playwright] = None
         self.browser: Optional[Browser] = None
@@ -426,6 +431,13 @@ class HelloWorkWorker:
         killed_result = await self.is_agent_killed_for_search.execute(user_id, search_id)
         return killed_result.is_success and killed_result.value
 
+    async def _beat(self, state: JobApplicationState):
+        """Mark the agent alive. Fail-soft: never blocks or aborts a node."""
+        try:
+            await self.heartbeat.execute(state["job_search"].id)
+        except Exception:
+            pass
+
     async def _is_session_valid(self) -> bool:
         """HelloWork renders summary[data-cy="headerAccountMenu"] ('Se connecter')
         ONLY when logged out. Logged-in users get the initials-avatar summary with
@@ -535,6 +547,7 @@ class HelloWorkWorker:
 
     async def start_session(self, state: JobApplicationState):
         await self._emit(state, "Initializing Browser", stage_code=StageCode.INITIALIZING_BROWSER)
+        await self._beat(state)
         logger.info("[HW] Starting session")
         self._uid = str(state["user"].id)
         self._plog("NODE start_session -> launching stealth browser (SCRAPE track)")
@@ -586,6 +599,7 @@ class HelloWorkWorker:
 
     async def start_session_with_auth(self, state: JobApplicationState):
         await self._emit(state, "Initializing Secure Browser", stage_code=StageCode.INITIALIZING_BROWSER)
+        await self._beat(state)
         logger.info("[HW] Booting browser (session injection)")
         user_id = str(state["user"].id)
         self._uid = user_id
@@ -722,6 +736,7 @@ class HelloWorkWorker:
 
     async def go_to_job_board(self, state: JobApplicationState):
         await self._emit(state, "Navigating to Job Board", stage_code=StageCode.NAVIGATING)
+        await self._beat(state)
         logger.info("[HW] Navigating to HelloWork")
         self._plog("NODE go_to_job_board -> navigating to hellowork.com")
         try:
@@ -751,6 +766,7 @@ class HelloWorkWorker:
 
     async def request_login(self, state: JobApplicationState):
         await self._emit(state, "Authenticating", stage_code=StageCode.AUTHENTICATING)
+        await self._beat(state)
         prefs = state["preferences"]
         creds = state.get("credentials")
         user_id = str(state["user"].id)
@@ -859,6 +875,7 @@ class HelloWorkWorker:
 
     async def search_jobs(self, state: JobApplicationState):
         await self._emit(state, "Searching for Jobs", stage_code=StageCode.SEARCHING)
+        await self._beat(state)
 
         search_entity = state["job_search"]
         job_title = search_entity.job_title
@@ -918,6 +935,7 @@ class HelloWorkWorker:
 
     async def get_matched_jobs(self, state: JobApplicationState):
         await self._emit(state, "Extracting Job Data", stage_code=StageCode.EXTRACTING_DATA)
+        await self._beat(state)
         logger.info("[HW] Scraping jobs")
 
         user_id = state["user"].id
@@ -939,6 +957,7 @@ class HelloWorkWorker:
             while len(found_job_entities) < worker_job_limit and page_number <= max_pages:
 
                 # 🚨 INJECTED KILL CHECK: Before processing a new page
+                await self._beat(state)
                 if await self._is_killed(state):
                     logger.info("[HW] Kill switch detected. Halting pagination.")
                     self._plog(f"kill switch detected mid-scrape -> returning {len(found_job_entities)} offers found so far")
@@ -965,6 +984,7 @@ class HelloWorkWorker:
                 for i in range(count):
 
                     # 🚨 INJECTED KILL CHECK: Before clicking a new card
+                    await self._beat(state)
                     if await self._is_killed(state):
                         logger.info("[HW] Kill switch detected. Halting card processing.")
                         self._plog(f"kill switch detected mid-page -> returning {len(found_job_entities)} offers found so far")
@@ -1114,6 +1134,7 @@ class HelloWorkWorker:
 
     async def submit_applications(self, state: JobApplicationState):
         await self._emit(state, "Submitting Applications", stage_code=StageCode.SUBMITTING)
+        await self._beat(state)
         logger.info("[HW] Submitting applications")
         jobs_to_submit = state.get("processed_offers", [])
         user = state["user"]
@@ -1135,6 +1156,7 @@ class HelloWorkWorker:
         for offer in hw_jobs:
 
             # 🚨 INJECTED KILL CHECK: Before starting the next submission
+            await self._beat(state)
             if await self._is_killed(state):
                 logger.info("[HW] Kill switch detected. Halting submissions.")
                 self._plog(f"kill switch detected mid-submission -> returning {len(successful_submissions)} submitted so far")

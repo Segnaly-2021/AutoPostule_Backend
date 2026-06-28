@@ -18,12 +18,13 @@ from auto_apply_app.interfaces.viewmodels.base import ErrorViewModel
 from auto_apply_app.application.dtos.auth_user_dtos import LoginResponse
 from auto_apply_app.application.dtos.job_offer_dtos import JobOfferResponse
 from auto_apply_app.interfaces.viewmodels.job_offer_vm import JobOfferViewModel, DashboardViewModel
-from auto_apply_app.interfaces.viewmodels.job_search_vm import JobSearchViewModel, JobSearchSummaryViewModel
+from auto_apply_app.interfaces.viewmodels.job_search_vm import JobSearchViewModel, JobSearchSummaryViewModel, SearchStatusViewModel
 from auto_apply_app.interfaces.viewmodels.agent_vm import AgentViewModel
 from auto_apply_app.domain.entities.agent_state import AgentState
 from auto_apply_app.interfaces.viewmodels.agent_state_vm import (
     AgentStateViewModel,
     AgentStateMessageViewModel,
+    AgentLivenessViewModel,
 )
 from auto_apply_app.interfaces.viewmodels.preferences_vm import PreferencesViewModel
 from auto_apply_app.interfaces.viewmodels.free_search_vm import FreeSearchResultViewModel
@@ -79,6 +80,10 @@ class JobSearchPresenter(ABC):
     def present_search_list(
         self, summaries: List[JobSearchSummaryResponse]
     ) -> List[JobSearchSummaryViewModel]:
+        pass
+
+    @abstractmethod
+    def present_status(self, data: dict) -> SearchStatusViewModel:
         pass
 
     @abstractmethod
@@ -165,6 +170,10 @@ class AgentStatePresenter(ABC):
 
     @abstractmethod
     def present_message(self, message: str, agent_state: AgentState) -> AgentStateMessageViewModel:
+        pass
+
+    @abstractmethod
+    def present_liveness(self, data: dict) -> AgentLivenessViewModel:
         pass
 
     @abstractmethod

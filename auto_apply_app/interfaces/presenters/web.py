@@ -25,6 +25,7 @@ from auto_apply_app.domain.entities.agent_state import AgentState
 from auto_apply_app.interfaces.viewmodels.agent_state_vm import (
     AgentStateViewModel,
     AgentStateMessageViewModel,
+    AgentLivenessViewModel,
 )
 
 from auto_apply_app.interfaces.viewmodels.user_vm import (
@@ -43,7 +44,7 @@ from auto_apply_app.application.dtos.preferences_dtos import UserPreferencesResp
 from auto_apply_app.interfaces.viewmodels.base import ErrorViewModel
 from auto_apply_app.domain.entities.job_search import JobSearch
 from auto_apply_app.application.dtos.agent_dtos import AgentResponse
-from auto_apply_app.interfaces.viewmodels.job_search_vm import JobSearchSummaryViewModel, JobSearchViewModel
+from auto_apply_app.interfaces.viewmodels.job_search_vm import JobSearchSummaryViewModel, JobSearchViewModel, SearchStatusViewModel
 from auto_apply_app.domain.value_objects import ApplicationStatus
 from auto_apply_app.interfaces.viewmodels.job_offer_vm import DailyStatsViewModel, JobOfferViewModel, DashboardViewModel, JobReviewViewModel
 from auto_apply_app.interfaces.viewmodels.free_search_vm import (
@@ -371,9 +372,12 @@ class WebJobSearchPresenter(JobSearchPresenter):
             for s in summaries
         ]
 
+    def present_status(self, data: dict) -> SearchStatusViewModel:
+        return SearchStatusViewModel(searchStatus=data["search_status"])
+
     def present_error(self, message: str, error_code: Optional[str] = None) -> ErrorViewModel:
         return ErrorViewModel(message=message, code=error_code)
-    
+
 class WebAgentPresenter(AgentPresenter):
     """
     Concrete implementation of AgentPresenter for Web/REST delivery.
@@ -467,6 +471,14 @@ class WebAgentStatePresenter(AgentStatePresenter):
             message=message,
             isShutdown=agent_state.is_shutdown,
             searchId=str(agent_state.search_id) if agent_state.search_id else None,
+        )
+
+    def present_liveness(self, data: dict) -> AgentLivenessViewModel:
+        return AgentLivenessViewModel(
+            searchId=data["search_id"],
+            isAlive=data["is_alive"],
+            isShutdown=data["is_shutdown"],
+            lastHeartbeat=data.get("last_heartbeat"),
         )
 
     def present_error(self, message: str, error_code: Optional[str] = None) -> ErrorViewModel:

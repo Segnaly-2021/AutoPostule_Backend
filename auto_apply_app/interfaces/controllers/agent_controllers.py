@@ -14,7 +14,8 @@ from auto_apply_app.application.use_cases.agent_use_cases import (
     ResumeJobApplicationUseCase,
     KillJobSearchUseCase,
     UpdateCoverLetterUseCase,
-    ListRecentSearchesUseCase
+    ListRecentSearchesUseCase,
+    GetSearchStatusUseCase,
 )
 # 🚨 Make sure all these are imported!
 from auto_apply_app.application.dtos.agent_dtos import (
@@ -40,6 +41,7 @@ class AgentController:
     approve_job_use_case: ApproveJobUseCase
     discard_job_use_case: DiscardJobUseCase
     list_recent_searches_use_case: ListRecentSearchesUseCase
+    get_search_status_use_case: GetSearchStatusUseCase
     presenter: AgentPresenter
     job_presenter: JobPresenter
     search_presenter: JobSearchPresenter
@@ -276,6 +278,28 @@ class AgentController:
 
         except ValueError as e:
             # covers a malformed user_id UUID too
+            return self._present_validation_exception(e)
+
+    # ---------- GET SEARCH STATUS ----------
+    async def handle_get_search_status(
+        self,
+        user_id: str,
+        search_id: str,
+    ) -> OperationResult:
+        """Return ONLY the terminal status of a search (complete vs failed)."""
+        try:
+            result = await self.get_search_status_use_case.execute(
+                UUID(user_id.strip()),
+                UUID(search_id.strip()),
+            )
+
+            if result.is_success:
+                vm = self.search_presenter.present_status(result.value)
+                return OperationResult.succeed(value=vm)
+
+            return self._present_error(result)
+
+        except ValueError as e:
             return self._present_validation_exception(e)
 
     # --- Private Helpers ---

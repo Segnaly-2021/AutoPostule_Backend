@@ -24,7 +24,7 @@ from auto_apply_app.application.use_cases.fingerprint_use_cases import (
 )
 from auto_apply_app.application.service_ports.agent_port import AgentServicePort
 from auto_apply_app.application.service_ports.file_storage_port import FileStoragePort
-from auto_apply_app.domain.value_objects import ApplicationStatus, ClientType, JobBoard
+from auto_apply_app.domain.value_objects import ApplicationStatus, ClientType, JobBoard, SearchStatus
 from auto_apply_app.domain.entities.user import User
 from auto_apply_app.domain.entities.job_search import JobSearch
 from auto_apply_app.domain.entities.user_subscription import UserSubscription
@@ -33,7 +33,6 @@ from auto_apply_app.domain.entities.user_preferences import UserPreferences
 from auto_apply_app.infrastructures.agent.state import JobApplicationState
 from auto_apply_app.infrastructures.agent.stage_codes import StageCode
 from auto_apply_app.application.use_cases.job_offer_use_cases import CleanupUnsubmittedJobsUseCase
-from auto_apply_app.application.use_cases.agent_use_cases import ConsumeAiCreditsUseCase, SaveJobApplicationsUseCase
 from auto_apply_app.infrastructures.agent.workers.wttj.wttj_worker import WelcomeToTheJungleWorker
 from auto_apply_app.infrastructures.agent.workers.hellowork.hw_worker_v1 import HelloWorkWorker
 from auto_apply_app.infrastructures.agent.workers.apec.apec_worker import ApecWorker
@@ -44,6 +43,12 @@ from auto_apply_app.application.use_cases.agent_state_use_cases import (
     GetAgentStateUseCase,
     CreateAgentStateForSearchUseCase,
     IsAgentKilledForSearchUseCase,
+    HeartbeatAgentForSearchUseCase,
+)
+from auto_apply_app.application.use_cases.agent_use_cases import (
+    ConsumeAiCreditsUseCase,
+    SaveJobApplicationsUseCase,
+    SetSearchStatusUseCase,
 )
 from auto_apply_app.application.use_cases.agent_usage_use_cases import CompleteAgentRunUseCase
 
@@ -318,6 +323,8 @@ class MasterAgent(AgentServicePort):
         create_agent_state: CreateAgentStateForSearchUseCase,           # NEW (replaces reset_agent_state)
         is_agent_killed_for_search: IsAgentKilledForSearchUseCase, # NEW
         complete_agent_run: CompleteAgentRunUseCase,               # NEW
+        heartbeat: HeartbeatAgentForSearchUseCase,                 # NEW
+        set_search_status: SetSearchStatusUseCase,                 # NEW
         get_daily_stats: GetDailyStatsUseCase,
         get_or_create_fingerprint: GetOrCreateUserFingerprintUseCase,
         proxy_service: ProxyServicePort,
@@ -338,6 +345,8 @@ class MasterAgent(AgentServicePort):
         self.create_agent_state = create_agent_state           # NEW
         self.is_agent_killed_for_search = is_agent_killed_for_search # NEW
         self.complete_agent_run = complete_agent_run               # NEW
+        self.heartbeat = heartbeat                                 # NEW
+        self.set_search_status = set_search_status                 # NEW
         self.get_daily_stats = get_daily_stats
         self._checkpointer = None
 
@@ -465,7 +474,15 @@ class MasterAgent(AgentServicePort):
         killed_result = await self.is_agent_killed_for_search.execute(user_id, search_id)
         return killed_result.is_success and killed_result.value
 
+    async def _beat(self, state: JobApplicationState):
+        """Mark the agent alive. Fail-soft: never blocks or aborts a node."""
+        try:
+            await self.heartbeat.execute(state["job_search"].id)
+        except Exception:
+            pass
+
     async def dispatch_scrape(self, state: JobApplicationState):
+        await self._beat(state)
         if await self._is_killed(state):
             print("🛑 [Master] Kill switch detected before scrape dispatch. Aborting.")
             return []
@@ -529,8 +546,9 @@ class MasterAgent(AgentServicePort):
 
     async def analyze_and_generate(self, state: JobApplicationState):
         await self._emit(state, "AI Generating Cover Letters", stage_code=StageCode.GENERATING_LETTERS)
-        print("--- [Master Brain] Analyzing Jobs with LLM ---")       
-        
+        await self._beat(state)
+        print("--- [Master Brain] Analyzing Jobs with LLM ---")
+
         user_id = state["user"].id
         raw_offers = state.get("found_raw_offers", [])
 
@@ -571,7 +589,8 @@ class MasterAgent(AgentServicePort):
 
         for offer in jobs_to_analyze:
             print(f"🤖 Generating Cover Letter for [{offer.job_board.name}]: {offer.job_title}")
-            
+
+            await self._beat(state)
             if await self._is_killed(state):
                 print("🛑 [Master Brain] Kill switch detected! Halting LLM generation to save credits.")
                 break
@@ -645,6 +664,9 @@ class MasterAgent(AgentServicePort):
 
         if subscription and subscription.account_type.name == "PREMIUM":
             await self._emit(state, stage="Waiting for User Review", status="paused", stage_code=StageCode.WAITING_REVIEW)
+            # Persist the terminal PAUSED status so ReviewJobsPage reflects it
+            # after a reconnect. Fail-soft: never aborts the run.
+            await self.set_search_status.execute(state["job_search"].id, SearchStatus.PAUSED)
 
         return {
             "processed_offers": processed_offers
@@ -654,6 +676,7 @@ class MasterAgent(AgentServicePort):
     
 
     async def dispatch_submit(self, state: JobApplicationState):
+        await self._beat(state)
         if await self._is_killed(state):
             print("🛑 [Master] Kill switch detected before submit dispatch. Aborting.")
             return []
@@ -730,7 +753,8 @@ class MasterAgent(AgentServicePort):
     async def finalize_batch(self, state: JobApplicationState):
         """Final cleanup and state synchronization."""
         await self._emit(state, "Saving Final Results", stage_code=StageCode.SAVING_RESULTS)
-        
+        await self._beat(state)
+
         user_id = state["user"].id
         search_id = state["job_search"].id
         
@@ -812,6 +836,7 @@ class MasterAgent(AgentServicePort):
         Unified launchpad for the Send() fan-out to workers.
         """
         await self._emit(state, "Launching Submission Workers", stage_code=StageCode.LAUNCHING_SUBMISSION)
+        await self._beat(state)
         print("🚀 [Master] Preparing to dispatch submission workers...")
         return {"status": "ready_for_submission"}
 
@@ -887,6 +912,9 @@ class MasterAgent(AgentServicePort):
         error_msg = state.get("error", "An unknown error occurred during the job search.")
         print(f"❌ [Master] Emitting error signal: {error_msg}")
         await self._emit(state, stage="Failed", status="error", error=error_msg, stage_code=StageCode.FAILED)
+        # Persist the terminal FAILED status so ReviewJobsPage reflects it after a
+        # reconnect. Fail-soft: never aborts the run.
+        await self.set_search_status.execute(state["job_search"].id, SearchStatus.FAILED)
         return {"status": "error"}
 
 
@@ -1155,8 +1183,15 @@ class MasterAgent(AgentServicePort):
                     active_instances.append(worker)
 
         self._active_workers[str(search.id)] = active_instances
-        self._progress_callback = progress_callback 
-        
+        self._progress_callback = progress_callback
+
+        # Seed a fresh heartbeat so the resumed run reads "alive" before the
+        # graph streams (the agent_state row already exists from the initial run).
+        try:
+            await self.heartbeat.execute(search.id)
+        except Exception:
+            pass
+
         try:
             async for _ in app.astream(None, config, subgraphs=True):
                 pass
