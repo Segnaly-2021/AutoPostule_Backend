@@ -8,6 +8,7 @@ from typing import Optional, Callable
 from auto_apply_app.application.common.result import Result, Error
 from auto_apply_app.application.repositories.unit_of_work import UnitOfWork
 from auto_apply_app.application.service_ports.agent_port import AgentServicePort
+from auto_apply_app.application.service_ports.dispatch_port import DispatchPort
 from auto_apply_app.application.dtos.agent_dtos import (
     StartAgentRequest, 
     ResumeAgentRequest, 
@@ -66,12 +67,11 @@ class ListRecentSearchesUseCase:
 @dataclass
 class StartJobSearchAgentUseCase:
     uow: UnitOfWork
-    agent_service: AgentServicePort
+    dispatcher: DispatchPort
 
-    async def execute(
+    async def prepare(
         self,
         request: StartAgentRequest,
-        progress_callback: Optional[Callable] = None,
     ) -> Result:
         try:
             params = request.to_execution_params()
@@ -161,23 +161,16 @@ class StartJobSearchAgentUseCase:
                     user_id=user.id,
                     search_id=search_mission.id,
                     )
+                # Cold-start fix: prepare runs on the API side, before dispatch, so
+                # the row must read *alive* from t=0 to cover the boot gap.
+                agent_state.beat()
                 await uow.agent_state_repo.save(agent_state)
-
-            # 9. Run the agent (outside UoW — long-running, blocking)
-            await self.agent_service.run_job_search(
-                user=user,
-                search=search_mission,
-                subscription=subscription,
-                preferences=preferences,
-                credentials=board_credentials if preferences.is_full_automation else None,
-                progress_callback=progress_callback,
-            )
 
             return Result.success(AgentResponse.from_job_search(
                 search=search_mission,
-                status="started",
+                status="prepared",
                 message=(
-                    f"Parallel job search agent started for "
+                    f"Parallel job search agent prepared for "
                     f"'{params['job_title']}' on {len(board_names)} platforms."
                 ),
             ))
@@ -188,6 +181,17 @@ class StartJobSearchAgentUseCase:
                 Error.system_error("Could not start the job search agent.")
             )
 
+    async def dispatch(self, user_id: str, search_id: str) -> Result:
+        try:
+            await self.dispatcher.dispatch_start(
+                search_id=UUID(str(search_id)),
+                user_id=UUID(str(user_id)),
+            )
+            return Result.success(True)
+        except Exception:
+            logger.exception("StartJobSearchAgentUseCase.dispatch failed for %s", search_id)
+            return Result.failure(Error.system_error("Could not dispatch the job search agent."))
+
 
 @dataclass
 class ResumeJobApplicationUseCase:
@@ -195,12 +199,11 @@ class ResumeJobApplicationUseCase:
     Called when a Premium User clicks "Apply" or "Apply All" after reviewing drafts.
     """
     uow: UnitOfWork
-    agent_service: AgentServicePort
+    dispatcher: DispatchPort
 
-    async def execute(
+    async def prepare(
         self,
         request: ResumeAgentRequest,
-        progress_callback: Optional[Callable] = None,
     ) -> Result:
         try:
             params = request.to_execution_params()
@@ -279,21 +282,10 @@ class ResumeJobApplicationUseCase:
                             Error.validation_error("No approved jobs found")
                         )
 
-            # Resume the agent (outside UoW)
-            await self.agent_service.resume_job_search(
-                user=user,
-                search=search_mission,
-                subscription=subscription,
-                preferences=preferences,
-                approved_jobs=approved_jobs,
-                credentials=board_credentials,
-                progress_callback=progress_callback,
-            )
-
             return Result.success(AgentResponse.from_job_search(
                 search=search_mission,
-                status="resumed",
-                message="Job application workflow resumed",
+                status="prepared",
+                message="Job application workflow prepared",
             ))
 
         except Exception:
@@ -301,6 +293,18 @@ class ResumeJobApplicationUseCase:
             return Result.failure(
                 Error.system_error("Could not resume the job search agent.")
             )
+
+    async def dispatch(self, user_id: str, search_id: str, apply_all: bool) -> Result:
+        try:
+            await self.dispatcher.dispatch_resume(
+                search_id=UUID(str(search_id)),
+                user_id=UUID(str(user_id)),
+                apply_all=apply_all,
+            )
+            return Result.success(True)
+        except Exception:
+            logger.exception("ResumeJobApplicationUseCase.dispatch failed for %s", search_id)
+            return Result.failure(Error.system_error("Could not dispatch the resume agent."))
 
 
 @dataclass

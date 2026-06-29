@@ -2,6 +2,7 @@
 
 import os
 from dataclasses import dataclass
+from functools import cached_property
 from typing import Callable, Optional
 
 from redis.asyncio import Redis
@@ -11,6 +12,17 @@ from auto_apply_app.application.repositories.token_blacklist import TokenBlackli
 from auto_apply_app.application.repositories.unit_of_work import UnitOfWork
 from auto_apply_app.infrastructures.repository_factory import create_repositories
 from auto_apply_app.infrastructures.agent.create_agent import create_agent
+
+# Progress relay + dispatch (Phase A decoupling)
+from auto_apply_app.application.service_ports.progress_broker_port import ProgressBrokerPort
+from auto_apply_app.application.service_ports.dispatch_port import DispatchPort
+from auto_apply_app.infrastructures.progress.redis_progress_broker import RedisProgressBroker
+from auto_apply_app.infrastructures.progress.in_memory_progress_broker import InMemoryProgressBroker
+from auto_apply_app.infrastructures.agent.dispatch.local_dispatcher import LocalDispatcher
+from auto_apply_app.application.use_cases.run_context_use_cases import (
+    LoadStartRunContextUseCase,
+    LoadResumeRunContextUseCase,
+)
 
 # Service Ports
 from auto_apply_app.application.service_ports.password_service_port import PasswordServicePort
@@ -190,6 +202,7 @@ def create_application(
         captcha_port=captcha_port,
         email_service_port=email_service_port,
         rate_limiter=rate_limiter,  # NEW
+        redis_client=redis_client,   # NEW (None in MEMORY mode)
         free_search_presenter=free_search_presenter,
     )
 
@@ -219,6 +232,59 @@ class Application:
     preference_presenter: PreferencesPresenter
     agent_state_presenter: AgentStatePresenter
     free_search_presenter: FreeSearchPresenter
+
+    # Shared Redis client (None in MEMORY mode). Surfaced so the progress
+    # broker can reuse the same connection pool as the rate limiter.
+    redis_client: Optional[Redis] = None   # NEW
+
+    # =========================================================================
+    # SINGLETONS (Phase A decoupling)
+    # =========================================================================
+    # The broker MUST be a singleton so the in-memory impl's queues are shared
+    # between publisher (agent task) and subscriber (SSE generator). The agent
+    # service and dispatcher MUST be singletons so background tasks aren't tied
+    # to a request-scoped object, and so kill finds live workers across requests.
+
+    @cached_property
+    def progress_broker(self) -> ProgressBrokerPort:
+        if self.redis_client is not None:
+            return RedisProgressBroker(self.redis_client)
+        return InMemoryProgressBroker()
+
+    @cached_property
+    def _agent_service(self):
+        uow = self.uow_factory()
+        proxy_service = _resolve_proxy_service()
+        get_or_create_fingerprint_uc = GetOrCreateUserFingerprintUseCase(
+            uow=uow, generator=FingerprintGenerator(),
+        )
+        return create_agent(
+            results_saver=SaveJobApplicationsUseCase(uow),
+            consume_credits_use_case=ConsumeAiCreditsUseCase(uow),
+            get_ignored_hashes_use_case=GetIgnoredHashesUseCase(uow),
+            file_storage=self.file_storage_port,
+            encryption_service=self.encryption_port,
+            get_agent_state_use_case=GetAgentStateUseCase(uow),
+            create_agent_state_use_case=CreateAgentStateForSearchUseCase(uow),
+            is_agent_killed_for_search_use_case=IsAgentKilledForSearchUseCase(uow),
+            complete_agent_run_use_case=CompleteAgentRunUseCase(uow),
+            heartbeat_use_case=HeartbeatAgentForSearchUseCase(uow),
+            set_search_status_use_case=SetSearchStatusUseCase(uow),
+            get_daily_stats_use_case=GetDailyStatsUseCase(uow),
+            cleanup_unsubmitted_use_case=CleanupUnsubmittedJobsUseCase(uow),
+            get_or_create_fingerprint_use_case=get_or_create_fingerprint_uc,
+            proxy_service=proxy_service,
+        )
+
+    @cached_property
+    def _dispatcher(self) -> DispatchPort:
+        uow = self.uow_factory()
+        return LocalDispatcher(
+            agent_service=self._agent_service,
+            broker=self.progress_broker,
+            load_start_ctx=LoadStartRunContextUseCase(uow),
+            load_resume_ctx=LoadResumeRunContextUseCase(uow),
+        )
 
     # =========================================================================
     # CONTROLLER FACTORIES
@@ -300,39 +366,10 @@ class Application:
     def agent_controller(self) -> AgentController:
         uow = self.uow_factory()
 
-        proxy_service = _resolve_proxy_service()
-        get_or_create_fingerprint_uc = GetOrCreateUserFingerprintUseCase(
-            uow=uow,
-            generator=FingerprintGenerator(),
-        )
-
-        is_agent_killed_uc = IsAgentKilledForSearchUseCase(uow)
-        complete_agent_run_uc = CompleteAgentRunUseCase(uow)
-        heartbeat_uc = HeartbeatAgentForSearchUseCase(uow)  # NEW
-        set_search_status_uc = SetSearchStatusUseCase(uow)  # NEW
-
-        agent_service = create_agent(
-            results_saver=SaveJobApplicationsUseCase(uow),
-            consume_credits_use_case=ConsumeAiCreditsUseCase(uow),
-            get_ignored_hashes_use_case=GetIgnoredHashesUseCase(uow),
-            file_storage=self.file_storage_port,
-            encryption_service=self.encryption_port,
-            get_agent_state_use_case=GetAgentStateUseCase(uow),
-            create_agent_state_use_case=CreateAgentStateForSearchUseCase(uow),
-            is_agent_killed_for_search_use_case=is_agent_killed_uc,
-            complete_agent_run_use_case=complete_agent_run_uc,
-            heartbeat_use_case=heartbeat_uc,  # NEW
-            set_search_status_use_case=set_search_status_uc,  # NEW
-            get_daily_stats_use_case=GetDailyStatsUseCase(uow),
-            cleanup_unsubmitted_use_case=CleanupUnsubmittedJobsUseCase(uow),
-            get_or_create_fingerprint_use_case=get_or_create_fingerprint_uc,
-            proxy_service=proxy_service,
-        )
-
         return AgentController(
-            start_agent_use_case=StartJobSearchAgentUseCase(uow, agent_service),
-            resume_agent_use_case=ResumeJobApplicationUseCase(uow, agent_service),
-            kill_agent_use_case=KillJobSearchUseCase(uow, agent_service),
+            start_agent_use_case=StartJobSearchAgentUseCase(uow, self._dispatcher),
+            resume_agent_use_case=ResumeJobApplicationUseCase(uow, self._dispatcher),
+            kill_agent_use_case=KillJobSearchUseCase(uow, self._agent_service),
             get_jobs_for_review_use_case=GetJobsForReviewUseCase(uow),
             update_cover_letter_use_case=UpdateCoverLetterUseCase(uow),
             approve_job_use_case=ApproveJobUseCase(uow),

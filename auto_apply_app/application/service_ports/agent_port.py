@@ -1,7 +1,7 @@
 # auto_apply_app/application/service_ports/agent_port.py
 from uuid import UUID
 from abc import ABC, abstractmethod
-from typing import Callable, Optional
+from typing import Callable, Dict, Optional
 
 from auto_apply_app.domain.entities.user import User
 from auto_apply_app.domain.entities.job_search import JobSearch
@@ -42,17 +42,23 @@ class AgentServicePort(ABC):
         self,
         user: User,
         search: JobSearch,
-        progress_callback: Optional[Callable] = None
+        subscription: UserSubscription,
+        preferences: UserPreferences,
+        approved_jobs: list,
+        credentials: Optional[Dict[str, BoardCredential]] = None,
+        progress_callback: Optional[Callable] = None,
     ) -> None:
         """
         Resumes a paused workflow from a checkpoint.
         Used when Premium users approve drafts.
-        
+
         Args:
             user: The full user entity.
             search: The job search to resume.
             subscription: User's subscription.
-            preferences: User's preferences 
+            preferences: User's preferences
+            approved_jobs: The drafts the user approved for submission.
+            credentials: Board credentials for full-automation mode.
             progress_callback: Optional async function to send progress updates.
         """
         pass

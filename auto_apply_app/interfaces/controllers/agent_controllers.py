@@ -46,8 +46,8 @@ class AgentController:
     job_presenter: JobPresenter
     search_presenter: JobSearchPresenter
 
-    # ---------- START AGENT ----------
-    async def handle_start_agent(
+    # ---------- START ----------
+    async def prepare_start_agent(
         self,
         user_id: str,
         job_title: str,
@@ -56,7 +56,6 @@ class AgentController:
         contract_types: Optional[List[ContractType]] = None,
         min_salary: Optional[int] = None,
         resume_path: Optional[str] = None,
-        progress_callback: Optional[callable] = None
     ) -> OperationResult:
         try:
             request = StartAgentRequest(
@@ -68,50 +67,43 @@ class AgentController:
                 resume_path=resume_path,
                 contract_types=contract_types,
             )
-            
-            result = await self.start_agent_use_case.execute(
-                request,
-                progress_callback=progress_callback
-            )
-
+            result = await self.start_agent_use_case.prepare(request)
             if result.is_success:
                 view_model = self.presenter.present_agent_result(result.value)
                 return OperationResult.succeed(value=view_model)
-            
             return self._present_error(result)
-
         except ValueError as e:
             return self._present_validation_exception(e)
 
+    async def dispatch_start_agent(self, user_id: str, search_id: str) -> OperationResult:
+        result = await self.start_agent_use_case.dispatch(user_id, search_id)
+        if result.is_success:
+            return OperationResult.succeed(value=True)
+        return self._present_error(result)
 
-    # ---------- RESUME AGENT ----------
-    async def handle_resume_agent(
-        self,
-        user_id: str,
-        search_id: str,
-        apply_all: bool = True,
-        progress_callback: Optional[callable] = None
+    # ---------- RESUME ----------
+    async def prepare_resume_agent(
+        self, user_id: str, search_id: str, apply_all: bool = True
     ) -> OperationResult:
         try:
             request = ResumeAgentRequest(
-                user_id=user_id,
-                search_id=search_id,
-                apply_all=apply_all
+                user_id=user_id, search_id=search_id, apply_all=apply_all
             )
-            
-            result = await self.resume_agent_use_case.execute(
-                request,
-                progress_callback=progress_callback
-            )
-
+            result = await self.resume_agent_use_case.prepare(request)
             if result.is_success:
                 view_model = self.presenter.present_agent_result(result.value)
                 return OperationResult.succeed(value=view_model)
-            
             return self._present_error(result)
-
         except ValueError as e:
             return self._present_validation_exception(e)
+
+    async def dispatch_resume_agent(
+        self, user_id: str, search_id: str, apply_all: bool = True
+    ) -> OperationResult:
+        result = await self.resume_agent_use_case.dispatch(user_id, search_id, apply_all)
+        if result.is_success:
+            return OperationResult.succeed(value=True)
+        return self._present_error(result)
 
 
     # ---------- KILL AGENT ----------

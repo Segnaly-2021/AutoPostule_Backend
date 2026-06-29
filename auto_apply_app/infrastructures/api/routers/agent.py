@@ -2,15 +2,14 @@
 from fastapi import APIRouter, status, Depends
 from fastapi.responses import StreamingResponse
 from typing import Annotated, List
-import asyncio
 import json
 import logging
-import dataclasses # Added for safe SSE serialization
 
 from auto_apply_app.infrastructures.api.dependencies.result import handle_result
 from auto_apply_app.infrastructures.api.dependencies.auth_deps import CurrentUserId
 from auto_apply_app.infrastructures.api.dependencies.container_dep import get_container
 from auto_apply_app.infrastructures.configuration.container import Application
+from auto_apply_app.application.service_ports.progress_broker_port import ProgressBrokerPort
 from auto_apply_app.interfaces.controllers.agent_controllers import AgentController
 from auto_apply_app.interfaces.controllers.agent_state_controllers import AgentStateController
 from auto_apply_app.infrastructures.api.schema.agent_schema import (
@@ -42,6 +41,25 @@ def get_agent_state_controller(
 AgentControllerDep = Annotated[AgentController, Depends(get_agent_controller)]
 
 
+def get_progress_broker(
+    container: Annotated[Application, Depends(get_container)]
+) -> ProgressBrokerPort:
+    return container.progress_broker
+
+BrokerDep = Annotated[ProgressBrokerPort, Depends(get_progress_broker)]
+
+
+def _sse_error(op_result) -> str:
+    """Build an SSE error frame. Used when prep/dispatch fails — we cannot call
+    handle_result mid-stream, it raises HTTPException."""
+    err = op_result.error  # ErrorViewModel-like with .message/.code
+    msg = getattr(err, "message", None) or "An unexpected error occurred."
+    code = getattr(err, "code", None) or "SYSTEMERROR"
+    payload = {"source": "MASTER", "stage": "Failed", "status": "error",
+               "error": msg, "error_code": code}
+    return f"data: {json.dumps(payload)}\n\n"
+
+
 # ============================================================================
 # START AGENT ENDPOINTS
 # ============================================================================
@@ -61,7 +79,7 @@ async def start_job_search_agent(
     """
     Start the parallel job search agent for the authenticated user.
     """
-    result = await controller.handle_start_agent(
+    prep = await controller.prepare_start_agent(
         user_id=current_user_id,
         job_title=data.job_title,
         job_boards=data.job_boards, # 🚨 V2 UPDATE: Plural List
@@ -70,69 +88,57 @@ async def start_job_search_agent(
         location=data.location,
         min_salary=data.min_salary,
     )
-    return handle_result(result)
+    if not prep.is_success:
+        return handle_result(prep)
+    await controller.dispatch_start_agent(
+        user_id=current_user_id, search_id=prep.success.search_id
+    )
+    return handle_result(prep)   # AgentViewModel, status "prepared"
 
 
 @router.post("/start/stream")
 async def start_job_search_agent_stream(
     data: StartAgentRequest,
     current_user_id: CurrentUserId,
-    controller: AgentControllerDep
+    controller: AgentControllerDep,
+    broker: BrokerDep,
 ):
     """
     Start the parallel job search agent and stream real-time progress.
     """
-    queue = asyncio.Queue()
-
-    async def send_progress(progress_data):
-        # 🚨 V2 Safety: Safely convert ViewModel dataclasses to dicts for JSON
-        if dataclasses.is_dataclass(progress_data):
-            progress_data = dataclasses.asdict(progress_data)
-        await queue.put(progress_data)
-
     async def event_generator():
-        agent_task = asyncio.create_task(
-            controller.handle_start_agent(
-                user_id=current_user_id,
-                job_title=data.job_title,
-                job_boards=data.job_boards,
-                resume_path=data.resume_path,
-                contract_types=data.contract_types,
-                location=data.location,
-                min_salary=data.min_salary,
-                progress_callback=send_progress
-            )
+        # 1. PREP — creates JobSearch + ALIVE AgentState, returns search_id.
+        prep = await controller.prepare_start_agent(
+            user_id=current_user_id,
+            job_title=data.job_title,
+            job_boards=data.job_boards,
+            resume_path=data.resume_path,
+            contract_types=data.contract_types,
+            location=data.location,
+            min_salary=data.min_salary,
         )
+        if not prep.is_success:
+            yield _sse_error(prep)
+            return
+        search_id = prep.success.search_id
 
-        while not agent_task.done():
-            try:
-                progress = await asyncio.wait_for(queue.get(), timeout=1.0)
-                yield f"data: {json.dumps(progress)}\n\n"
-            except asyncio.TimeoutError:
+        # 2. SUBSCRIBE BEFORE DISPATCH — no lost frames.
+        frames = broker.stream(search_id)
+
+        # 3. DISPATCH the background run.
+        disp = await controller.dispatch_start_agent(
+            user_id=current_user_id, search_id=search_id
+        )
+        if not disp.is_success:
+            yield _sse_error(disp)
+            return
+
+        # 4. RELAY until the sentinel ends the iterator.
+        async for frame in frames:
+            if frame is None:
                 yield ": heartbeat\n\n"
-
-        # Drain any remaining events before closing
-        while not queue.empty():
-            progress = queue.get_nowait()
-            yield f"data: {json.dumps(progress)}\n\n"
-
-        # ← Safe exception handling — never let agent_task.result() crash the generator
-        # ← Safe exception handling — never let agent_task.result() crash the generator
-        try:
-            result = agent_task.result()
-            if not result.is_success:
-                # 🚨 FIX: We safely extract from your exact ErrorViewModel structure
-                error_vm = result.error  # This is the ErrorViewModel
-                
-                error_msg = error_vm.message if error_vm and error_vm.message else "An unexpected error occurred."
-                error_code = error_vm.code if error_vm and error_vm.code else "SYSTEMERROR"
-
-                yield f"data: {json.dumps({'source': 'MASTER', 'stage': 'Failed', 'status': 'error', 'error': error_msg, 'error_code': error_code})}\n\n"
-                
-        except Exception:
-            # Task raised an unhandled exception (a true Python crash)
-            logger.exception("🚨 Agent task raised exception: {e}")
-            yield f"data: {json.dumps({'source': 'MASTER', 'stage': 'Failed', 'status': 'error', 'error': 'Something went wrong', 'error_code': 'SYSTEMERROR'})}\n\n"
+                continue
+            yield f"data: {json.dumps(frame)}\n\n"
 
     return StreamingResponse(
         event_generator(),
@@ -158,12 +164,17 @@ async def resume_job_search_agent(
     current_user_id: CurrentUserId,
     controller: AgentControllerDep
 ):
-    result = await controller.handle_resume_agent(
+    prep = await controller.prepare_resume_agent(
         user_id=current_user_id,
         search_id=search_id,
-        apply_all=data.apply_all
+        apply_all=data.apply_all,
     )
-    return handle_result(result)
+    if not prep.is_success:
+        return handle_result(prep)
+    await controller.dispatch_resume_agent(
+        user_id=current_user_id, search_id=search_id, apply_all=data.apply_all
+    )
+    return handle_result(prep)   # AgentViewModel, status "prepared"
 
 
 @router.post("/{search_id}/resume/stream")
@@ -171,51 +182,39 @@ async def resume_job_search_agent_stream(
     search_id: str,
     data: ResumeAgentRequest,
     current_user_id: CurrentUserId,
-    controller: AgentControllerDep
+    controller: AgentControllerDep,
+    broker: BrokerDep,
 ):
-    queue = asyncio.Queue()
-
-    async def send_progress(progress_data):
-        if dataclasses.is_dataclass(progress_data):
-            progress_data = dataclasses.asdict(progress_data)
-        await queue.put(progress_data)
-
     async def event_generator():
-        agent_task = asyncio.create_task(
-            controller.handle_resume_agent(
-                user_id=current_user_id,
-                search_id=search_id,
-                apply_all=data.apply_all,
-                progress_callback=send_progress
-            )
+        # 1. PREP — approves drafts, returns search_id.
+        prep = await controller.prepare_resume_agent(
+            user_id=current_user_id,
+            search_id=search_id,
+            apply_all=data.apply_all,
         )
+        if not prep.is_success:
+            yield _sse_error(prep)
+            return
+        sid = prep.success.search_id
 
-        while not agent_task.done():
-            try:
-                progress = await asyncio.wait_for(queue.get(), timeout=1.0)
-                yield f"data: {json.dumps(progress)}\n\n"
-            except asyncio.TimeoutError:
+        # 2. SUBSCRIBE BEFORE DISPATCH — no lost frames.
+        frames = broker.stream(sid)
+
+        # 3. DISPATCH the background run.
+        disp = await controller.dispatch_resume_agent(
+            user_id=current_user_id, search_id=sid, apply_all=data.apply_all
+        )
+        if not disp.is_success:
+            yield _sse_error(disp)
+            return
+
+        # 4. RELAY until the sentinel ends the iterator.
+        async for frame in frames:
+            if frame is None:
                 yield ": heartbeat\n\n"
+                continue
+            yield f"data: {json.dumps(frame)}\n\n"
 
-        # Drain any remaining events before closing
-        while not queue.empty():
-            progress = queue.get_nowait()
-            yield f"data: {json.dumps(progress)}\n\n"
-
-        # 🚨 APPLIED ERRORVIEWMODEL FIX HERE 🚨
-        try:
-            result = agent_task.result()
-            if not result.is_success:
-                error_vm = result.error
-                
-                error_msg = error_vm.message if error_vm and error_vm.message else "An unexpected error occurred."
-                error_code = error_vm.code if error_vm and error_vm.code else "SYSTEMERROR"
-
-                yield f"data: {json.dumps({'source': 'MASTER', 'stage': 'Failed', 'status': 'error', 'error': error_msg, 'error_code': error_code})}\n\n"
-        except Exception as e:
-            logger.exception(f"🚨 Agent task raised exception: {e}")
-            yield f"data: {json.dumps({'source': 'MASTER', 'stage': 'Failed', 'status': 'error', 'error': 'Something went wrong', 'error_code': 'SYSTEMERROR'})}\n\n"
-    
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
