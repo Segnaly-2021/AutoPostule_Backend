@@ -22,6 +22,8 @@ class JobSearchRepoDB(JobSearchRepository):
         self.session = session
 
     async def get(self, search_id: UUID) -> JobSearch:
+        if not isinstance(search_id, UUID):
+            print(f"Warning: search_id is not a UUID: {search_id} (type: {type(search_id)})")
         result = await self.session.execute(
             select(JobSearchDB)
             .options(selectinload(JobSearchDB.job_offers))
