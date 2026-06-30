@@ -85,6 +85,15 @@ class ApecWorker():
         uid = user_id if user_id is not None else self._uid        
         print(f"[{self._source_name} for {uid}] : {task}", flush=True)
 
+    
+
+    async def _is_killed(self, state: JobApplicationState) -> bool:
+        """Helper to quickly check if the kill switch was activated during a heavy loop."""
+        user_id = state["user"].id
+        search_id = state["job_search"].id
+        killed_result = await self.is_agent_killed_for_search.execute(user_id, search_id)
+        return killed_result.is_success and killed_result.value
+
     async def _beat(self, state: JobApplicationState):
         """Mark the agent alive. Fail-soft: never blocks or aborts a node."""
         try:
@@ -865,7 +874,7 @@ class ApecWorker():
         search_id = state["job_search"].id
         found_job_entities = []
 
-        worker_job_limit = min(state.get("worker_job_limit",10), 12)
+        worker_job_limit = 2 or min(state.get("worker_job_limit",10), 12)
 
         self._plog(f"NODE get_matched_jobs -> scraping starts (target: {worker_job_limit} jobs)")
 
@@ -885,7 +894,16 @@ class ApecWorker():
 
         try:
             while len(found_job_entities) < worker_job_limit and page_number <= max_pages:
+                
+                # 🚨 INJECTED KILL CHECK: Before processing a new page
                 await self._beat(state)
+                if await self._is_killed(state):
+                    logger.info("[APEC] Kill switch detected. Halting pagination.")
+                    self._plog(f"kill switch detected mid-scrape -> returning {len(found_job_entities)} offers found so far")
+                    return {"error": "Agent has been stopped.", "error_code": "AGENT_STOPPED", "found_raw_offers": found_job_entities}
+
+
+
                 logger.info("[APEC] Processing page %s", page_number)
                 self._plog(f"processing results page {page_number}")
 
@@ -907,7 +925,12 @@ class ApecWorker():
                     if len(found_job_entities) >= worker_job_limit:
                         break
 
+                    # 🚨 INJECTED KILL CHECK: Before processing a new page
                     await self._beat(state)
+                    if await self._is_killed(state):
+                        logger.info("[APEC] Kill switch detected. Halting pagination.")
+                        self._plog(f"kill switch detected mid-scrape -> returning {len(found_job_entities)} offers found so far")
+                        return {"error": "Agent has been stopped.", "error_code": "AGENT_STOPPED", "found_raw_offers": found_job_entities}
 
                     cards = self.page.locator(self.CARD_SELECTOR)
                     card = cards.nth(i)
@@ -1069,7 +1092,14 @@ class ApecWorker():
 
         i = 0
         for offer in apec_jobs:
+            
+            # 🚨 INJECTED KILL CHECK: Before starting the next submission
             await self._beat(state)
+            if await self._is_killed(state):
+                logger.info("[APEC] Kill switch detected. Halting submissions.")
+                self._plog(f"kill switch detected mid-submission -> returning {len(successful_submissions)} submitted so far")
+                return {"error": "Agent has been stopped.", "error_code": "AGENT_STOPPED", "submitted_offers": successful_submissions}
+
             if len(successful_submissions) >= assigned_submit_limit:
                 logger.info("[APEC] Reached assigned submission limit (%s)", assigned_submit_limit)
                 self._plog(f"submission limit reached ({assigned_submit_limit}) -> stopping")
@@ -1312,6 +1342,13 @@ class ApecWorker():
         logger.info("[APEC] Cleanup")
         self._plog("NODE cleanup -> closing browser session")
         await self.force_cleanup()
+
+        # 🚨 Fail-soft cleanup: if the circuit breaker was tripped, scrub the error
+        # from state so the master can keep partial worker results from the happy path.
+        if state.get("error"):
+            self._plog(f"fail-soft: scrubbing error from state ({state['error']})")
+            return {"error": "", "error_code": ""}
+
         return {}
 
     # =========================================================================
