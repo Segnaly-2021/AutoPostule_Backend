@@ -43,7 +43,7 @@ class LoadStartRunContextUseCase:
         try:
             async with self.uow as uow:
                 user = await uow.user_repo.get(user_id)
-                if not user:
+                if user is None:
                     return Result.failure(Error.not_found("User", str(user_id)))
                 
                 
@@ -51,11 +51,11 @@ class LoadStartRunContextUseCase:
 
                 search = await uow.search_repo.get(search_id)
                 print(f"DEBUG: LoadStartRunContextUseCase - after get search - type of search: {type(search)}; value: {search}")
-                if not search:
+                if search is None:
                     return Result.failure(Error.not_found("JobSearch", str(search_id)))
 
                 subscription = await uow.subscription_repo.get_by_user_id(str(user_id))
-                if not subscription:
+                if subscription is None:
                     return Result.failure(Error.not_found("Subscription", str(user_id)))
 
                 preferences = await uow.user_pref_repo.get_by_user_id(user_id)
