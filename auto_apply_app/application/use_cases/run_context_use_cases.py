@@ -45,6 +45,9 @@ class LoadStartRunContextUseCase:
                 user = await uow.user_repo.get(user_id)
                 if not user:
                     return Result.failure(Error.not_found("User", str(user_id)))
+                
+                
+                print(f"DEBUG: LoadStartRunContextUseCase - type of search_id: {type(search_id)}; value: {search_id}")
 
                 search = await uow.search_repo.get(search_id)
                 if not search:

@@ -76,6 +76,7 @@ class AgentController:
             return self._present_validation_exception(e)
 
     async def dispatch_start_agent(self, user_id: str, search_id: str) -> OperationResult:
+        print(f"DEBUG: Agent Controller: dispatch_start_agent - type of search_id: {type(search_id)}; value: {search_id}")
         result = await self.start_agent_use_case.dispatch(user_id, search_id)
         if result.is_success:
             return OperationResult.succeed(value=True)
