@@ -58,7 +58,7 @@ class LoadStartRunContextUseCase:
                 if not preferences:
                     preferences = UserPreferences(user_id=user_id)
 
-                credentials = None
+                credentials = {}
                 if preferences.is_full_automation:
                     credentials = {}
                     for board_name in (b for b, v in preferences.active_boards.items() if v):

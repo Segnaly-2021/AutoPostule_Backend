@@ -14,28 +14,56 @@ from auto_apply_app.application.use_cases.run_context_use_cases import (
 logger = logging.getLogger(__name__)
 
 
-def _system_error_frame(search_id: str) -> dict:
-    # Mirrors the generic crash frame the old router emitted from agent_task.result().
+def _system_error_frame(search_id: str, detail: str = "Something went wrong") -> dict:
+    """
+    Generic terminal error frame, published when the run fails before (or instead
+    of) the agent emitting its own error. `detail` carries the real reason to the
+    browser inspector so failures are never silent — read it in the SSE `error`
+    field. Keep `error_code` = SYSTEMERROR so the frontend treats it as fatal.
+    """
     return {
         "source": "MASTER",
         "stage": "Failed",
         "node": "master",
         "status": "error",
-        "error": "Something went wrong",
+        "error": str(detail),
         "error_code": "SYSTEMERROR",
         "search_id": search_id,
     }
 
 
+def _reason(result) -> str:
+    """
+    Best-effort extraction of a human reason from a failed Result, tolerant of
+    whatever the Error object exposes (.message / .msg / str). Never raises — a
+    diagnostic helper must not itself crash the error path.
+    """
+    err = getattr(result, "error", None)
+    if err is None:
+        return "unknown error"
+    for attr in ("message", "msg", "detail", "description"):
+        val = getattr(err, attr, None)
+        if val:
+            return str(val)
+    return str(err)
+
+
 class LocalDispatcher(DispatchPort):
     """
-    Phase A dispatcher: runs the agent in-process as a background task, publishing
-    progress to the broker and exactly one _eot sentinel when the run ends.
+    Phase A dispatcher: runs the agent IN THE SAME PROCESS as the API, as a
+    background asyncio task, publishing progress to the broker and exactly one
+    _eot sentinel when the run ends.
 
-    MUST be a singleton (see container). Background tasks it spawns outlive the HTTP
-    request that triggered them, so the dispatcher (and the agent_service it holds)
-    must not be request-scoped. The _tasks set keeps strong references so a running
-    task is never garbage-collected mid-flight.
+    "Local" = local to this process (in-process), NOT "local/dev environment".
+    This is the correct PRODUCTION dispatcher for Phase A, where the API and the
+    agent still share one container. Phase B introduces CloudRunJobsDispatcher
+    (same DispatchPort) which runs the agent in a separate Cloud Run Job; at that
+    point this class retires.
+
+    MUST be a singleton (see container). Background tasks it spawns outlive the
+    HTTP request that triggered them, so the dispatcher (and the agent_service it
+    holds) must not be request-scoped. The _tasks set keeps strong references so a
+    running task is never garbage-collected mid-flight.
     """
 
     def __init__(
@@ -75,8 +103,11 @@ class LocalDispatcher(DispatchPort):
         try:
             res = await self._load_start.execute(user_id, search_id)
             if not res.is_success:
-                await self._broker.publish(sid, _system_error_frame(sid))
+                reason = _reason(res)
+                logger.error("LocalDispatcher start: load context failed for %s: %s", sid, reason)
+                await self._broker.publish(sid, _system_error_frame(sid, f"load_ctx: {reason}"))
                 return
+
             ctx = res.value
             await self._agent.run_job_search(
                 user=ctx.user,
@@ -86,9 +117,9 @@ class LocalDispatcher(DispatchPort):
                 credentials=ctx.credentials,
                 progress_callback=self._make_callback(sid),
             )
-        except Exception:
+        except Exception as e:
             logger.exception("LocalDispatcher start run crashed for %s", sid)
-            await self._broker.publish(sid, _system_error_frame(sid))
+            await self._broker.publish(sid, _system_error_frame(sid, f"run crashed: {e!r}"))
         finally:
             await self._broker.publish_end(sid)  # exactly one sentinel, always
 
@@ -97,8 +128,11 @@ class LocalDispatcher(DispatchPort):
         try:
             res = await self._load_resume.execute(user_id, search_id, apply_all)
             if not res.is_success:
-                await self._broker.publish(sid, _system_error_frame(sid))
+                reason = _reason(res)
+                logger.error("LocalDispatcher resume: load context failed for %s: %s", sid, reason)
+                await self._broker.publish(sid, _system_error_frame(sid, f"load_ctx: {reason}"))
                 return
+
             ctx = res.value
             await self._agent.resume_job_search(
                 user=ctx.user,
@@ -109,8 +143,8 @@ class LocalDispatcher(DispatchPort):
                 credentials=ctx.credentials,
                 progress_callback=self._make_callback(sid),
             )
-        except Exception:
+        except Exception as e:
             logger.exception("LocalDispatcher resume run crashed for %s", sid)
-            await self._broker.publish(sid, _system_error_frame(sid))
+            await self._broker.publish(sid, _system_error_frame(sid, f"run crashed: {e!r}"))
         finally:
             await self._broker.publish_end(sid)
