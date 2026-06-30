@@ -185,8 +185,8 @@ class StartJobSearchAgentUseCase:
     async def dispatch(self, user_id: str, search_id: str) -> Result:
         try:
             await self.dispatcher.dispatch_start(
-                search_id=UUID(str(search_id)),
-                user_id=UUID(str(user_id)),
+                search_id=UUID(str(search_id).strip()),
+                user_id=UUID(str(user_id).strip()),
             )
             return Result.success(True)
         except Exception:
