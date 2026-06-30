@@ -101,7 +101,7 @@ class LocalDispatcher(DispatchPort):
     async def _run_start(self, search_id: UUID, user_id: UUID) -> None:
         sid = str(search_id)
         try:
-            res = await self._load_start.execute(user_id, search_id)
+            res = await self._load_start.execute(user_id=user_id, search_id=search_id)
             if not res.is_success:
                 reason = _reason(res)
                 logger.error("LocalDispatcher start: load context failed for %s: %s", sid, reason)

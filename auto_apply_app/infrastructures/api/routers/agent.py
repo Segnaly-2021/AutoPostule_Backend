@@ -122,6 +122,8 @@ async def start_job_search_agent_stream(
             return
         search_id = prep.success.search_id
 
+        print(f"DEBUG: API Router: search_id type: {type(search_id)}; value: {search_id}")
+
         # 2. SUBSCRIBE BEFORE DISPATCH — no lost frames.
         frames = broker.stream(search_id)
 
