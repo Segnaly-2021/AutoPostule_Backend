@@ -50,6 +50,7 @@ class LoadStartRunContextUseCase:
                 print(f"DEBUG: LoadStartRunContextUseCase - type of search_id: {type(search_id)}; value: {search_id}")
 
                 search = await uow.search_repo.get(search_id)
+                print(f"DEBUG: LoadStartRunContextUseCase - after get search - type of search: {type(search)}; value: {search}")
                 if not search:
                     return Result.failure(Error.not_found("JobSearch", str(search_id)))
 
