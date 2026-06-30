@@ -3,7 +3,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 from uuid import UUID
-from typing import Optional, Callable
+#from typing import Optional, Callable
 
 from auto_apply_app.application.common.result import Result, Error
 from auto_apply_app.application.repositories.unit_of_work import UnitOfWork

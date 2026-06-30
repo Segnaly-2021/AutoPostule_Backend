@@ -1,5 +1,6 @@
 import os
 import logging
+from uuid import uuid4
 from contextlib import asynccontextmanager
 
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
@@ -34,6 +35,7 @@ engine = create_async_engine(
     connect_args={
         "prepared_statement_cache_size": 0,
         "statement_cache_size": 0,
+        "prepared_statement_name_func": lambda: f"__asyncpg_{uuid4().hex}__",  # ADD
     },
     echo=False,  # set to True in dev if you want SQL logged
 )
