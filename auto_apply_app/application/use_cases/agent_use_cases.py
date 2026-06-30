@@ -165,6 +165,7 @@ class StartJobSearchAgentUseCase:
                 # the row must read *alive* from t=0 to cover the boot gap.
                 agent_state.beat()
                 await uow.agent_state_repo.save(agent_state)
+                await uow.commit()  
 
             return Result.success(AgentResponse.from_job_search(
                 search=search_mission,
