@@ -23,9 +23,12 @@ class CloudRunJobsDispatcher(DispatchPort):
 
     def __init__(self, project: str, region: str, job_name: str, client=None):
         self._job_path = f"projects/{project}/locations/{region}/jobs/{job_name}"
-        # Async client so dispatch_* stays non-blocking on the API event loop.
+        # Sync client: the async gRPC client fails when built in FastAPI's threadpool
+        # (no event loop in that thread). We call run_job via asyncio.to_thread below,
+        # so the sync client stays non-blocking on the API event loop.
         self._client = client or run_v2.JobsClient()
 
+        
     async def dispatch_start(self, search_id: UUID, user_id: UUID) -> None:
         await self._trigger(action="start", search_id=search_id, user_id=user_id)
 
