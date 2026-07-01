@@ -886,7 +886,7 @@ class ApecWorker():
         search_id = state["job_search"].id
         found_job_entities = []
 
-        worker_job_limit = 2 or min(state.get("worker_job_limit",10), 12)
+        worker_job_limit = min(state.get("worker_job_limit", 10), 12)
 
         self._plog(f"NODE get_matched_jobs -> scraping starts (target: {worker_job_limit} jobs)")
 
@@ -1321,7 +1321,7 @@ class ApecWorker():
                     await submit_btn.click()
 
                     try:
-                        await self.page.wait_for_selector('div[class="notification-title"]', state="visible", timeout=45000)
+                        await self.page.wait_for_selector('section[id="comp_cover"] h1:has-text("candidature a")', state="visible", timeout=45000)
                         logger.info("[APEC] Application submitted")
                         self._plog(f"application SUBMITTED: '{offer.job_title}' @ {offer.company_name} ({len(successful_submissions) + 1}/{assigned_submit_limit})")
                         offer.status = ApplicationStatus.SUBMITTED
