@@ -57,6 +57,7 @@ jobs:
             IPROYAL_PASSWORD_TEMPLATE=${{ secrets.IPROYAL_PASSWORD_TEMPLATE }}
             PROXY_PROVIDER=${{ secrets.PROXY_PROVIDER }}
             ENV=${{ secrets.ENV }}
+            TURNSTILE_SECRET_KEY=${{ secrets.TURNSTILE_SECRET_KEY }}
 
       # --- Agent Job (worker command override) ---
       # deploy-cloudrun is Services-only; use raw gcloud for the Job.
