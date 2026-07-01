@@ -1,7 +1,11 @@
 # auto_apply_app/infrastructures/agent/create_agent.py
+import logging
 import os
 
 from auto_apply_app.infrastructures.agent.master.master_agent import MasterAgent
+from auto_apply_app.infrastructures.agent.session.browser_session_store import (
+    BrowserSessionStore,
+)
 from auto_apply_app.infrastructures.agent.workers.apec.apec_worker import ApecWorker
 from auto_apply_app.infrastructures.agent.workers.hellowork.hw_worker import HelloWorkWorker
 from auto_apply_app.infrastructures.agent.workers.wttj.wttj_worker import WelcomeToTheJungleWorker
@@ -54,6 +58,25 @@ def create_agent(
         "anthropic": os.getenv("ANTHROPIC_API_KEY"),
     }
 
+    # Phase C-2: durable per-(user, board) session cache. Built ONLY when the agent
+    # Job sets GCP_SESSION_BUCKET; otherwise session_store stays None and each worker
+    # falls back to the pre-C-2 local-file behavior (login every run). A missing
+    # bucket or a broken client must never break agent construction — session reuse
+    # is a best-effort optimization, never a requirement.
+    session_store = None
+    session_bucket = os.getenv("GCP_SESSION_BUCKET")
+    if session_bucket:
+        try:
+            session_store = BrowserSessionStore(
+                bucket=session_bucket,
+                encryptor=encryption_service,  # sessions carry auth cookies; encrypt at rest
+            )
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "BrowserSessionStore init failed; running without session cache", exc_info=True
+            )
+            session_store = None
+
     # Workers — pass the new IsAgentKilledForSearchUseCase instead of GetAgentStateUseCase
     apec_worker = ApecWorker(
        get_ignored_hashes=get_ignored_hashes_use_case,
@@ -61,6 +84,7 @@ def create_agent(
        file_storage=file_storage,
        is_agent_killed_for_search=is_agent_killed_for_search_use_case,  # CHANGED
        heartbeat=heartbeat_use_case,  # NEW
+       session_store=session_store,  # NEW (C-2)
     )
 
     hw_worker = HelloWorkWorker(
@@ -69,6 +93,7 @@ def create_agent(
         file_storage=file_storage,
         is_agent_killed_for_search=is_agent_killed_for_search_use_case,  # CHANGED
         heartbeat=heartbeat_use_case,  # NEW
+        session_store=session_store,  # NEW (C-2)
     )
 
     wttj_worker = WelcomeToTheJungleWorker(
@@ -78,6 +103,7 @@ def create_agent(
         api_keys=api_keys,
         is_agent_killed_for_search=is_agent_killed_for_search_use_case,  # CHANGED
         heartbeat=heartbeat_use_case,  # NEW
+        session_store=session_store,  # NEW (C-2)
     )
     
     return MasterAgent(

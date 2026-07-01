@@ -1,59 +1,47 @@
-name: Deploy Backend to Cloud Run
-
-# This tells GitHub to run this script EVERY time you push to the 'main' branch
+name: Deploy API (thin) to Cloud Run
 on:
   push:
-    branches:
-      - main
-
-# Define our variables
+    branches: [main]
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   REGION: europe-west9
   REPO_NAME: autopostule-repo
-  SERVICE_NAME: autopostule-api
 
 jobs:
-  deploy:
+  deploy-api:
     runs-on: ubuntu-latest
-
     steps:
-      # 1. Download your code onto the GitHub runner server
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      # 2. Authenticate to Google Cloud using your secret JSON key
-      - name: Authenticate to Google Cloud
-        id: auth
+      - uses: actions/checkout@v4
+      - id: auth
         uses: google-github-actions/auth@v2
         with:
           credentials_json: '${{ secrets.GCP_CREDENTIALS }}'
+      - run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev
 
-      # 3. Log into your Artifact Registry vault in Paris
-      - name: Configure Docker for Artifact Registry
+      - name: Build & push THIN image
         run: |
-          gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev
+          IMG="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/api:${{ github.sha }}"
+          docker build -f Dockerfile -t $IMG .       # thin Dockerfile (no Chromium binary)
+          docker push $IMG
 
-      # 4. Build the Docker container and push it to the vault
-      - name: Build and Push Docker Image
-        run: |
-          IMAGE_PATH="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE_NAME }}:${{ github.sha }}"
-          
-          # Build it
-          docker build -t $IMAGE_PATH .
-          
-          # Push it
-          docker push $IMAGE_PATH
-
-      # 5. Tell Cloud Run to launch the new container and inject the secrets!
-      - name: Deploy to Cloud Run
+      - name: Deploy autopostule-api
         uses: google-github-actions/deploy-cloudrun@v2
         with:
-          service: ${{ env.SERVICE_NAME }}
+          service: autopostule-api
           region: ${{ env.REGION }}
-          image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
-          flags: '--allow-unauthenticated --timeout=900'
+          image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/api:${{ github.sha }}
+          flags: >-
+            --allow-unauthenticated
+            --service-account=autopostule-runtime@${{ env.PROJECT_ID }}.iam.gserviceaccount.com
+            --cpu=1 --memory=1Gi
+            --concurrency=80
+            --min-instances=1 --max-instances=10
+            --timeout=900
           env_vars: |
+            APP_ROLE=api
+            AGENT_DISPATCH_MODE=cloud_run_job
+            AGENT_JOB_REGION=europe-west9
+            AGENT_JOB_NAME=autopostule-agent
             JWT_SECRET=${{ secrets.JWT_SECRET }}
             DATABASE_URL=${{ secrets.DATABASE_URL }}
             DATABASE_DIRECT_URL=${{ secrets.DATABASE_DIRECT_URL }}
@@ -79,4 +67,3 @@ jobs:
             PROXY_PROVIDER=${{ secrets.PROXY_PROVIDER }}
             ENV=${{ secrets.ENV }}
             TURNSTILE_SECRET_KEY=${{ secrets.TURNSTILE_SECRET_KEY }}
-            

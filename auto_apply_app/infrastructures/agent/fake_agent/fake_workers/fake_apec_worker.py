@@ -31,7 +31,7 @@ class FakeApecWorker:
         self.playwright = await async_playwright().start()
         self.browser = await self.playwright.chromium.launch(
             headless=True,
-            args=['--disable-blink-features=AutomationControlled']
+            args=['--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage']
         )
         self.context = await self.browser.new_context()
         self.page = await self.context.new_page()

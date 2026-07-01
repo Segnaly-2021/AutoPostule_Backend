@@ -108,7 +108,8 @@ def create_fastapi_app() -> FastAPI:
     Factory function to create and configure the FastAPI application.
     """
     is_production = os.getenv("ENV", "development") == "production"
-    
+    app_role = os.getenv("APP_ROLE", "api").lower()   # "api" | "free_search"
+
     app = FastAPI(
         title="Auto Apply API",
         description="Job application automation service",
@@ -142,46 +143,51 @@ def create_fastapi_app() -> FastAPI:
         allow_headers=["*"],
     )
     
-    app.include_router(
-        user.router,
-        prefix="/api/v1/user",
-        tags=["users"]
-    )
+    # ---- ROLE-SPECIFIC: which routers are mounted ----
+    if app_role == "free_search":
+        # Free-search Service (browser image, scale-to-zero). Serves ONLY the
+        # free-search route. Still needs JWT auth + DB for the per-user quota.
+        app.include_router(
+            free_search.router,
+            prefix="/api/v1/free-search",
+            tags=["Free Search"]
+        )
+    else:  # "api" (default) — everything EXCEPT free-search
+        app.include_router(
+            user.router,
+            prefix="/api/v1/user",
+            tags=["users"]
+        )
 
-    app.include_router(
-        subscription.router,
-        prefix="/api/v1/subscription",
-        tags=["subscriptions"]
-    )  
-    
-    app.include_router(
-        agent.router,
-        prefix="/api/v1/agent",
-        tags=["agent"]
-    )
+        app.include_router(
+            subscription.router,
+            prefix="/api/v1/subscription",
+            tags=["subscriptions"]
+        )
 
-    app.include_router(
-        agent_state.router,
-        prefix="/api/v1/agent-state",
-        tags=["Agent State"]
-    )
+        app.include_router(
+            agent.router,
+            prefix="/api/v1/agent",
+            tags=["agent"]
+        )
 
-    app.include_router(
-        application.router,
-        prefix="/api/v1/applications",
-        tags=["application"]
-    )
+        app.include_router(
+            agent_state.router,
+            prefix="/api/v1/agent-state",
+            tags=["Agent State"]
+        )
 
-    app.include_router(
-        preferences.router,
-        prefix="/api/v1/preferences",
-        tags=["Preferences"]
-    )
+        app.include_router(
+            application.router,
+            prefix="/api/v1/applications",
+            tags=["application"]
+        )
 
-    app.include_router(
-        free_search.router,
-        prefix="/api/v1/free-search",
-        tags=["Free Search"]
-    )
-    
+        app.include_router(
+            preferences.router,
+            prefix="/api/v1/preferences",
+            tags=["Preferences"]
+        )
+        # free_search is intentionally NOT mounted in the api role.
+
     return app

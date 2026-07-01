@@ -12,13 +12,18 @@ WORKDIR /app
 COPY requirements.txt .
 
 # 5. Install Python dependencies safely
+# NOTE: this KEEPS the `playwright` Python PACKAGE (code imports it at startup).
+# The thin API only removes the Chromium BINARY below — it never launches a
+# browser (free-search moved to its own Service in B-2; the agent runs as a Job).
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 🚨 6. THE PLAYWRIGHT MAGIC 🚨
-# Install ONLY Chromium and its underlying Linux system dependencies.
-# This ensures your headless browser works without bloating the image.
-RUN playwright install chromium
-RUN playwright install-deps chromium
+# 🚫 6. Chromium BINARY intentionally NOT installed in the thin API image.
+# After B-1 (agent → Job) and B-2 (free-search → its own Service), the API
+# imports browser code but never calls browser.launch(). Imports succeed without
+# the binary; this drops ~300MB+ from the image. The browser image
+# (Dockerfile.worker) still installs Chromium for the workloads that need it.
+#   REMOVED: RUN playwright install chromium
+#   REMOVED: RUN playwright install-deps chromium
 
 # 7. Copy the rest of your backend code into the container
 COPY . .

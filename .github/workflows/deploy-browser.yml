@@ -1,0 +1,74 @@
+name: Deploy browser targets to Cloud Run
+on:
+  push:
+    branches: [main]
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  REGION: europe-west9
+  REPO_NAME: autopostule-repo
+
+jobs:
+  deploy-browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.GCP_CREDENTIALS }}'
+      - run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev
+
+      - name: Build & push BROWSER image (once)
+        run: |
+          IMG="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/worker:${{ github.sha }}"
+          docker build -f Dockerfile.worker -t $IMG .
+          docker push $IMG
+          echo "IMG=$IMG" >> $GITHUB_ENV
+
+      # --- Free-search Service (uvicorn default CMD) ---
+      - name: Deploy autopostule-free-search
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: autopostule-free-search
+          region: ${{ env.REGION }}
+          image: ${{ env.IMG }}
+          flags: >-
+            --allow-unauthenticated
+            --service-account=autopostule-runtime@${{ env.PROJECT_ID }}.iam.gserviceaccount.com
+            --cpu=2 --memory=4Gi
+            --concurrency=1
+            --min-instances=0 --max-instances=8
+            --timeout=600
+            --execution-environment=gen2
+            --cpu-boost
+          env_vars: |
+            APP_ROLE=free_search
+            JWT_SECRET=${{ secrets.JWT_SECRET }}
+            DATABASE_URL=${{ secrets.DATABASE_URL }}
+            REPOSITORY_TYPE=${{ secrets.REPOSITORY_TYPE }}
+            REDIS_URL=${{ secrets.REDIS_URL }}
+            RATE_LIMIT_STORAGE_URI=${{ secrets.REDIS_URL }}
+            ENCRYPTION_KEY=${{ secrets.ENCRYPTION_KEY }}
+            GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}
+            GCP_RESUME_BUCKET=${{ secrets.GCP_RESUME_BUCKET }}
+            IPROYAL_HOST=${{ secrets.IPROYAL_HOST }}
+            IPROYAL_PORT=${{ secrets.IPROYAL_PORT }}
+            IPROYAL_USERNAME=${{ secrets.IPROYAL_USERNAME }}
+            IPROYAL_PASSWORD_TEMPLATE=${{ secrets.IPROYAL_PASSWORD_TEMPLATE }}
+            PROXY_PROVIDER=${{ secrets.PROXY_PROVIDER }}
+            ENV=${{ secrets.ENV }}
+
+      # --- Agent Job (worker command override) ---
+      # deploy-cloudrun is Services-only; use raw gcloud for the Job.
+      - name: Deploy autopostule-agent Job
+        run: |
+          gcloud run jobs deploy autopostule-agent \
+            --image="${{ env.IMG }}" \
+            --region="${{ env.REGION }}" \
+            --service-account="autopostule-runtime@${{ env.PROJECT_ID }}.iam.gserviceaccount.com" \
+            --command="python" --args="-m,auto_apply_app.worker_main" \
+            --cpu=4 --memory=8Gi \
+            --max-retries=0 \
+            --task-timeout=2400 \
+            --execution-environment=gen2 \
+            --set-env-vars="REPOSITORY_TYPE=${{ secrets.REPOSITORY_TYPE }},DATABASE_URL=${{ secrets.DATABASE_URL }},REDIS_URL=${{ secrets.REDIS_URL }},ENCRYPTION_KEY=${{ secrets.ENCRYPTION_KEY }},GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }},ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }},OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }},GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }},GCP_RESUME_BUCKET=${{ secrets.GCP_RESUME_BUCKET }},GCP_SESSION_BUCKET=autopostule_sessions,IPROYAL_HOST=${{ secrets.IPROYAL_HOST }},IPROYAL_PORT=${{ secrets.IPROYAL_PORT }},IPROYAL_USERNAME=${{ secrets.IPROYAL_USERNAME }},IPROYAL_PASSWORD_TEMPLATE=${{ secrets.IPROYAL_PASSWORD_TEMPLATE }},PROXY_PROVIDER=${{ secrets.PROXY_PROVIDER }},ENV=${{ secrets.ENV }}"

@@ -540,7 +540,7 @@ class JobTeaserWorker:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
                 headless= preferences.browser_headless,
-                args=['--disable-blink-features=AutomationControlled'],
+                args=['--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage'],
             )
 
             # context_kwargs = {}
@@ -589,7 +589,7 @@ class JobTeaserWorker:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
                 headless= state["preferences"].browser_headless,
-                args=['--disable-blink-features=AutomationControlled'],
+                args=['--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage'],
             )
 
             #session_path = self._get_auth_state_path(user_id)

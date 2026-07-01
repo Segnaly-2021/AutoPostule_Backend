@@ -49,6 +49,7 @@ class HelloWorkWorker:
         file_storage: FileStoragePort,
         is_agent_killed_for_search: IsAgentKilledForSearchUseCase,
         heartbeat: HeartbeatAgentForSearchUseCase,
+        session_store=None,
     ):
         self.get_ignored_hashes = get_ignored_hashes
         self.encryption_service = encryption_service
@@ -56,6 +57,8 @@ class HelloWorkWorker:
         self.file_storage = file_storage
         self.is_agent_killed_for_search = is_agent_killed_for_search
         self.heartbeat = heartbeat
+        # C-2: durable GCS session cache. None -> local-file only (pre-C-2 behavior).
+        self.session_store = session_store
 
         self.playwright: Optional[Playwright] = None
         self.browser: Optional[Browser] = None
@@ -88,6 +91,9 @@ class HelloWorkWorker:
             await self.context.storage_state(path=path)
             logger.info("[HW] Session saved for user %s", user_id)
             self._plog("session cookies saved to disk", user_id)
+            # C-2: mirror the refreshed session to GCS (best-effort, never fatal).
+            if self.session_store:
+                await self.session_store.save_from_local(user_id, "hellowork", path)
 
     def _get_auth_state_path(self, user_id: str) -> str | None:
         path = self._get_session_file_path(user_id)
@@ -559,7 +565,7 @@ class HelloWorkWorker:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
                 headless= preferences.browser_headless,
-                args=['--disable-blink-features=AutomationControlled'],
+                args=['--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage'],
             )
 
             context_kwargs = {}
@@ -611,9 +617,15 @@ class HelloWorkWorker:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
                 headless= state["preferences"].browser_headless,
-                args=['--disable-blink-features=AutomationControlled'],
+                args=['--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage'],
             )
 
+            # C-2: pull the durable session from GCS into the local path first, so
+            # _get_auth_state_path finds it. No session / any error -> logs in fresh.
+            if self.session_store:
+                await self.session_store.load_to_local(
+                    user_id, "hellowork", self._get_session_file_path(user_id)
+                )
             session_path = self._get_auth_state_path(user_id)
 
             context_kwargs = {}
@@ -1267,6 +1279,12 @@ class HelloWorkWorker:
         await self._emit(state, "Cleaning Up", stage_code=StageCode.CLEANING_UP)
         self._plog("NODE cleanup -> closing browser session")
         await self.force_cleanup()
+
+        # C-2: the durable copy lives in GCS, so drop the local session file (it holds
+        # auth cookies). Only when a session_store is wired — in local-only mode the
+        # local file IS the persistence and must survive between runs.
+        if self.session_store:
+            self.session_store.cleanup_local(self._get_session_file_path(str(state["user"].id)))
 
         # 🚨 Fail-soft cleanup: if the circuit breaker was tripped, scrub the error
         # from state so the master can keep partial worker results from the happy path.

@@ -207,6 +207,59 @@ def create_application(
     )
 
 
+def create_worker_application() -> "Application":
+    """
+    Minimal composition root for the Cloud Run Job worker (worker_main.py).
+
+    The worker ONLY ever uses Application.agent_runner, whose dependency graph is
+    agent_service + progress_broker + uow_factory + Load*RunContextUseCase. None of
+    those touch the web-only ports/presenters.
+
+    We must NOT call the full create_application() here: JwtTokenProvider and
+    TurnstileCaptchaAdapter RAISE at construction when JWT_SECRET / TURNSTILE_SECRET_KEY
+    are absent, and the Job intentionally omits those env vars (B-1 §6). So we build
+    only the agent-relevant adapters for real (GCS storage + encryption + repos +
+    Redis) and leave the unused ports/presenters as None.
+
+    The runner is still built by Application.agent_runner — the single source of
+    truth — so there is no hand-rolled use-case wiring on this path.
+    """
+    from auto_apply_app.infrastructures.config import Config
+    from auto_apply_app.infrastructures.resume_storage.gcs_storage_adapter import (
+        GCSFileStorageAdapter,
+    )
+    from auto_apply_app.infrastructures.board_credentials_encryption.encryption import (
+        EncryptionService,
+    )
+
+    token_repo, uow_factory, redis_client = create_repositories()
+
+    return Application(
+        token_repo=token_repo,
+        uow_factory=uow_factory,
+        # Agent-relevant ports (built for real):
+        file_storage_port=GCSFileStorageAdapter(),
+        encryption_port=EncryptionService(Config.get_encryption_key()),
+        rate_limiter=_build_rate_limiter(redis_client),
+        redis_client=redis_client,
+        # Web-only ports/presenters — unused by the agent run path, left as None
+        # so we never construct adapters that require absent web env vars.
+        password_service=None,
+        token_provider=None,
+        payment_port=None,
+        email_service_port=None,
+        captcha_port=None,
+        user_presenter=None,
+        job_presenter=None,
+        search_presenter=None,
+        sub_presenter=None,
+        agent_presenter=None,
+        preference_presenter=None,
+        agent_state_presenter=None,
+        free_search_presenter=None,
+    )
+
+
 @dataclass
 class Application:
     # Repositories & UoW Factory
@@ -277,14 +330,42 @@ class Application:
         )
 
     @cached_property
-    def _dispatcher(self) -> DispatchPort:
+    def agent_runner(self):
+        """
+        Single construction path for the run logic, shared by BOTH dispatchers
+        (in-process LocalDispatcher) and the Cloud Run Job worker (worker_main).
+        Keeping this here means the use-case wiring lives in ONE place — neither
+        the dispatcher nor the worker hand-rolls it.
+        """
+        from auto_apply_app.infrastructures.agent.runner import AgentRunner
         uow = self.uow_factory()
-        return LocalDispatcher(
+        return AgentRunner(
             agent_service=self._agent_service,
             broker=self.progress_broker,
             load_start_ctx=LoadStartRunContextUseCase(uow),
             load_resume_ctx=LoadResumeRunContextUseCase(uow),
         )
+
+    @cached_property
+    def _dispatcher(self) -> DispatchPort:
+        """
+        Picks the dispatcher by config:
+          - AGENT_DISPATCH_MODE=cloud_run_job → CloudRunJobsDispatcher (prod):
+            triggers a separate Cloud Run Job; progress returns over Redis.
+          - anything else (default "local")   → LocalDispatcher: runs the agent
+            in-process via AgentRunner (dev / MEMORY mode).
+        """
+        mode = os.getenv("AGENT_DISPATCH_MODE", "local").lower()
+        if mode == "cloud_run_job":
+            from auto_apply_app.infrastructures.agent.dispatch.cloud_run_jobs_dispatcher import (
+                CloudRunJobsDispatcher,
+            )
+            return CloudRunJobsDispatcher(
+                project=os.environ["GCP_PROJECT_ID"],   # already set on the API
+                region=os.environ["AGENT_JOB_REGION"],  # new env (e.g. europe-west9)
+                job_name=os.environ["AGENT_JOB_NAME"],  # new env (e.g. autopostule-agent)
+            )
+        return LocalDispatcher(self.agent_runner)
 
     # =========================================================================
     # CONTROLLER FACTORIES
