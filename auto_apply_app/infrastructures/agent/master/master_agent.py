@@ -365,7 +365,7 @@ class MasterAgent(AgentServicePort):
         temp = preferences.llm_temperature
         print(f"🧠 [Master] Booting up LLM Brain: {provider.upper()}")
 
-        if provider in ["gpt", "openai"]:
+        if provider in ["chatgpt", "openai"]:
 
             return ChatOpenAI(
                 api_key=self.api_keys.get("openai"), 
