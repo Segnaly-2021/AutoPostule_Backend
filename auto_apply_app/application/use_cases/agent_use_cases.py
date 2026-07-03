@@ -6,7 +6,7 @@ from uuid import UUID
 #from typing import Optional, Callable
 
 from auto_apply_app.application.common.result import Result, Error
-from auto_apply_app.application.repositories.unit_of_work import UnitOfWork
+from auto_apply_app.application.repositories.unit_of_work import UnitOfWorkFactory
 from auto_apply_app.application.service_ports.agent_port import AgentServicePort
 from auto_apply_app.application.service_ports.dispatch_port import DispatchPort
 from auto_apply_app.application.dtos.agent_dtos import (
@@ -35,7 +35,7 @@ class ListRecentSearchesUseCase:
     Return the user's most recent SEARCHING job searches (README §4a).
     Read-only, no jobs hydrated.
     """
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
 
     async def execute(self, user_id: UUID, limit: int = 5) -> Result:
         try:
@@ -48,7 +48,7 @@ class ListRecentSearchesUseCase:
                 s for s in SearchStatus if s != SearchStatus.COMPLETED
             ]
 
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 searches = await uow.search_repo.list_recent_by_user(
                     user_id=user_id,
                     statuses=visible_statuses,
@@ -66,7 +66,7 @@ class ListRecentSearchesUseCase:
 
 @dataclass
 class StartJobSearchAgentUseCase:
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
     dispatcher: DispatchPort
 
     async def prepare(
@@ -85,7 +85,7 @@ class StartJobSearchAgentUseCase:
             board_names = []
             search_mission = None
 
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 # 1. Fetch User
                 user = await uow.user_repo.get(user_uuid)
                 if not user:
@@ -200,7 +200,7 @@ class ResumeJobApplicationUseCase:
     """
     Called when a Premium User clicks "Apply" or "Apply All" after reviewing drafts.
     """
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
     dispatcher: DispatchPort
 
     async def prepare(
@@ -221,7 +221,7 @@ class ResumeJobApplicationUseCase:
             board_credentials = {}
             approved_jobs = []
 
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 user = await uow.user_repo.get(user_id)
                 if not user:
                     return Result.failure(Error.not_found("User", str(user_id)))
@@ -319,7 +319,7 @@ class KillJobSearchUseCase:
     2. Set the kill-switch on AgentState (live signal to running workers,
        scoped to this specific search_id to prevent stale-shutdown bugs)
     """
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
     agent_service: AgentServicePort
 
     async def execute(self, request: KillAgentRequest) -> Result:
@@ -328,7 +328,7 @@ class KillJobSearchUseCase:
             user_id = params["user_id"]
             search_id = params["search_id"]
 
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 # 1. Fetch and validate the search
                 search = await uow.search_repo.get(search_id)
                 if not search:
@@ -373,11 +373,11 @@ class GetIgnoredHashesUseCase:
     Called by the Workers before scraping.
     Returns a set of fingerprint hashes for jobs the user recently applied to.
     """
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
 
     async def execute(self, user_id: UUID, days: int = 14) -> Result:
         try:
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 hashes = await uow.job_repo.get_recent_application_hashes(user_id, days=days)
                 return Result.success(hashes)
         except Exception:
@@ -391,11 +391,11 @@ class ProcessAgentResultsUseCase:
     Called by the Agent (or a listener) when scraping is done.
     It takes raw found jobs, deduplicates them, and saves them.
     """
-    uow: UnitOfWork    
+    uow_factory: UnitOfWorkFactory    
 
     async def execute(self, user_id: UUID, search_id: UUID, raw_offers: list[JobOffer]) -> Result:
         try:
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 search_mission = await uow.search_repo.get(search_id)
                 
                 ignored_hashes = await uow.job_repo.get_recent_application_hashes(user_id, days=14)
@@ -425,7 +425,7 @@ class SaveJobApplicationsUseCase:
     Called by the Agent AFTER analysis and submission attempts.
     It persists the fully processed JobOffer entities to the database.
     """
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
     
     async def execute(self, offers: list[JobOffer]) -> Result:
         try:
@@ -434,7 +434,7 @@ class SaveJobApplicationsUseCase:
 
             count = 0
             
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 for offer in offers:                
                     if offer.application_date and offer.status ==ApplicationStatus.SUBMITTED:
                         offer.application_date = datetime.now(timezone.utc)
@@ -469,14 +469,14 @@ class GetJobsForReviewUseCase:
     search is still SEARCHING. Filtering to GENERATED hid them, making the
     page look "already validated" when work remained.
     """
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
 
     async def execute(self, request: GetJobsForReviewRequest) -> Result:
         try:
             user_id = str(request.user_id)
             search_id = str(request.search_id)
 
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 search = await uow.search_repo.get(UUID(search_id.strip()))
 
                 if not search:
@@ -509,11 +509,11 @@ class GetSearchStatusUseCase:
     Returns ONLY the search_status for one search, for the frontend's terminal
     disambiguation (complete vs failed). Ownership-checked.
     """
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
 
     async def execute(self, user_id: UUID, search_id: UUID) -> Result:
         try:
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 search = await uow.search_repo.get(search_id)
                 if not search:
                     return Result.failure(Error.not_found("JobSearch", str(search_id)))
@@ -535,7 +535,7 @@ class UpdateCoverLetterUseCase:
     """
     Update the cover letter for a job application.
     """
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
 
     async def execute(self, request: UpdateCoverLetterRequest) -> Result:
         try:
@@ -549,7 +549,7 @@ class UpdateCoverLetterUseCase:
             if len(cover_letter) > 5000:
                 return Result.failure(Error.validation_error("Cover letter too long (max 5000 characters)"))
             
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 job = await uow.job_repo.get(UUID(job_id.strip()))
                 
                 if not job:
@@ -587,14 +587,14 @@ class ApproveJobUseCase:
     """
     Mark a job application as APPROVED for submission.
     """
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
 
     async def execute(self, request: ApproveJobRequest) -> Result:
         try:
             user_id = str(request.user_id)
             job_id = str(request.job_id)
 
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 job = await uow.job_repo.get(UUID(job_id.strip()))
                 
                 if not job:
@@ -633,14 +633,14 @@ class DiscardJobUseCase:
     """
     Mark a job application as REJECTED.
     """
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
 
     async def execute(self, request: DiscardJobRequest) -> Result:
         try:
             user_id = str(request.user_id)
             job_id = str(request.job_id)
 
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 job = await uow.job_repo.get(UUID(job_id.strip()))
                 
                 if not job:
@@ -680,11 +680,11 @@ class ConsumeAiCreditsUseCase:
     Called by the Agent immediately after generating cover letters.
     Deducts AI credits from the user's subscription wallet.
     """
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
 
     async def execute(self, user_id: UUID, amount: int) -> Result:
         try:
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 subscription = await uow.subscription_repo.get_by_user_id(str(user_id))
                 
                 if not subscription:
@@ -714,11 +714,11 @@ class SetSearchStatusUseCase:
     were never saved to the DB. Fail-soft: a status write miss must never crash
     or abort the agent run.
     """
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
 
     async def execute(self, search_id: UUID, status: SearchStatus) -> Result:
         try:
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 search = await uow.search_repo.get(search_id)
                 if not search:
                     return Result.failure(Error.not_found("JobSearch", str(search_id)))

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from auto_apply_app.application.common.result import Result, Error, ErrorReason
-from auto_apply_app.application.repositories.unit_of_work import UnitOfWork
+from auto_apply_app.application.repositories.unit_of_work import UnitOfWorkFactory
 from auto_apply_app.application.dtos.free_search_dtos import FreeSearchRequest
 
 logger = logging.getLogger(__name__)
@@ -27,7 +27,7 @@ class FreeSearchUseCase:
     - IP-level rate limiting (slowapi) catches bot abuse
     Failed scrapes don't count against the user's quota.
     """
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
     fake_agent: Any  # FakeMasterAgent — typed as Any to keep the application
                      # layer free of infrastructure imports
 
@@ -39,7 +39,7 @@ class FreeSearchUseCase:
             target_count = params["target_count"]
 
             # 1. Pre-check daily quota
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 usage = await uow.free_search_usage_repo.get_or_create_for_today(user_id)
                 allowed, reason = usage.can_run()
                 if not allowed:
@@ -62,7 +62,7 @@ class FreeSearchUseCase:
                 ))
 
             # 4. Record usage on success (separate UoW)
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 usage = await uow.free_search_usage_repo.get_or_create_for_today(user_id)
                 usage.record()
                 await uow.free_search_usage_repo.save(usage)

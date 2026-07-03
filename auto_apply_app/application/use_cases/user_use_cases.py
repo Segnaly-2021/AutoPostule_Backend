@@ -33,7 +33,7 @@ from auto_apply_app.application.dtos.auth_user_dtos import (
 
 from auto_apply_app.application.service_ports.email_service_port import EmailServicePort
 from auto_apply_app.application.service_ports.payment_port import PaymentPort
-from auto_apply_app.application.repositories.unit_of_work import UnitOfWork
+from auto_apply_app.application.repositories.unit_of_work import UnitOfWork, UnitOfWorkFactory
 from auto_apply_app.application.service_ports.password_service_port import PasswordServicePort
 from auto_apply_app.application.service_ports.rate_limiter_port import RateLimiterPort
 from auto_apply_app.application.service_ports.file_storage_port import FileStoragePort
@@ -99,7 +99,7 @@ def _generate_verification_code() -> str:
  
 @dataclass
 class RegisterUserUseCase:
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
     password_service: PasswordServicePort
     email_service: EmailServicePort
 
@@ -111,8 +111,8 @@ class RegisterUserUseCase:
             raw_code = _generate_verification_code()
             code_hash = self.password_service.get_password_hash(raw_code)
 
-            async with self.uow:
-                existing_auth = await self.uow.auth_repo.get_by_email(params["email"])
+            async with self.uow_factory() as uow:
+                existing_auth = await uow.auth_repo.get_by_email(params["email"])
                 if existing_auth:
                     logger.info("Registration rejected: email already exists %s", params["email"])
                     return Result.failure(Error.conflict(
@@ -147,10 +147,10 @@ class RegisterUserUseCase:
                 sub_user = UserSubscription(user_id=user_id, email=params["email"])
                 user_prefs = UserPreferences(user_id=user.id)
 
-                await self.uow.user_repo.save(user)
-                await self.uow.auth_repo.save(auth_user)
-                await self.uow.subscription_repo.save(sub_user)
-                await self.uow.user_pref_repo.save(user_prefs)
+                await uow.user_repo.save(user)
+                await uow.auth_repo.save(auth_user)
+                await uow.subscription_repo.save(sub_user)
+                await uow.user_pref_repo.save(user_prefs)
 
             # Send code outside UoW — email failure must not roll back registration.
             try:
@@ -173,14 +173,14 @@ class RegisterUserUseCase:
 class LoginUserUseCase:
     password_service: PasswordServicePort
     token_provider: TokenProviderPort
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
 
     async def execute(self, request: LoginRequest) -> Result:
         try:
             params = request.to_execution_params()
 
-            async with self.uow:
-                auth_user = await self.uow.auth_repo.get_by_email(params["email"])
+            async with self.uow_factory() as uow:
+                auth_user = await uow.auth_repo.get_by_email(params["email"])
 
                 if not auth_user:
                     logger.info("Login failed: this email does not exist - %s", params["email"])
@@ -204,7 +204,7 @@ class LoginUserUseCase:
                     ))
 
                 auth_user.record_login()
-                await self.uow.auth_repo.save(auth_user)
+                await uow.auth_repo.save(auth_user)
 
                 token = self.token_provider.encode_token(
                     user_id=auth_user.user_id,
@@ -222,15 +222,15 @@ class LoginUserUseCase:
 
 @dataclass
 class RequestPasswordResetUseCase:
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
     token_provider: TokenProviderPort
     email_service: EmailServicePort
 
     async def execute(self, request: ForgotPasswordRequest) -> Result:
         try:
-            async with self.uow:
+            async with self.uow_factory() as uow:
                 # 1. Find the user
-                auth_user = await self.uow.auth_repo.get_by_email(request.email)
+                auth_user = await uow.auth_repo.get_by_email(request.email)
 
                 # SECURITY NOTE: Do not reveal whether the email exists — anti-enumeration.
                 if not auth_user:
@@ -264,7 +264,7 @@ class RequestPasswordResetUseCase:
 
 @dataclass
 class ConfirmPasswordResetUseCase:
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
     token_provider: TokenProviderPort
     password_service: PasswordServicePort
 
@@ -289,7 +289,7 @@ class ConfirmPasswordResetUseCase:
                     reason=ErrorReason.INVALID_TOKEN,
                 ))
 
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 # 2. Fetch User
                 auth_user = await uow.auth_repo.get_by_id(UUID(user_id))
                 if not auth_user:
@@ -358,12 +358,12 @@ class LogoutUseCase:
 class ChangePasswordUseCase:
 
     password_service: PasswordServicePort
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
 
     async def execute(self, request: ChangePasswordRequest) -> Result:
         try:
             params = request.to_execution_params()
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 # 1. Fetch User by ID (from Token)
                 auth_user = await uow.auth_repo.get_by_id(params["user_id"])
 
@@ -416,12 +416,12 @@ class ChangePasswordUseCase:
 @dataclass
 class GetUserUseCase:
 
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
 
     async def execute(self, request: GetUserRequest) -> Result:
         try:
             params = request.to_execution_params()
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 user = await uow.user_repo.get(params["user_id"])
             return Result.success(UserResponse.from_entity(user))
 
@@ -440,7 +440,7 @@ class GetUserUseCase:
 
 @dataclass
 class UploadUserResumeUseCase:
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
     storage_port: FileStoragePort
 
     async def execute(
@@ -477,7 +477,7 @@ class UploadUserResumeUseCase:
             # 4. Filename sanitization
             safe_filename = _sanitize_filename(original_filename)
 
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 user = await uow.user_repo.get(UUID(user_id.strip()))
                 if not user:
                     return Result.failure(Error.not_found("User", str(user_id)))
@@ -509,12 +509,12 @@ class UploadUserResumeUseCase:
 @dataclass
 class UpdateUserUseCase:
 
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
 
     async def execute(self, request: UpdateUserRequest) -> Result:
         user_id = None
         try:
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 params = request.to_execution_params()
                 user_id = params.pop("user_id")
                 user = await uow.user_repo.update(user_id, params)
@@ -549,13 +549,13 @@ class UpdateUserUseCase:
 @dataclass
 class DeleteUserUseCase:
     """Use case for deleting a user"""
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
     storage_port: FileStoragePort  # ← inject the storage port
 
     async def execute(self, request: GetUserRequest) -> Result:
         params = {}
         try:
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 params = request.to_execution_params()
                 user_id = params["user_id"]
 
@@ -602,7 +602,7 @@ class VerifyCodeUseCase:
     Verifies the 6-digit code and, on success, logs the user in by returning a JWT.
     Replaces VerifyEmailUseCase.
     """
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
     password_service: PasswordServicePort
     token_provider: TokenProviderPort
  
@@ -612,8 +612,8 @@ class VerifyCodeUseCase:
             email = params["email"]
             code = params["code"]
 
-            async with self.uow:
-                auth_user = await self.uow.auth_repo.get_by_email(email)
+            async with self.uow_factory() as uow:
+                auth_user = await uow.auth_repo.get_by_email(email)
 
                 if not auth_user:
                     logger.info("Email verification failed: no account for %s", email)
@@ -638,7 +638,7 @@ class VerifyCodeUseCase:
 
                 if auth_user.has_exceeded_attempts():
                     auth_user.clear_verification_code()
-                    await self.uow.auth_repo.save(auth_user)
+                    await uow.auth_repo.save(auth_user)
                     logger.warning("Email verification failed: too many attempts %s", email)
                     return Result.failure(Error.unauthorized(
                         message="Email verification: exceeded attempts",
@@ -649,13 +649,13 @@ class VerifyCodeUseCase:
                     auth_user.register_failed_attempt()
                     if auth_user.has_exceeded_attempts():
                         auth_user.clear_verification_code()
-                        await self.uow.auth_repo.save(auth_user)
+                        await uow.auth_repo.save(auth_user)
                         logger.warning("Email verification failed: too many attempts (final) %s", email)
                         return Result.failure(Error.unauthorized(
                             message="Email verification: exceeded attempts after wrong code",
                             reason=ErrorReason.TOO_MANY_ATTEMPTS,
                         ))
-                    await self.uow.auth_repo.save(auth_user)
+                    await uow.auth_repo.save(auth_user)
                     logger.info("Email verification failed: wrong code %s", email)
                     return Result.failure(Error.unauthorized(
                         message="Email verification: code mismatch",
@@ -663,7 +663,7 @@ class VerifyCodeUseCase:
                     ))
 
                 auth_user.mark_verified()
-                await self.uow.auth_repo.save(auth_user)
+                await uow.auth_repo.save(auth_user)
                 token = self.token_provider.encode_token(
                     user_id=auth_user.user_id,
                     claims={"email": auth_user.email},
@@ -684,7 +684,7 @@ class ResendVerificationEmailUseCase:
     Resends a 6-digit verification code, rate-limited via Redis (1/60s per email).
     Anti-enumeration: same response whether or not the email exists / is verified.
     """
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
     password_service: PasswordServicePort
     email_service: EmailServicePort
     rate_limiter: RateLimiterPort
@@ -721,12 +721,12 @@ class ResendVerificationEmailUseCase:
             code_hash = self.password_service.get_password_hash(raw_code)
 
             should_send = False
-            async with self.uow:
-                auth_user = await self.uow.auth_repo.get_by_email(normalized_email)
+            async with self.uow_factory() as uow:
+                auth_user = await uow.auth_repo.get_by_email(normalized_email)
 
                 if auth_user and not auth_user.is_verified:
                     auth_user.set_verification_code(code_hash)
-                    await self.uow.auth_repo.save(auth_user)
+                    await uow.auth_repo.save(auth_user)
                     should_send = True
 
             if should_send:
@@ -775,7 +775,7 @@ class RequestEmailChangeUseCase:
     Initiates an email change: validates the new address is free, stages it as
     pending_email + issues a verification code to it. No live email is touched.
     """
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
     password_service: PasswordServicePort
     email_service: EmailServicePort
     rate_limiter: RateLimiterPort
@@ -807,8 +807,8 @@ class RequestEmailChangeUseCase:
             raw_code = _generate_verification_code()
             code_hash = self.password_service.get_password_hash(raw_code)
 
-            async with self.uow:
-                auth_user = await self.uow.auth_repo.get_by_id(user_id)
+            async with self.uow_factory() as uow:
+                auth_user = await uow.auth_repo.get_by_id(user_id)
                 if not auth_user:
                     logger.error("Email change failed: no auth account for user_id=%s", user_id)
                     return Result.failure(Error.not_found(
@@ -824,7 +824,7 @@ class RequestEmailChangeUseCase:
                     ))
 
                 # Uniqueness pre-check — clean 409, never a DB IntegrityError/500.
-                if await _email_in_use(self.uow, new_email):
+                if await _email_in_use(uow, new_email):
                     logger.info("Email change rejected: %s already in use", new_email)
                     return Result.failure(Error.conflict(
                         message="Email change: address already in use",
@@ -832,7 +832,7 @@ class RequestEmailChangeUseCase:
                     ))
 
                 auth_user.set_email_change_code(new_email, code_hash)
-                await self.uow.auth_repo.save(auth_user)
+                await uow.auth_repo.save(auth_user)
                 # No live email touched — only pending_email + code persisted.
 
             # 3) Send the code to the NEW address (post-commit, best-effort).
@@ -862,7 +862,7 @@ class ConfirmEmailChangeUseCase:
     single transaction updates users.email, auth_users.email and user_subscriptions.email
     and clears pending_email. After commit, syncs Stripe and notifies the old address.
     """
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
     password_service: PasswordServicePort
     payment_port: PaymentPort
     email_service: EmailServicePort
@@ -878,8 +878,8 @@ class ConfirmEmailChangeUseCase:
             stripe_customer_id = None
             updated_user = None
 
-            async with self.uow:
-                auth_user = await self.uow.auth_repo.get_by_id(user_id)
+            async with self.uow_factory() as uow:
+                auth_user = await uow.auth_repo.get_by_id(user_id)
                 if not auth_user:
                     logger.error("Confirm email change failed: no auth account for user_id=%s", user_id)
                     return Result.failure(Error.not_found(
@@ -897,7 +897,7 @@ class ConfirmEmailChangeUseCase:
 
                 if auth_user.has_exceeded_attempts():
                     auth_user.clear_email_change()
-                    await self.uow.auth_repo.save(auth_user)
+                    await uow.auth_repo.save(auth_user)
                     logger.warning("Confirm email change: too many attempts user_id=%s", user_id)
                     return Result.failure(Error.unauthorized(
                         message="Confirm email change: exceeded attempts",
@@ -908,13 +908,13 @@ class ConfirmEmailChangeUseCase:
                     auth_user.register_failed_attempt()
                     if auth_user.has_exceeded_attempts():
                         auth_user.clear_email_change()
-                        await self.uow.auth_repo.save(auth_user)
+                        await uow.auth_repo.save(auth_user)
                         logger.warning("Confirm email change: too many attempts (final) user_id=%s", user_id)
                         return Result.failure(Error.unauthorized(
                             message="Confirm email change: exceeded attempts after wrong code",
                             reason=ErrorReason.TOO_MANY_ATTEMPTS,
                         ))
-                    await self.uow.auth_repo.save(auth_user)
+                    await uow.auth_repo.save(auth_user)
                     logger.info("Confirm email change: wrong code user_id=%s", user_id)
                     return Result.failure(Error.unauthorized(
                         message="Confirm email change: code mismatch",
@@ -924,7 +924,7 @@ class ConfirmEmailChangeUseCase:
                 pending = auth_user.pending_email
 
                 # Race guard: the address may have been claimed between request and confirm.
-                if await _email_in_use(self.uow, pending):
+                if await _email_in_use(uow, pending):
                     logger.info("Confirm email change rejected: %s now in use", pending)
                     return Result.failure(Error.conflict(
                         message="Confirm email change: address already in use",
@@ -934,15 +934,15 @@ class ConfirmEmailChangeUseCase:
                 old_email = auth_user.email
 
                 # Load the subscription before mutating so we have the Stripe id post-commit.
-                subscription = await self.uow.subscription_repo.get_by_user_id(str(user_id))
+                subscription = await uow.subscription_repo.get_by_user_id(str(user_id))
 
                 # --- Atomic three-table update ---
                 new_email = auth_user.apply_email_change()
-                await self.uow.auth_repo.save(auth_user)
-                updated_user = await self.uow.user_repo.update(user_id, {"email": new_email})
+                await uow.auth_repo.save(auth_user)
+                updated_user = await uow.user_repo.update(user_id, {"email": new_email})
                 if subscription is not None:
                     subscription.email = new_email
-                    await self.uow.subscription_repo.save(subscription)
+                    await uow.subscription_repo.save(subscription)
                     stripe_customer_id = subscription.stripe_customer_id
                 # Commit on context exit — all-or-nothing.
 

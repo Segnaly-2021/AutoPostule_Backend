@@ -5,7 +5,7 @@ from datetime import datetime, UTC
 
 from auto_apply_app.application.common.result import Error, Result
 from auto_apply_app.application.service_ports.payment_port import PaymentPort
-from auto_apply_app.application.repositories.unit_of_work import UnitOfWork
+from auto_apply_app.application.repositories.unit_of_work import UnitOfWorkFactory
 from auto_apply_app.domain.value_objects import ClientType
 from auto_apply_app.application.dtos.subscription_dtos import (
     GetUserSubscriptionRequest,
@@ -21,13 +21,13 @@ logger = logging.getLogger(__name__)
 @dataclass
 class GetUserSubscriptionUseCase:
     
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
 
     async def execute(self, request: GetUserSubscriptionRequest) -> Result:
         try:
             params = request.to_execution_params()
             user_id = params["user_id"]
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 # 1. Fetch the subscription directly from the repository
                 subscription = await uow.subscription_repo.get_by_user_id(user_id)
                 
@@ -48,7 +48,7 @@ class GetUserSubscriptionUseCase:
 
 @dataclass
 class CreateCheckoutSessionUseCase:
-    uow: UnitOfWork 
+    uow_factory: UnitOfWorkFactory 
     payment_port: PaymentPort
     FRONTEND_URL : str = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
@@ -57,7 +57,7 @@ class CreateCheckoutSessionUseCase:
             params = request.to_execution_params()
             user_id = params["user_id"]
             plan_name = params["plan_name"]
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 # 1. Fetch User to get their email (Stripe needs this to pre-fill)
                 subs = await uow.subscription_repo.get_by_user_id(user_id)
                 if not subs:
@@ -103,7 +103,7 @@ class CreateCheckoutSessionUseCase:
 
 @dataclass
 class HandlePaymentWebhookUseCase:
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
     payment_port: PaymentPort
 
     async def execute(self, request: HandlePaymentWebhookRequest) -> Result:
@@ -159,7 +159,7 @@ class HandlePaymentWebhookUseCase:
     async def _handle_successful_payment(self, data: dict, event_type: str) -> Result:
         print(f"\nProcessing event: {event_type}")
         
-        async with self.uow as uow:
+        async with self.uow_factory() as uow:
             subscription = None
             customer_id = data.get("customer")
 
@@ -258,7 +258,7 @@ class HandlePaymentWebhookUseCase:
         
         print(f"Processing failed payment for stripe_sub_id: {stripe_sub_id},\ncustomer_id: {customer_id}")
 
-        async with self.uow as uow:
+        async with self.uow_factory() as uow:
             # 1. Try to find the user by Stripe's specific Sub ID
             subscription = await uow.subscription_repo.get_by_stripe_id(stripe_sub_id)
             
@@ -303,7 +303,7 @@ class HandlePaymentWebhookUseCase:
               period_end: {period_end_ts}\n
         """)
         
-        async with self.uow as uow:
+        async with self.uow_factory() as uow:
             subscription = await uow.subscription_repo.get_by_stripe_id(stripe_sub_id)
             print(f"Fetched subscription for update:\n{subscription}")
             
@@ -326,20 +326,20 @@ class HandlePaymentWebhookUseCase:
                 subscription.cancel_at = datetime.now(tz=UTC)
                 subscription.downgrade_to_free()
 
-            await self.uow.subscription_repo.save(subscription) 
+            await uow.subscription_repo.save(subscription) 
             await uow.commit()        
             return Result.success(UserSubscriptionResponse.from_entity(subscription))
     
     
 @dataclass
 class GetManagementPortalUseCase:
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
     payment_port: PaymentPort
 
     async def execute(self, user_id: str) -> Result:
         try:
-            async with self.uow:
-                subscription = await self.uow.subscription_repo.get_by_user_id(user_id)
+            async with self.uow_factory() as uow:
+                subscription = await uow.subscription_repo.get_by_user_id(user_id)
                 
                 if not subscription or not subscription.stripe_customer_id:
                     return Result.failure(Error.not_found("No payment record found."))

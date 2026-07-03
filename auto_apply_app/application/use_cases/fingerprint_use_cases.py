@@ -3,7 +3,7 @@ import logging
 from dataclasses import dataclass
 from uuid import UUID
 
-from auto_apply_app.application.repositories.unit_of_work import UnitOfWork
+from auto_apply_app.application.repositories.unit_of_work import UnitOfWorkFactory
 from auto_apply_app.application.service_ports.fingerprint_generator_port import (
     FingerprintGeneratorPort,
 )
@@ -15,12 +15,12 @@ logger = logging.getLogger(__name__)
 @dataclass
 class GetOrCreateUserFingerprintUseCase:
     
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
     generator: FingerprintGeneratorPort
 
     async def execute(self, user_id: UUID) -> Result[UserFingerprint]:
         try:
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 
                 existing = await uow.user_fingerprint_repo.get_by_user_id(user_id)
                 

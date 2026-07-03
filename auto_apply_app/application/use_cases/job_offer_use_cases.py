@@ -6,7 +6,7 @@ from uuid import UUID
 from auto_apply_app.domain.value_objects import ApplicationStatus
 
 from auto_apply_app.application.repositories.job_offer_repo import JobOfferRepository
-from auto_apply_app.application.repositories.unit_of_work import UnitOfWork
+from auto_apply_app.application.repositories.unit_of_work import UnitOfWorkFactory
 from auto_apply_app.application.dtos.operations import DeletionOutcome
 from auto_apply_app.application.common.result import Result, Error
 from auto_apply_app.domain.entities.job_offer import JobOffer
@@ -30,16 +30,16 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class GetUserApplicationsUseCase:
-    uow: UnitOfWork  # Injected UoW instead of direct Repo
+    uow_factory: UnitOfWorkFactory  # Injected UoW instead of direct Repo
 
     async def execute(self, request: GetUserApplicationsRequest) -> Result:
         try:
-            async with self.uow:
+            async with self.uow_factory() as uow:
                 params = request.to_execution_params()
                 
                 # The UoW provides access to job_repo
                 # Note: Defaulting to SUBMITTED status as per requirements
-                jobs, total_count, aggregations = await self.uow.job_repo.get_user_applications(
+                jobs, total_count, aggregations = await uow.job_repo.get_user_applications(
                     user_id=params["user_id"],
                     filters=params["filters"],
                     pagination=params["pagination"]
@@ -64,19 +64,19 @@ class GetUserApplicationsUseCase:
 
 @dataclass
 class ToggleResponseStatusUseCase:
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
 
     async def execute(self, request: ToggleStatusRequest) -> Result:
         try:
-            async with self.uow:
+            async with self.uow_factory() as uow:
                 # We use the specific repo method you defined
-                job = await self.uow.job_repo.update_response_status(
+                job = await uow.job_repo.update_response_status(
                     job_id=request.job_offer_id,
                     user_id=request.user_id,
                     has_response=request.has_response,
                 )
                 
-                await self.uow.commit()
+                await uow.commit()
                 return Result.success({
                     "id": job.id,
                     "has_response": job.has_response,
@@ -91,17 +91,17 @@ class ToggleResponseStatusUseCase:
 
 @dataclass
 class ToggleInterviewStatusUseCase:
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
 
     async def execute(self, request: ToggleStatusRequest) -> Result:
         try:
-            async with self.uow:
-                job = await self.uow.job_repo.update_interview_status(
+            async with self.uow_factory() as uow:
+                job = await uow.job_repo.update_interview_status(
                     job_id=request.job_offer_id,
                     user_id=request.user_id,
                     has_interview=request.has_interview
                 )
-                await self.uow.commit()
+                await uow.commit()
                 
                 return Result.success({
                     "id": job.id,
@@ -117,12 +117,12 @@ class ToggleInterviewStatusUseCase:
 
 @dataclass
 class GetApplicationAnalyticsUseCase:
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
 
     async def execute(self, request: GetAnalyticsRequest) -> Result:
         try:
-            async with self.uow:
-                data = await self.uow.job_repo.get_analytics(
+            async with self.uow_factory() as uow:
+                data = await uow.job_repo.get_analytics(
                     user_id=request.user_id,
                     period=request.period
                 )
@@ -134,13 +134,13 @@ class GetApplicationAnalyticsUseCase:
 
 @dataclass
 class CleanupUnsubmittedJobsUseCase:
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
 
     async def execute(self, search_id: UUID) -> Result[dict]:
         try:
             # 1. The UoW context opens the transaction
-            async with self.uow:
-                deleted_count = await self.uow.job_repo.delete_by_search_and_status(
+            async with self.uow_factory() as uow:
+                deleted_count = await uow.job_repo.delete_by_search_and_status(
                     search_id=search_id,
                     status=ApplicationStatus.APPROVED
                 )
@@ -236,15 +236,15 @@ class DeleteJobOfferUseCase:
 
 @dataclass
 class GetDailyStatsUseCase:
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
 
     async def execute(self, request: GetDailyStatsRequest) -> Result:
         try:
-            async with self.uow:
+            async with self.uow_factory() as uow:
                 params = request.to_execution_params()
                 
                 # Use the UoW to access the repository and fetch the count
-                count = await self.uow.job_repo.get_daily_application_count(
+                count = await uow.job_repo.get_daily_application_count(
                     user_id=params["user_id"]
                 )
                 
