@@ -345,11 +345,12 @@ class KillJobSearchUseCase:
                 await uow.search_repo.save(search)
 
               
-                # 3. Signal the kill-switch (scoped to this specific search_id)
-                agent_state = await uow.agent_state_repo.get_by_search_id(search_id)
-                if agent_state is not None:
-                    agent_state.shutdown()
-                    await uow.agent_state_repo.save(agent_state)
+                # 3. Signal the kill-switch (scoped to this specific search_id).
+                # Field-scoped write (is_shutdown only) so a concurrent worker
+                # heartbeat can't overwrite the flag and resurrect the run. Under
+                # Cloud Run Job dispatch this DB flag is the ONLY cross-process kill
+                # channel, so it must not be clobbered.
+                await uow.agent_state_repo.set_shutdown(search_id)
 
             # 4. Force-cleanup any in-flight workers (outside UoW)
             await self.agent_service.kill_job_search(search_id)
@@ -685,21 +686,24 @@ class ConsumeAiCreditsUseCase:
     async def execute(self, user_id: UUID, amount: int) -> Result:
         try:
             async with self.uow_factory() as uow:
-                subscription = await uow.subscription_repo.get_by_user_id(str(user_id))
-                
-                if not subscription:
-                    return Result.failure(Error.not_found("Subscription", str(user_id)))
-                
-                try:
-                    subscription.consume_credits(amount)
-                except ValueError as e:
-                    # Domain errors like "Insufficient AI credits" are safe to show to the user
-                    return Result.failure(Error.validation_error(str(e)))
-                
-                await uow.subscription_repo.save(subscription)
-                await uow.commit()
-                
-                return Result.success(subscription.ai_credits_balance)
+                # Atomic guarded decrement instead of read → consume_credits() → save.
+                # A whole-row read-modify-write lets two concurrent workers lose a
+                # deduction (last merge wins); this single UPDATE cannot.
+                new_balance = await uow.subscription_repo.try_consume_credits(user_id, amount)
+
+                if new_balance is None:
+                    # Missing subscription vs insufficient credits — one extra read
+                    # (only on the failure path) disambiguates and rebuilds the same
+                    # message the domain used to raise.
+                    subscription = await uow.subscription_repo.get_by_user_id(str(user_id))
+                    if not subscription:
+                        return Result.failure(Error.not_found("Subscription", str(user_id)))
+                    return Result.failure(Error.validation_error(
+                        f"Insufficient AI credits. Required: {amount}, "
+                        f"Balance: {subscription.ai_credits_balance}"
+                    ))
+
+                return Result.success(new_balance)
 
         except Exception:
             logger.exception(f"ConsumeAiCreditsUseCase failed for user {user_id}")

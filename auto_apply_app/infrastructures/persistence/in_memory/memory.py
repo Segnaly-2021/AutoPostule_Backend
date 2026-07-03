@@ -656,6 +656,15 @@ class InMemorySubscriptionRepository(SubscriptionRepository):
     async def save(self, subscription: UserSubscription) -> None:
         self._subscriptions[subscription.user_id] = subscription
 
+    async def try_consume_credits(self, user_id: str | UUID, amount: int) -> Optional[int]:
+        # Single-process in-memory equivalent of the guarded atomic UPDATE.
+        uuid = UUID(str(user_id)) if not isinstance(user_id, UUID) else user_id
+        subs = self._subscriptions.get(uuid)
+        if subs is None or subs.ai_credits_balance < amount:
+            return None
+        subs.ai_credits_balance -= amount
+        return subs.ai_credits_balance
+
 
 class InMemoryUnitOfWork(UnitOfWork):
     # ✅ Class-level shared storage (acts like a persistent database)
