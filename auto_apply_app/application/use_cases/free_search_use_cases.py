@@ -39,6 +39,7 @@ class FreeSearchUseCase:
             target_count = params["target_count"]
 
             # 1. Pre-check daily quota
+            user_name = "unknown"
             async with self.uow_factory() as uow:
                 usage = await uow.free_search_usage_repo.get_or_create_for_today(user_id)
                 allowed, reason = usage.can_run()
@@ -51,9 +52,17 @@ class FreeSearchUseCase:
                             reason=ErrorReason.RATE_LIMITED,
                         )
                     )
+                # Debug attribution only — a failed lookup must never sink the search
+                try:
+                    user = await uow.user_repo.get(user_id)
+                    user_name = f"{user.firstname} {user.lastname}"
+                except Exception:
+                    logger.warning("Could not resolve name for user %s", user_id)
 
             # 2. Run the scraping (outside UoW — long-running)
-            search_output = await self.fake_agent.search_all_boards(query, target_count)
+            search_output = await self.fake_agent.search_all_boards(
+                query, target_count, user_id=user_id, user_name=user_name
+            )
 
             # 3. If scraping itself failed at the agent level, don't count it
             if search_output.get("status") == "error":
