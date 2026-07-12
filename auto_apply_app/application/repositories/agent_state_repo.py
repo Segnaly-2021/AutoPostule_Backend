@@ -19,5 +19,27 @@ class AgentStateRepository(ABC):
 
     @abstractmethod
     async def save(self, agent_state: AgentState) -> None:
-        """Save or update an agent state row."""
+        """Save or update an agent state row (writes the whole row).
+
+        Use only for create/seed. For concurrent hot-path updates prefer the
+        field-scoped methods below so parallel workers cannot clobber each
+        other's disjoint columns (a heartbeat must never overwrite is_shutdown).
+        """
+        pass
+
+    @abstractmethod
+    async def touch_heartbeat(self, search_id: UUID) -> None:
+        """Field-scoped write: set last_heartbeat=now for this search only.
+
+        Never touches is_shutdown, so a frequent worker heartbeat cannot erase a
+        concurrently-committed kill. No-op if the row does not exist.
+        """
+        pass
+
+    @abstractmethod
+    async def set_shutdown(self, search_id: UUID) -> bool:
+        """Field-scoped write: set is_shutdown=TRUE for this search only.
+
+        Returns True if a row was updated, False if no row matched.
+        """
         pass

@@ -5,7 +5,7 @@ from auto_apply_app.application.service_ports.encryption_port import EncryptionS
 from auto_apply_app.application.dtos.preferences_dtos import UpdateUserPreferencesRequest
 from auto_apply_app.domain.entities.user_preferences import UserPreferences
 from auto_apply_app.domain.entities.board_credentials import BoardCredential
-from auto_apply_app.application.repositories.unit_of_work import UnitOfWork
+from auto_apply_app.application.repositories.unit_of_work import UnitOfWorkFactory
 from auto_apply_app.application.dtos.preferences_dtos import (
     GetUserPreferencesRequest, 
     UserPreferencesResponse
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class GetUserPreferencesUseCase:
     
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
 
     async def execute(self, request: GetUserPreferencesRequest) -> Result[UserPreferencesResponse]:
         try:
@@ -26,7 +26,7 @@ class GetUserPreferencesUseCase:
             user_id = params["user_id"]
 
             # 2. Start Transaction (Read-only)
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 
                 # Fetch Data from Multiple Repositories
                 prefs = await uow.user_pref_repo.get_by_user_id(user_id)
@@ -44,7 +44,7 @@ class GetUserPreferencesUseCase:
         
 @dataclass
 class UpdateUserPreferencesUseCase:
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
     encryption_service: EncryptionServicePort
 
     async def execute(self, request: UpdateUserPreferencesRequest) -> Result[None]:
@@ -53,7 +53,7 @@ class UpdateUserPreferencesUseCase:
             user_id = params["user_id"]
             new_credentials = params.get("credentials")
 
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 
                 current_prefs = await uow.user_pref_repo.get_by_user_id(user_id)
                 

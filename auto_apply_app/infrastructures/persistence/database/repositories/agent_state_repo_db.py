@@ -1,7 +1,8 @@
 # auto_apply_app/infrastructures/persistence/database/repositories/agent_state_repo_db.py
+from datetime import datetime, timezone
 from uuid import UUID
 from typing import Optional
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auto_apply_app.domain.entities.agent_state import AgentState
@@ -32,6 +33,24 @@ class AgentStateRepoDB(AgentStateRepository):
             last_heartbeat=agent_state.last_heartbeat,
         )
         await self.session.merge(agent_state_db)
+
+    async def touch_heartbeat(self, search_id: UUID) -> None:
+        # Field-scoped UPDATE: only last_heartbeat. Never reads/writes is_shutdown,
+        # so a concurrent heartbeat cannot clobber a kill committed in between.
+        await self.session.execute(
+            update(AgentStateDB)
+            .where(AgentStateDB.search_id == search_id)
+            .values(last_heartbeat=datetime.now(timezone.utc))
+        )
+
+    async def set_shutdown(self, search_id: UUID) -> bool:
+        # Field-scoped UPDATE: only is_shutdown. Disjoint from touch_heartbeat.
+        result = await self.session.execute(
+            update(AgentStateDB)
+            .where(AgentStateDB.search_id == search_id)
+            .values(is_shutdown=True)
+        )
+        return (result.rowcount or 0) > 0
 
     def _map_to_entity(self, agent_state_db: AgentStateDB) -> AgentState:
         state = AgentState(

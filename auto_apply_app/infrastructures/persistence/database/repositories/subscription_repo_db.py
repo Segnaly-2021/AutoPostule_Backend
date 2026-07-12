@@ -3,7 +3,7 @@
 # =============================================================================
 from uuid import UUID
 from typing import Optional
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auto_apply_app.domain.entities.user_subscription import UserSubscription
@@ -65,6 +65,25 @@ class SubscriptionRepoDB(SubscriptionRepository):
             stripe_subscription_id=subscription.stripe_subscription_id,
         )
         await self.session.merge(sub_db)
+
+    async def try_consume_credits(self, user_id: str | UUID, amount: int) -> Optional[int]:
+        # Atomic guarded decrement: the WHERE balance >= amount clause makes the
+        # check-and-deduct a single statement, so concurrent workers can neither
+        # lose a decrement nor drive the balance negative. RETURNING gives us the
+        # post-decrement balance without a second read.
+        uuid = UUID(str(user_id)) if not isinstance(user_id, UUID) else user_id
+        stmt = (
+            update(UserSubscriptionDB)
+            .where(
+                UserSubscriptionDB.user_id == uuid,
+                UserSubscriptionDB.ai_credits_balance >= amount,
+            )
+            .values(ai_credits_balance=UserSubscriptionDB.ai_credits_balance - amount)
+            .returning(UserSubscriptionDB.ai_credits_balance)
+        )
+        result = await self.session.execute(stmt)
+        row = result.first()
+        return row[0] if row is not None else None
 
     def _map_to_entity(self, sub_db: UserSubscriptionDB) -> UserSubscription:
         subs = UserSubscription(

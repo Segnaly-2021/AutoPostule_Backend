@@ -1,10 +1,13 @@
 # auto_apply_app/infrastructures/agent/fake_master.py
 
 import asyncio
+import logging
 from typing import List
 from auto_apply_app.infrastructures.agent.fake_agent.fake_workers.fake_wttj_worker import FakeWTTJWorker
 from auto_apply_app.infrastructures.agent.fake_agent.fake_workers.fake_hw_worker import FakeHWWorker
 from auto_apply_app.infrastructures.agent.fake_agent.fake_workers.fake_apec_worker import FakeApecWorker
+
+logger = logging.getLogger(__name__)
 
 
 class FakeMasterAgent:
@@ -39,9 +42,18 @@ class FakeMasterAgent:
             "wttj": 0,
         }
 
-    async def search_all_boards(self, query: str, target_count: int) -> dict:
+    async def search_all_boards(
+        self,
+        query: str,
+        target_count: int,
+        user_id: str = "unknown",
+        user_name: str = "unknown",
+    ) -> dict:
         """
         Run the active workers (APEC + HelloWork) in parallel and aggregate results.
+
+        user_id / user_name are debug attribution only — they identify who
+        triggered the run in logs and never affect the search itself.
 
         Returns:
             {
@@ -51,7 +63,11 @@ class FakeMasterAgent:
                 "status": "success" | "error"
             }
         """
-        print(f"\n🚀 [Fake Master] Starting parallel search for '{query}' (target: {target_count})")
+        print(f"\n🚀 [Fake Master] Starting parallel search for '{query}' (target: {target_count}) — run by {user_name} (user_id={user_id})")
+        logger.info(
+            "Fake agent run started by %s (user_id=%s) — query=%r, target=%d",
+            user_name, user_id, query, target_count,
+        )
 
         quotas = self._split_quota(target_count)
         print(f"📊 Quotas: APEC={quotas['apec']}, HW={quotas['hw']}, WTTJ={quotas['wttj']} (WTTJ disabled)")
@@ -74,7 +90,11 @@ class FakeMasterAgent:
 
             jobs_dict = [job.to_dict() for job in all_jobs]
 
-            print(f"✅ [Fake Master] Total scraped: {len(jobs_dict)} jobs")
+            print(f"✅ [Fake Master] Total scraped: {len(jobs_dict)} jobs)")
+            logger.info(
+                "Fake agent run finished for %s (user_id=%s) — %d jobs scraped",
+                user_name, user_id, len(jobs_dict),
+            )
 
             return {
                 "jobs": jobs_dict,
@@ -84,7 +104,11 @@ class FakeMasterAgent:
             }
 
         except Exception as e:
-            print(f"❌ [Fake Master] Fatal error: {e}")
+            print(f"❌ [Fake Master] Fatal error: {e} — run by {user_name} (user_id={user_id})")
+            logger.error(
+                "Fake agent run failed for %s (user_id=%s): %s",
+                user_name, user_id, e,
+            )
             return {
                 "jobs": [],
                 "total_found": 0,

@@ -1,5 +1,6 @@
 # auto_apply_app/application/repositories/unit_of_work.py
 from abc import ABC, abstractmethod
+from typing import Callable
 from auto_apply_app.application.repositories.user_repo import UserRepository
 from auto_apply_app.application.repositories.auth_repo import AuthRepository
 from auto_apply_app.application.repositories.subscription_repo import SubscriptionRepository
@@ -47,3 +48,6 @@ class UnitOfWork(ABC):
     @abstractmethod
     async def rollback(self):
         pass
+
+
+UnitOfWorkFactory = Callable[[], "UnitOfWork"]

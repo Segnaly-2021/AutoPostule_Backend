@@ -5,7 +5,7 @@ from datetime import datetime, timezone, timedelta
 from uuid import UUID
 
 from auto_apply_app.application.common.result import Result, Error
-from auto_apply_app.application.repositories.unit_of_work import UnitOfWork
+from auto_apply_app.application.repositories.unit_of_work import UnitOfWorkFactory
 from auto_apply_app.domain.entities.agent_state import AgentState
 
 logger = logging.getLogger(__name__)
@@ -22,11 +22,11 @@ class GetAgentStateUseCase:
     Returns the kill-switch state for a specific search.
     Returns failure if no state exists for that search.
     """
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
 
     async def execute(self, search_id: UUID) -> Result:
         try:
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 state = await uow.agent_state_repo.get_by_search_id(search_id)
                 if state is None:
                     return Result.failure(
@@ -48,11 +48,11 @@ class CreateAgentStateForSearchUseCase:
     Creates a fresh kill-switch row for this specific (user, search),
     or retrieves it if it already exists (Get-or-Create pattern).
     """
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
 
     async def execute(self, user_id: UUID, search_id: UUID) -> Result:
         try:
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 # 1. Try to get existing state first
                 existing_state = await uow.agent_state_repo.get_by_search_id(search_id)
                 
@@ -84,11 +84,11 @@ class RequestAgentShutdownUseCase:
     Returns 404 if the search has no agent state row (search never started
     or was already cleaned up).
     """
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
 
     async def execute(self, user_id: UUID, search_id: UUID) -> Result:
         try:
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 state = await uow.agent_state_repo.get_by_search_id(search_id)
                 if state is None:
                     return Result.failure(
@@ -99,8 +99,11 @@ class RequestAgentShutdownUseCase:
                     return Result.failure(
                         Error.unauthorized("You do not own this search.")
                     )
+                # Field-scoped write (is_shutdown only) so this can't be undone by a
+                # concurrent heartbeat. state.shutdown() keeps the returned entity in
+                # sync with what we just persisted.
                 state.shutdown()
-                await uow.agent_state_repo.save(state)
+                await uow.agent_state_repo.set_shutdown(search_id)
                 return Result.success(state)
         except Exception:
             logger.exception(
@@ -117,11 +120,11 @@ class IsAgentKilledForSearchUseCase:
     """
     Workers call this on every node exit to check whether to abort.
     """
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
 
     async def execute(self, user_id: UUID, search_id: UUID) -> Result:
         try:
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 state = await uow.agent_state_repo.get_by_search_id(search_id)
                 if state is None:
                     # No state row → not killed, but also weird. Log it.
@@ -146,17 +149,16 @@ class HeartbeatAgentForSearchUseCase:
     Called by workers/master at node entry and inside long loops to mark the
     agent as alive. Fail-soft: never raises, never aborts the run.
     """
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
 
     async def execute(self, search_id: UUID) -> Result:
         try:
-            async with self.uow as uow:
-                state = await uow.agent_state_repo.get_by_search_id(search_id)
-                if state is None:
-                    # No row yet (shouldn't happen mid-run) — don't error the run.
-                    return Result.success(False)
-                state.beat()
-                await uow.agent_state_repo.save(state)
+            async with self.uow_factory() as uow:
+                # Field-scoped write (last_heartbeat only). Critically NOT a
+                # read-modify-write of the whole row: a concurrent worker heartbeat
+                # must never overwrite is_shutdown and erase a kill committed in
+                # between. No-op if the row doesn't exist yet — fail-soft by design.
+                await uow.agent_state_repo.touch_heartbeat(search_id)
                 return Result.success(True)
         except Exception:
             logger.exception(
@@ -173,11 +175,11 @@ class GetAgentLivenessForSearchUseCase:
     'alive' = a heartbeat exists AND is newer than the stale threshold.
     Includes is_shutdown so the frontend can distinguish a user-stop.
     """
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
 
     async def execute(self, user_id: UUID, search_id: UUID) -> Result:
         try:
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 state = await uow.agent_state_repo.get_by_search_id(search_id)
                 if state is None:
                     return Result.failure(

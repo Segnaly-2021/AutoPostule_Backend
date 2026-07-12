@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import Optional
+from uuid import UUID
 
 from auto_apply_app.domain.entities.user_subscription import UserSubscription
 
@@ -38,5 +39,19 @@ class SubscriptionRepository(ABC):
         """
         Persists a new subscription or updates an existing one.
         In a SQL implementation, this would handle 'upsert' logic.
+        """
+        pass
+
+    @abstractmethod
+    async def try_consume_credits(self, user_id: str | UUID, amount: int) -> Optional[int]:
+        """
+        Atomically deduct `amount` AI credits iff the balance can cover it.
+
+        Implemented as a single guarded UPDATE so concurrent agent workers cannot
+        lose a decrement (read-modify-write on the whole row would drop one) or
+        overspend below zero.
+
+        Returns the NEW balance on success, or None if the row is missing or the
+        balance is insufficient (caller disambiguates).
         """
         pass

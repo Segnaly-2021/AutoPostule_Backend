@@ -306,25 +306,25 @@ class Application:
 
     @cached_property
     def _agent_service(self):
-        uow = self.uow_factory()
+        uowf = self.uow_factory                      # pass the FACTORY, not a resolved instance
         proxy_service = _resolve_proxy_service()
         get_or_create_fingerprint_uc = GetOrCreateUserFingerprintUseCase(
-            uow=uow, generator=FingerprintGenerator(),
+            uow_factory=uowf, generator=FingerprintGenerator(),
         )
         return create_agent(
-            results_saver=SaveJobApplicationsUseCase(uow),
-            consume_credits_use_case=ConsumeAiCreditsUseCase(uow),
-            get_ignored_hashes_use_case=GetIgnoredHashesUseCase(uow),
+            results_saver=SaveJobApplicationsUseCase(uowf),
+            consume_credits_use_case=ConsumeAiCreditsUseCase(uowf),
+            get_ignored_hashes_use_case=GetIgnoredHashesUseCase(uowf),
             file_storage=self.file_storage_port,
             encryption_service=self.encryption_port,
-            get_agent_state_use_case=GetAgentStateUseCase(uow),
-            create_agent_state_use_case=CreateAgentStateForSearchUseCase(uow),
-            is_agent_killed_for_search_use_case=IsAgentKilledForSearchUseCase(uow),
-            complete_agent_run_use_case=CompleteAgentRunUseCase(uow),
-            heartbeat_use_case=HeartbeatAgentForSearchUseCase(uow),
-            set_search_status_use_case=SetSearchStatusUseCase(uow),
-            get_daily_stats_use_case=GetDailyStatsUseCase(uow),
-            cleanup_unsubmitted_use_case=CleanupUnsubmittedJobsUseCase(uow),
+            get_agent_state_use_case=GetAgentStateUseCase(uowf),
+            create_agent_state_use_case=CreateAgentStateForSearchUseCase(uowf),
+            is_agent_killed_for_search_use_case=IsAgentKilledForSearchUseCase(uowf),
+            complete_agent_run_use_case=CompleteAgentRunUseCase(uowf),
+            heartbeat_use_case=HeartbeatAgentForSearchUseCase(uowf),
+            set_search_status_use_case=SetSearchStatusUseCase(uowf),
+            get_daily_stats_use_case=GetDailyStatsUseCase(uowf),
+            cleanup_unsubmitted_use_case=CleanupUnsubmittedJobsUseCase(uowf),
             get_or_create_fingerprint_use_case=get_or_create_fingerprint_uc,
             proxy_service=proxy_service,
         )
@@ -338,12 +338,12 @@ class Application:
         the dispatcher nor the worker hand-rolls it.
         """
         from auto_apply_app.infrastructures.agent.runner import AgentRunner
-        uow = self.uow_factory()
+        uowf = self.uow_factory
         return AgentRunner(
             agent_service=self._agent_service,
             broker=self.progress_broker,
-            load_start_ctx=LoadStartRunContextUseCase(uow),
-            load_resume_ctx=LoadResumeRunContextUseCase(uow),
+            load_start_ctx=LoadStartRunContextUseCase(uowf),
+            load_resume_ctx=LoadResumeRunContextUseCase(uowf),
         )
 
     @cached_property
@@ -373,58 +373,56 @@ class Application:
 
     @property
     def user_controller(self) -> UserController:
-        uow = self.uow_factory()
         return UserController(
-            get_user_use_case=GetUserUseCase(uow),
-            update_user_use_case=UpdateUserUseCase(uow),
-            delete_user_use_case=DeleteUserUseCase(uow, self.file_storage_port),
-            upload_resume_use_case=UploadUserResumeUseCase(uow, self.file_storage_port),
+            get_user_use_case=GetUserUseCase(self.uow_factory),
+            update_user_use_case=UpdateUserUseCase(self.uow_factory),
+            delete_user_use_case=DeleteUserUseCase(self.uow_factory, self.file_storage_port),
+            upload_resume_use_case=UploadUserResumeUseCase(self.uow_factory, self.file_storage_port),
             presenter=self.user_presenter,
         )
 
     @property
     def auth_controller(self) -> AuthController:
-        uow = self.uow_factory()
         return AuthController(
             register_use_case=RegisterUserUseCase(
-                uow=uow,
+                uow_factory=self.uow_factory,
                 password_service=self.password_service,
                 email_service=self.email_service_port,
                 # token_provider removed — registration no longer issues a JWT.
             ),
-            login_use_case=LoginUserUseCase(self.password_service, self.token_provider, uow),
+            login_use_case=LoginUserUseCase(self.password_service, self.token_provider, self.uow_factory),
             logout_use_case=LogoutUseCase(self.token_provider, self.token_repo),
-            change_password_use_case=ChangePasswordUseCase(self.password_service, uow),
+            change_password_use_case=ChangePasswordUseCase(self.password_service, self.uow_factory),
             request_password_reset_use_case=RequestPasswordResetUseCase(
-                uow=uow,
+                uow_factory=self.uow_factory,
                 token_provider=self.token_provider,
                 email_service=self.email_service_port,
             ),
             confirm_password_reset_use_case=ConfirmPasswordResetUseCase(
-                uow=uow,
+                uow_factory=self.uow_factory,
                 token_provider=self.token_provider,
                 password_service=self.password_service,
             ),
             verify_code_use_case=VerifyCodeUseCase(  # CHANGED: was verify_email_use_case
-                uow=uow,
+                uow_factory=self.uow_factory,
                 password_service=self.password_service,
                 token_provider=self.token_provider,
             ),
             resend_verification_use_case=ResendVerificationEmailUseCase(
-                uow=uow,
+                uow_factory=self.uow_factory,
                 password_service=self.password_service,  # NEW: needed to hash codes
                 email_service=self.email_service_port,
                 rate_limiter=self.rate_limiter,          # NEW: Redis-backed cooldown
                 # token_provider removed — codes don't use JWTs.
             ),
             request_email_change_use_case=RequestEmailChangeUseCase(
-                uow=uow,
+                uow_factory=self.uow_factory,
                 password_service=self.password_service,
                 email_service=self.email_service_port,
                 rate_limiter=self.rate_limiter,
             ),
             confirm_email_change_use_case=ConfirmEmailChangeUseCase(
-                uow=uow,
+                uow_factory=self.uow_factory,
                 password_service=self.password_service,
                 payment_port=self.payment_port,
                 email_service=self.email_service_port,
@@ -434,29 +432,26 @@ class Application:
 
     @property
     def subscription_controller(self) -> SubscriptionController:
-        uow = self.uow_factory()
         return SubscriptionController(
-            get_subscription_use_case=GetUserSubscriptionUseCase(uow),
-            create_checkout_use_case=CreateCheckoutSessionUseCase(uow, self.payment_port),
-            handle_webhook_use_case=HandlePaymentWebhookUseCase(uow, self.payment_port),
-            get_portal_use_case=GetManagementPortalUseCase(uow, self.payment_port),
+            get_subscription_use_case=GetUserSubscriptionUseCase(self.uow_factory),
+            create_checkout_use_case=CreateCheckoutSessionUseCase(self.uow_factory, self.payment_port),
+            handle_webhook_use_case=HandlePaymentWebhookUseCase(self.uow_factory, self.payment_port),
+            get_portal_use_case=GetManagementPortalUseCase(self.uow_factory, self.payment_port),
             presenter=self.sub_presenter,
         )
 
     @property
     def agent_controller(self) -> AgentController:
-        uow = self.uow_factory()
-
         return AgentController(
-            start_agent_use_case=StartJobSearchAgentUseCase(uow, self._dispatcher),
-            resume_agent_use_case=ResumeJobApplicationUseCase(uow, self._dispatcher),
-            kill_agent_use_case=KillJobSearchUseCase(uow, self._agent_service),
-            get_jobs_for_review_use_case=GetJobsForReviewUseCase(uow),
-            update_cover_letter_use_case=UpdateCoverLetterUseCase(uow),
-            approve_job_use_case=ApproveJobUseCase(uow),
-            discard_job_use_case=DiscardJobUseCase(uow),
-            list_recent_searches_use_case=ListRecentSearchesUseCase(uow),  # NEW
-            get_search_status_use_case=GetSearchStatusUseCase(uow),  # NEW
+            start_agent_use_case=StartJobSearchAgentUseCase(self.uow_factory, self._dispatcher),
+            resume_agent_use_case=ResumeJobApplicationUseCase(self.uow_factory, self._dispatcher),
+            kill_agent_use_case=KillJobSearchUseCase(self.uow_factory, self._agent_service),
+            get_jobs_for_review_use_case=GetJobsForReviewUseCase(self.uow_factory),
+            update_cover_letter_use_case=UpdateCoverLetterUseCase(self.uow_factory),
+            approve_job_use_case=ApproveJobUseCase(self.uow_factory),
+            discard_job_use_case=DiscardJobUseCase(self.uow_factory),
+            list_recent_searches_use_case=ListRecentSearchesUseCase(self.uow_factory),  # NEW
+            get_search_status_use_case=GetSearchStatusUseCase(self.uow_factory),  # NEW
             presenter=self.agent_presenter,
             job_presenter=self.job_presenter,
             search_presenter=self.search_presenter,  # NEW
@@ -464,41 +459,37 @@ class Application:
 
     @property
     def job_offer_controller(self) -> JobOfferController:
-        uow = self.uow_factory()
         return JobOfferController(
-            get_analytics_use_case=GetApplicationAnalyticsUseCase(uow),
-            get_user_applications_use_case=GetUserApplicationsUseCase(uow),
-            toggle_interview_status_use_case=ToggleInterviewStatusUseCase(uow),
-            toggle_response_status_use_case=ToggleResponseStatusUseCase(uow),
-            get_daily_stats_use_case=GetDailyStatsUseCase(uow),
+            get_analytics_use_case=GetApplicationAnalyticsUseCase(self.uow_factory),
+            get_user_applications_use_case=GetUserApplicationsUseCase(self.uow_factory),
+            toggle_interview_status_use_case=ToggleInterviewStatusUseCase(self.uow_factory),
+            toggle_response_status_use_case=ToggleResponseStatusUseCase(self.uow_factory),
+            get_daily_stats_use_case=GetDailyStatsUseCase(self.uow_factory),
             job_offer_presenter=self.job_presenter,
         )
 
     @property
     def prefrences_controller(self) -> PreferencesController:
-        uow = self.uow_factory()
         return PreferencesController(
-            get_prefs_use_case=GetUserPreferencesUseCase(uow),
-            update_prefs_use_case=UpdateUserPreferencesUseCase(uow, self.encryption_port),
+            get_prefs_use_case=GetUserPreferencesUseCase(self.uow_factory),
+            update_prefs_use_case=UpdateUserPreferencesUseCase(self.uow_factory, self.encryption_port),
             presenter=self.preference_presenter,
         )
 
     @property
     def agent_state_controller(self) -> AgentStateController:
-        uow = self.uow_factory()
         return AgentStateController(
-            get_agent_state_use_case=GetAgentStateUseCase(uow),
-            request_shutdown_use_case=RequestAgentShutdownUseCase(uow),
-            get_liveness_use_case=GetAgentLivenessForSearchUseCase(uow),  # NEW
+            get_agent_state_use_case=GetAgentStateUseCase(self.uow_factory),
+            request_shutdown_use_case=RequestAgentShutdownUseCase(self.uow_factory),
+            get_liveness_use_case=GetAgentLivenessForSearchUseCase(self.uow_factory),  # NEW
             presenter=self.agent_state_presenter,
         )
 
     @property
     def free_search_controller(self) -> FreeSearchController:
-        uow = self.uow_factory()
         return FreeSearchController(
             free_search_use_case=FreeSearchUseCase(
-                uow=uow,
+                uow_factory=self.uow_factory,
                 fake_agent=create_fake_agent(),
             ),
             presenter=self.free_search_presenter,

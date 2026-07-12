@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from auto_apply_app.application.common.result import Result, Error
-from auto_apply_app.application.repositories.unit_of_work import UnitOfWork
+from auto_apply_app.application.repositories.unit_of_work import UnitOfWorkFactory
 
 logger = logging.getLogger(__name__)
 
@@ -21,11 +21,11 @@ class CompleteAgentRunUseCase:
     2. AgentUsage.record_completed_run() + save  → drives the daily quota
        and exponential cooldown.
     """
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
 
     async def execute(self, user_id: UUID, search_id: UUID) -> Result:
         try:
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 # 1. Mark the search complete
                 search = await uow.search_repo.get(search_id)
                 if search is None:

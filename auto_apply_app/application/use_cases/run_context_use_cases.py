@@ -4,7 +4,7 @@ from typing import Dict, List, Optional
 from uuid import UUID
 
 from auto_apply_app.application.common.result import Result, Error
-from auto_apply_app.application.repositories.unit_of_work import UnitOfWork
+from auto_apply_app.application.repositories.unit_of_work import UnitOfWorkFactory
 from auto_apply_app.domain.entities.user import User
 from auto_apply_app.domain.entities.job_search import JobSearch
 from auto_apply_app.domain.entities.user_subscription import UserSubscription
@@ -37,11 +37,11 @@ class ResumeRunContext:
 
 @dataclass
 class LoadStartRunContextUseCase:
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
 
     async def execute(self, user_id: UUID, search_id: UUID) -> Result:
         try:
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 user = await uow.user_repo.get(user_id)
                 if user is None:
                     return Result.failure(Error.not_found("User", str(user_id)))
@@ -84,11 +84,11 @@ class LoadStartRunContextUseCase:
 
 @dataclass
 class LoadResumeRunContextUseCase:
-    uow: UnitOfWork
+    uow_factory: UnitOfWorkFactory
 
     async def execute(self, user_id: UUID, search_id: UUID, apply_all: bool) -> Result:
         try:
-            async with self.uow as uow:
+            async with self.uow_factory() as uow:
                 user = await uow.user_repo.get(user_id)
                 if not user:
                     return Result.failure(Error.not_found("User", str(user_id)))
