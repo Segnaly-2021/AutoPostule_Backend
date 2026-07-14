@@ -12,6 +12,8 @@ from auto_apply_app.application.repositories.user_fingerprint_repo import UserFi
 from auto_apply_app.application.repositories.agent_state_repo import AgentStateRepository
 from auto_apply_app.application.repositories.agent_usage_repo import AgentUsageRepository
 from auto_apply_app.application.repositories.free_search_usage_repo import FreeSearchUsageRepository
+from auto_apply_app.application.repositories.page_view_repo import PageViewRepository
+from auto_apply_app.application.repositories.credit_transaction_repo import CreditTransactionRepository
 
 
 class UnitOfWork(ABC):
@@ -31,7 +33,9 @@ class UnitOfWork(ABC):
     agent_state_repo: AgentStateRepository
     agent_usage_repo: AgentUsageRepository
     free_search_usage_repo: FreeSearchUsageRepository
-    
+    page_view_repo: PageViewRepository
+    credit_tx_repo: CreditTransactionRepository
+
     async def __aenter__(self):
         return self
 

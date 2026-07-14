@@ -12,7 +12,7 @@ from auto_apply_app.domain.entities.user import User
 from auto_apply_app.domain.entities.user_subscription import UserSubscription
 from auto_apply_app.domain.entities.job_offer import JobOffer
 from auto_apply_app.domain.entities.job_search import JobSearch
-from auto_apply_app.domain.value_objects import ApplicationStatus
+from auto_apply_app.domain.value_objects import ApplicationStatus, CreditTxKind, SearchStatus
 from auto_apply_app.application.repositories.user_repo import UserRepository
 from auto_apply_app.application.repositories.job_offer_repo import JobOfferRepository
 from auto_apply_app.application.repositories.job_search_repo import JobSearchRepository
@@ -22,6 +22,10 @@ from auto_apply_app.application.repositories.preferences_repo import UserPrefere
 from auto_apply_app.domain.entities.user_preferences import UserPreferences
 from auto_apply_app.application.repositories.board_credentials_repo import BoardCredentialsRepository
 from auto_apply_app.domain.entities.board_credentials import BoardCredential
+from auto_apply_app.application.repositories.page_view_repo import PageViewRepository
+from auto_apply_app.domain.entities.page_view import PageView
+from auto_apply_app.application.repositories.credit_transaction_repo import CreditTransactionRepository
+from auto_apply_app.domain.entities.credit_transaction import CreditTransaction
 
 class InMemoryUserRepository(UserRepository):
     """In-memory implementation of UserRepository"""
@@ -79,9 +83,12 @@ class InMemoryUserRepository(UserRepository):
     async def get_all(self) -> List[User]:
         if len(self._users) == 0:
             return []
-        
+
         return self._users.values()
-    
+
+    async def count_all(self) -> int:
+        return len(self._users)
+
     async def delete(self, user_id: UUID) -> None:
         """
         Delete a user from the repository.
@@ -131,6 +138,36 @@ class InMemoryJobOfferRepository(JobOfferRepository):
 
     async def get_total_job(self):
         return len(self._jobs)
+
+    async def delete_by_search_and_status(self, search_id: UUID, status: ApplicationStatus) -> int:
+        doomed = [
+            job_id for job_id, job in self._jobs.items()
+            if job.search_id == search_id and job.status is status
+        ]
+        for job_id in doomed:
+            del self._jobs[job_id]
+        return len(doomed)
+
+    async def count_by_status(
+        self,
+        status: ApplicationStatus,
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
+    ) -> int:
+        count = 0
+        for job in self._jobs.values():
+            if job.status is not status:
+                continue
+            # Mirrors the SQL: rows with no application_date fall outside any window.
+            if start is not None or end is not None:
+                if job.application_date is None:
+                    continue
+                if start is not None and job.application_date < start:
+                    continue
+                if end is not None and job.application_date >= end:
+                    continue
+            count += 1
+        return count
 
     async def get_by_search(self, search_id: UUID, status: Optional[ApplicationStatus] = None) -> List[JobOffer]:
         """
@@ -448,7 +485,24 @@ class InMemoryJobSearchRepository(JobSearchRepository):
             search: The JobSearch entity to save
         """
         self._searches[search.id] = search
-        
+
+    async def list_recent_by_user(
+        self,
+        user_id: UUID,
+        statuses: List[SearchStatus],
+        limit: int = 5,
+    ) -> List[JobSearch]:
+        """
+        The user's most recent searches whose status is in `statuses`, newest first.
+        Mirrors JobSearchRepoDB.list_recent_by_user: the caller decides which statuses
+        count as visible.
+        """
+        matches = [
+            s for s in self._searches.values()
+            if s.user_id == user_id and s.search_status in statuses
+        ]
+        matches.sort(key=lambda s: s.updated_at, reverse=True)
+        return matches[:limit]
 
     async def get_all_jobs(self) -> List[JobOffer]:
         """
@@ -614,15 +668,33 @@ class InMemoryAuthRepository(AuthRepository):
                 return user
         return None  # Ensure it returns None so Use Case can handle it
 
-    async def get_by_id(self, user_id: str) -> Optional[AuthUser]:
-        return self._storage.get(UUID(user_id), None)
-    
+    async def get_by_id(self, user_id: str | UUID) -> Optional[AuthUser]:
+        # Callers pass either a str or a UUID — normalize, don't assume.
+        uuid = UUID(str(user_id)) if not isinstance(user_id, UUID) else user_id
+        return self._storage.get(uuid, None)
+
+    async def count_created_between(self, start: datetime, end: datetime) -> int:
+        return sum(
+            1 for auth in self._storage.values()
+            if start <= auth.created_at < end
+        )
+
+    async def count_verified(self) -> int:
+        return sum(1 for auth in self._storage.values() if auth.is_verified)
+
 
 class InMemorySubscriptionRepository(SubscriptionRepository):
     """In-memory implementation of SubscriptionRepository"""
 
-    def __init__(self, storage: Dict[UUID, UserSubscription]) -> None:
+    def __init__(
+        self,
+        storage: Dict[UUID, UserSubscription],
+        credit_tx_storage: Optional[Dict[UUID, CreditTransaction]] = None,
+    ) -> None:
         self._subscriptions = storage
+        # The ledger, so try_consume_credits mirrors the DB adapter, where the CONSUME
+        # row is written by the same statement as the decrement.
+        self._credit_txs = credit_tx_storage if credit_tx_storage is not None else {}
 
     async def get_by_user_id(self, user_id: str) -> Optional[UserSubscription]:
         subs = self._subscriptions.get(UUID(user_id), None)
@@ -663,7 +735,119 @@ class InMemorySubscriptionRepository(SubscriptionRepository):
         if subs is None or subs.ai_credits_balance < amount:
             return None
         subs.ai_credits_balance -= amount
+
+        # Mirror the DB adapter, which writes the ledger row in the same statement:
+        # a decrement here must never happen without its CONSUME row either.
+        transaction = CreditTransaction(
+            user_id=uuid,
+            delta=-amount,
+            balance_after=subs.ai_credits_balance,
+            kind=CreditTxKind.CONSUME,
+        )
+        self._credit_txs[transaction.id] = transaction
+
         return subs.ai_credits_balance
+
+    async def list_active(self) -> List[UserSubscription]:
+        return [s for s in self._subscriptions.values() if s.is_active]
+
+
+class InMemoryPageViewRepository(PageViewRepository):
+    """In-memory implementation of PageViewRepository"""
+
+    def __init__(self, storage: Dict[UUID, PageView]) -> None:
+        self._page_views = storage
+
+    async def save(self, page_view: PageView) -> None:
+        self._page_views[page_view.id] = page_view
+
+    async def count_unique_visitors_between(self, start: datetime, end: datetime) -> int:
+        return len({
+            pv.visitor_id for pv in self._page_views.values()
+            if start <= pv.created_at < end
+        })
+
+    async def count_page_views_between(self, start: datetime, end: datetime) -> int:
+        return sum(
+            1 for pv in self._page_views.values()
+            if start <= pv.created_at < end
+        )
+
+    async def count_signed_in_visitors_between(self, start: datetime, end: datetime) -> int:
+        return len({
+            pv.visitor_id for pv in self._page_views.values()
+            if start <= pv.created_at < end and pv.user_id is not None
+        })
+
+    async def count_sessions_between(
+        self,
+        start: datetime,
+        end: datetime,
+        inactivity_minutes: int = 30,
+    ) -> int:
+        """Python twin of the LAG() query in PageViewRepoDB — same look-back rule."""
+        gap = timedelta(minutes=inactivity_minutes)
+
+        # Scan from (start - gap) so a visit already running at `start` is seen as
+        # ongoing rather than counted as a fresh session at the window boundary.
+        by_visitor: Dict[str, List[datetime]] = {}
+        for pv in self._page_views.values():
+            if (start - gap) <= pv.created_at < end:
+                by_visitor.setdefault(pv.visitor_id, []).append(pv.created_at)
+
+        sessions = 0
+        for timestamps in by_visitor.values():
+            timestamps.sort()
+            previous = None
+            for current in timestamps:
+                # Only views inside the real window can open a session we report; the
+                # look-back rows exist purely to give the first in-window view a
+                # predecessor.
+                if current >= start and (previous is None or current - previous > gap):
+                    sessions += 1
+                previous = current
+
+        return sessions
+
+    async def delete_older_than(self, cutoff: datetime) -> int:
+        stale = [
+            pv_id for pv_id, pv in self._page_views.items()
+            if pv.created_at < cutoff
+        ]
+        for pv_id in stale:
+            del self._page_views[pv_id]
+        return len(stale)
+
+
+class InMemoryCreditTransactionRepository(CreditTransactionRepository):
+    """In-memory implementation of CreditTransactionRepository"""
+
+    def __init__(self, storage: Dict[UUID, CreditTransaction]) -> None:
+        self._transactions = storage
+
+    async def record(self, transaction: CreditTransaction) -> None:
+        self._transactions[transaction.id] = transaction
+
+    async def sum_consumed_between(
+        self,
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
+    ) -> int:
+        total = 0
+        for tx in self._transactions.values():
+            if tx.kind is not CreditTxKind.CONSUME:
+                continue
+            if start is not None and tx.created_at < start:
+                continue
+            if end is not None and tx.created_at >= end:
+                continue
+            total += -tx.delta
+        return total
+
+    async def earliest_created_at(self) -> Optional[datetime]:
+        if not self._transactions:
+            return None
+        return min(tx.created_at for tx in self._transactions.values())
 
 
 class InMemoryUnitOfWork(UnitOfWork):
@@ -677,6 +861,9 @@ class InMemoryUnitOfWork(UnitOfWork):
     _shared_prefs_db: Dict[UUID, any] = {}
     _shared_creds_db: Dict[UUID, any] = {}
 
+    _shared_page_views_db: Dict[UUID, any] = {}
+    _shared_credit_txs_db: Dict[UUID, any] = {}
+
     def __init__(self):
         # Reference the shared class-level storage
         self._users_db = self.__class__._shared_users_db
@@ -688,6 +875,9 @@ class InMemoryUnitOfWork(UnitOfWork):
         self._prefs_db = self.__class__._shared_prefs_db
         self._creds_db = self.__class__._shared_creds_db
 
+        self._page_views_db = self.__class__._shared_page_views_db
+        self._credit_txs_db = self.__class__._shared_credit_txs_db
+
         # Snapshots for rollback
         self._users_snapshot = {}
         self._auth_snapshot = {}
@@ -698,6 +888,9 @@ class InMemoryUnitOfWork(UnitOfWork):
         # [NEW] Snapshots
         self._prefs_snapshot = {}
         self._creds_snapshot = {}
+
+        self._page_views_snapshot = {}
+        self._credit_txs_snapshot = {}
 
     async def __aenter__(self):
         # Debug logging
@@ -715,16 +908,25 @@ class InMemoryUnitOfWork(UnitOfWork):
         self._prefs_snapshot = copy.deepcopy(self._prefs_db)
         self._creds_snapshot = copy.deepcopy(self._creds_db)
 
+        self._page_views_snapshot = copy.deepcopy(self._page_views_db)
+        self._credit_txs_snapshot = copy.deepcopy(self._credit_txs_db)
+
         # 2. Initialize repos with SHARED storage
         self.user_repo = InMemoryUserRepository(self._users_db)
         self.auth_repo = InMemoryAuthRepository(self._auth_db)
-        self.subscription_repo = InMemorySubscriptionRepository(self._subs_db)
+        # The subscription repo also writes the ledger, mirroring the DB adapter where
+        # the CONSUME row and the decrement are one statement.
+        self.subscription_repo = InMemorySubscriptionRepository(self._subs_db, self._credit_txs_db)
         self.job_repo = InMemoryJobOfferRepository(self._jobs_db)
         self.search_repo = InMemoryJobSearchRepository(self._searchs_db, self._jobs_db)
-        
+
         # [NEW] Initialize new repos
         self.user_pref_repo = InMemoryPreferencesRepository(self._prefs_db)
         self.board_cred_repo = InMemoryCredentialsRepository(self._creds_db)
+
+        # Observability
+        self.page_view_repo = InMemoryPageViewRepository(self._page_views_db)
+        self.credit_tx_repo = InMemoryCreditTransactionRepository(self._credit_txs_db)
 
         return self
 
@@ -740,6 +942,9 @@ class InMemoryUnitOfWork(UnitOfWork):
         # [NEW] Clear new snapshots
         self._prefs_snapshot = {}
         self._creds_snapshot = {}
+
+        self._page_views_snapshot = {}
+        self._credit_txs_snapshot = {}
 
     async def rollback(self):
         print("[UoW DEBUG] Rolling back")
@@ -767,6 +972,12 @@ class InMemoryUnitOfWork(UnitOfWork):
         self._creds_db.clear()
         self._creds_db.update(self._creds_snapshot)
 
+        self._page_views_db.clear()
+        self._page_views_db.update(self._page_views_snapshot)
+
+        self._credit_txs_db.clear()
+        self._credit_txs_db.update(self._credit_txs_snapshot)
+
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         if exc_type:
             print(f"[UoW DEBUG] Exception occurred: {exc_type.__name__}")
@@ -786,3 +997,6 @@ class InMemoryUnitOfWork(UnitOfWork):
         # [NEW] Clear new shared DBs
         cls._shared_prefs_db.clear()
         cls._shared_creds_db.clear()
+
+        cls._shared_page_views_db.clear()
+        cls._shared_credit_txs_db.clear()

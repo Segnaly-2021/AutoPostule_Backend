@@ -12,6 +12,8 @@ from auto_apply_app.infrastructures.persistence.database.repositories.agent_stat
 from auto_apply_app.infrastructures.persistence.database.repositories.user_fingerprint_repo_db import UserFingerprintRepoDB
 from auto_apply_app.infrastructures.persistence.database.repositories.agent_usage_repo_db import AgentUsageRepoDB
 from auto_apply_app.infrastructures.persistence.database.repositories.free_search_usage_repo_db import FreeSearchUsageRepoDB
+from auto_apply_app.infrastructures.persistence.database.repositories.page_view_repo_db import PageViewRepoDB
+from auto_apply_app.infrastructures.persistence.database.repositories.credit_transaction_repo_db import CreditTransactionRepoDB
 
 
 class SqlAlchemyUnitOfWork(UnitOfWork):
@@ -35,7 +37,11 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         # NEW
         self.agent_usage_repo = AgentUsageRepoDB(self.session)
         self.free_search_usage_repo = FreeSearchUsageRepoDB(self.session)
-        
+
+        # Observability
+        self.page_view_repo = PageViewRepoDB(self.session)
+        self.credit_tx_repo = CreditTransactionRepoDB(self.session)
+
         return self
 
     async def __aexit__(self, exc_type, exc_value, traceback):

@@ -42,6 +42,11 @@ class JobBoard(Enum):
     INDEED = "indeed"
 
 
+class CreditTxKind(Enum):
+    CONSUME = "CONSUME"      # credits spent by an agent run (delta < 0)
+    REPLENISH = "REPLENISH"  # credits granted on checkout / invoice.paid (delta > 0)
+
+
  
 
   

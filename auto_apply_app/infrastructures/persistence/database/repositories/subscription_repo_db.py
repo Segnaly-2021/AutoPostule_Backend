@@ -2,13 +2,33 @@
 # subscription_repo_db.py
 # =============================================================================
 from uuid import UUID
-from typing import Optional
-from sqlalchemy import select, update
+from typing import List, Optional
+from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auto_apply_app.domain.entities.user_subscription import UserSubscription
 from auto_apply_app.application.repositories.subscription_repo import SubscriptionRepository
 from auto_apply_app.infrastructures.persistence.database.models.schema import UserSubscriptionDB
+
+
+# Deduct credits and write the ledger row in ONE statement. The guarded UPDATE stays a
+# single atomic check-and-set (the property commit 350ce89 established), and the INSERT
+# feeds off its RETURNING, so a CONSUME row can never exist without its decrement, nor a
+# decrement without its row. 'CONSUME' is the literal stored by the enum column, which is
+# mapped with native_enum=False and therefore persists the enum NAME as VARCHAR.
+_CONSUME_CREDITS_SQL = text("""
+    WITH consumed AS (
+        UPDATE user_subscriptions
+           SET ai_credits_balance = ai_credits_balance - :amount
+         WHERE user_id = :user_id
+           AND ai_credits_balance >= :amount
+        RETURNING user_id, ai_credits_balance
+    )
+    INSERT INTO credit_transactions (user_id, delta, balance_after, kind, created_at)
+    SELECT user_id, (0 - :amount), ai_credits_balance, 'CONSUME', now()
+      FROM consumed
+    RETURNING balance_after
+""")
 
 
 class SubscriptionRepoDB(SubscriptionRepository):
@@ -71,19 +91,27 @@ class SubscriptionRepoDB(SubscriptionRepository):
         # check-and-deduct a single statement, so concurrent workers can neither
         # lose a decrement nor drive the balance negative. RETURNING gives us the
         # post-decrement balance without a second read.
+        #
+        # The ledger row is written by the same statement, via a data-modifying CTE.
+        # Appending it afterwards with a second INSERT would reopen the window this
+        # method exists to close: the decrement could commit while the ledger write
+        # failed, and the two would drift apart forever. Here, if the guard does not
+        # match, `consumed` is empty, the INSERT selects zero rows, and the outer
+        # RETURNING yields nothing — so `None` still means exactly what it meant
+        # before: missing row, or insufficient balance.
         uuid = UUID(str(user_id)) if not isinstance(user_id, UUID) else user_id
-        stmt = (
-            update(UserSubscriptionDB)
-            .where(
-                UserSubscriptionDB.user_id == uuid,
-                UserSubscriptionDB.ai_credits_balance >= amount,
-            )
-            .values(ai_credits_balance=UserSubscriptionDB.ai_credits_balance - amount)
-            .returning(UserSubscriptionDB.ai_credits_balance)
+        result = await self.session.execute(
+            _CONSUME_CREDITS_SQL,
+            {"user_id": uuid, "amount": amount},
         )
-        result = await self.session.execute(stmt)
         row = result.first()
         return row[0] if row is not None else None
+
+    async def list_active(self) -> List[UserSubscription]:
+        result = await self.session.execute(
+            select(UserSubscriptionDB).where(UserSubscriptionDB.is_active.is_(True))
+        )
+        return [self._map_to_entity(s) for s in result.scalars().all()]
 
     def _map_to_entity(self, sub_db: UserSubscriptionDB) -> UserSubscription:
         subs = UserSubscription(

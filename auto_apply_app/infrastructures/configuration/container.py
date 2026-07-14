@@ -52,6 +52,8 @@ from auto_apply_app.interfaces.presenters.base_presenter import (
     PreferencesPresenter,
     FreeSearchPresenter,
     AgentStatePresenter,
+    AdminPresenter,
+    AnalyticsPresenter,
 )
 
 # Use Cases
@@ -130,6 +132,15 @@ from auto_apply_app.interfaces.controllers.job_offer_controllers import JobOffer
 from auto_apply_app.interfaces.controllers.preference_controllers import PreferencesController
 from auto_apply_app.interfaces.controllers.agent_state_controllers import AgentStateController
 from auto_apply_app.interfaces.controllers.free_search_controller import FreeSearchController
+from auto_apply_app.interfaces.controllers.admin_controllers import AdminController
+from auto_apply_app.interfaces.controllers.analytics_controllers import AnalyticsController
+
+# Observability use cases
+from auto_apply_app.application.use_cases.admin_use_cases import (
+    CheckAdminAccessUseCase,
+    GetAdminOverviewMetricsUseCase,
+)
+from auto_apply_app.application.use_cases.analytics_use_cases import RecordPageViewUseCase
 
 # Free-search infra
 from auto_apply_app.infrastructures.agent.fake_agent.create_fake_agent import create_fake_agent
@@ -177,6 +188,8 @@ def create_application(
     email_service_port: EmailServicePort,
     captcha_port: CaptchaServicePort,
     free_search_presenter: FreeSearchPresenter,
+    admin_presenter: AdminPresenter,
+    analytics_presenter: AnalyticsPresenter,
 ) -> "Application":
 
     # create_repositories now returns the Redis client too — we reuse it for
@@ -204,6 +217,8 @@ def create_application(
         rate_limiter=rate_limiter,  # NEW
         redis_client=redis_client,   # NEW (None in MEMORY mode)
         free_search_presenter=free_search_presenter,
+        admin_presenter=admin_presenter,
+        analytics_presenter=analytics_presenter,
     )
 
 
@@ -257,6 +272,8 @@ def create_worker_application() -> "Application":
         preference_presenter=None,
         agent_state_presenter=None,
         free_search_presenter=None,
+        admin_presenter=None,
+        analytics_presenter=None,
     )
 
 
@@ -289,6 +306,11 @@ class Application:
     # Shared Redis client (None in MEMORY mode). Surfaced so the progress
     # broker can reuse the same connection pool as the rate limiter.
     redis_client: Optional[Redis] = None   # NEW
+
+    # Observability. Default to None so the worker composition root, which never serves
+    # HTTP, does not have to construct web presenters it will never use.
+    admin_presenter: Optional[AdminPresenter] = None
+    analytics_presenter: Optional[AnalyticsPresenter] = None
 
     # =========================================================================
     # SINGLETONS (Phase A decoupling)
@@ -493,4 +515,31 @@ class Application:
                 fake_agent=create_fake_agent(),
             ),
             presenter=self.free_search_presenter,
+        )
+
+    # =========================================================================
+    # OBSERVABILITY
+    # =========================================================================
+
+    @property
+    def check_admin_use_case(self) -> CheckAdminAccessUseCase:
+        """
+        Exposed directly (not behind a controller) because the admin dependency needs it
+        before any controller is reached — it decides whether the request is allowed to
+        touch a controller at all.
+        """
+        return CheckAdminAccessUseCase(self.uow_factory)
+
+    @property
+    def admin_controller(self) -> AdminController:
+        return AdminController(
+            get_overview_use_case=GetAdminOverviewMetricsUseCase(self.uow_factory),
+            admin_presenter=self.admin_presenter,
+        )
+
+    @property
+    def analytics_controller(self) -> AnalyticsController:
+        return AnalyticsController(
+            record_page_view_use_case=RecordPageViewUseCase(self.uow_factory),
+            analytics_presenter=self.analytics_presenter,
         )

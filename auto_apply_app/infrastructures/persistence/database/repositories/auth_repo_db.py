@@ -1,6 +1,7 @@
+from datetime import datetime
 from typing import Optional
 from uuid import UUID
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auto_apply_app.application.repositories.auth_repo import AuthRepository
@@ -27,6 +28,10 @@ class AuthRepoDB(AuthRepository):
             password_hash=auth_user.password_hash,
             is_active=auth_user.is_active,
             is_verified=auth_user.is_verified,
+            # Must be carried through here AND in _map_to_entity. merge() overwrites the
+            # row from this object, so leaving is_admin out would silently demote every
+            # admin the next time anything saved their auth record.
+            is_admin=auth_user.is_admin,
             created_at=auth_user.created_at,
             updated_at=auth_user.updated_at,
             last_login=auth_user.last_login,
@@ -56,6 +61,18 @@ class AuthRepoDB(AuthRepository):
 
         return self._map_to_entity(db_auth) if db_auth else None
 
+    async def count_created_between(self, start: datetime, end: datetime) -> int:
+        stmt = (
+            select(func.count(AuthUserDB.id))
+            .where(AuthUserDB.created_at >= start)
+            .where(AuthUserDB.created_at < end)
+        )
+        return int((await self.session.execute(stmt)).scalar_one())
+
+    async def count_verified(self) -> int:
+        stmt = select(func.count(AuthUserDB.id)).where(AuthUserDB.is_verified.is_(True))
+        return int((await self.session.execute(stmt)).scalar_one())
+
     def _map_to_entity(self, db_auth: AuthUserDB) -> AuthUser:
         """Convert Database model to Domain Entity."""
         auth = AuthUser(
@@ -64,6 +81,7 @@ class AuthRepoDB(AuthRepository):
             password_hash=db_auth.password_hash,
             is_active=db_auth.is_active,
             is_verified=db_auth.is_verified,
+            is_admin=db_auth.is_admin,
             created_at=db_auth.created_at,
             updated_at=db_auth.updated_at,
             last_login=db_auth.last_login,

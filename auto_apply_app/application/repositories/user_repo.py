@@ -78,3 +78,13 @@ class UserRepository(ABC):
             user: The User entity to update
         """
         pass
+
+    @abstractmethod
+    async def count_all(self) -> int:
+        """
+        Total number of users. Used by the admin dashboard.
+
+        Prefer this over len(get_all()) — it counts in the database instead of
+        loading and mapping every row.
+        """
+        pass
