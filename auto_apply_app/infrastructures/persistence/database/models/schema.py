@@ -1,13 +1,20 @@
 from uuid import uuid4, UUID
 from typing import List, Optional
 from datetime import datetime, timezone, UTC
-from sqlalchemy import Date, UniqueConstraint
+from sqlalchemy import Date, UniqueConstraint, Index, false, func, text
 from datetime import date as Date_t
 from sqlalchemy import ForeignKey, Boolean, String, DateTime, Integer, Text, Enum as SQLEnum
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 
-from auto_apply_app.domain.value_objects import ClientType, ContractType, JobBoard, ApplicationStatus, SearchStatus
+from auto_apply_app.domain.value_objects import (
+    ClientType,
+    ContractType,
+    JobBoard,
+    ApplicationStatus,
+    SearchStatus,
+    CreditTxKind,
+)
 
 
 class Base(DeclarativeBase):
@@ -79,6 +86,14 @@ class AuthUserDB(Base):
     password_hash: Mapped[str] = mapped_column(String(255))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Granted out-of-band with a SQL UPDATE. Re-read on every admin request rather than
+    # carried in the JWT, so revoking it is immediate instead of waiting out the token.
+    is_admin: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        nullable=False,
+        server_default=false(),
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
@@ -344,5 +359,75 @@ class UserFingerprintDB(Base):
     webgl_renderer: Mapped[str] = mapped_column(String(255))
 
     user: Mapped["UserDB"] = relationship("UserDB", back_populates="fingerprint")
+
+
+class PageViewDB(Base):
+    """
+    Anonymous page views — the substrate for "visitors today".
+
+    Holds no PII by design: no IP address, no user agent, no cookie. visitor_id is an
+    opaque value the browser generates for itself, and referrer is stored as a bare
+    host. This table is the fastest-growing one in the schema and is pruned on a
+    retention schedule.
+    """
+
+    __tablename__ = "page_views"
+    __table_args__ = (
+        Index("ix_page_views_visitor_created", "visitor_id", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    visitor_id: Mapped[str] = mapped_column(String(64))
+    user_id: Mapped[Optional[UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+        nullable=True,
+    )
+    path: Mapped[str] = mapped_column(String(200))
+    referrer: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=func.now(),
+        index=True,
+    )
+
+
+class CreditTransactionDB(Base):
+    """
+    Append-only ledger of AI credit movements.
+
+    Exists because replenish_credits() resets ai_credits_balance every billing cycle,
+    which destroys the consumption history. CONSUME rows are written by
+    SubscriptionRepoDB.try_consume_credits from inside its single guarded UPDATE — the
+    ledger row and the decrement are one statement, so neither can exist without the
+    other.
+    """
+
+    __tablename__ = "credit_transactions"
+    __table_args__ = (
+        Index("ix_credit_tx_user_created", "user_id", "created_at"),
+    )
+
+    # server_default matters: the CONSUME row is inserted by an INSERT ... SELECT inside
+    # a CTE, which never passes through the ORM and so cannot supply a Python-side default.
+    id: Mapped[UUID] = mapped_column(
+        primary_key=True,
+        default=uuid4,
+        server_default=text("gen_random_uuid()"),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+    )
+    delta: Mapped[int] = mapped_column(Integer)          # negative = consumed
+    balance_after: Mapped[int] = mapped_column(Integer)
+    kind: Mapped[CreditTxKind] = mapped_column(SQLEnum(CreditTxKind, native_enum=False))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=func.now(),
+        index=True,
+    )
 
 

@@ -12,13 +12,23 @@ from auto_apply_app.application.dtos.job_offer_dtos import JobOfferResponse
 from auto_apply_app.application.dtos.subscription_dtos import UserSubscriptionResponse
 from auto_apply_app.application.dtos.auth_user_dtos import LoginResponse
 from auto_apply_app.interfaces.presenters.base_presenter import (
-  UserPresenter, 
-  JobPresenter, 
+  UserPresenter,
+  JobPresenter,
   JobSearchPresenter,
   SubPresenter,
   FreeSearchPresenter,
   AgentStatePresenter,
- 
+  AdminPresenter,
+  AnalyticsPresenter,
+
+)
+from auto_apply_app.application.dtos.admin_dtos import AdminOverviewResponse
+from auto_apply_app.interfaces.viewmodels.admin_vm import (
+    AdminOverviewViewModel,
+    AiCreditsMetricsViewModel,
+    ApplicationsMetricsViewModel,
+    UsersMetricsViewModel,
+    VisitorsMetricsViewModel,
 )
 
 from auto_apply_app.domain.entities.agent_state import AgentState
@@ -486,3 +496,54 @@ class WebAgentStatePresenter(AgentStatePresenter):
             message=message,
             code=error_code,
         )
+
+
+class WebAdminPresenter(AdminPresenter):
+    """Formats platform-wide admin metrics for the dashboard."""
+
+    def present_overview(self, data: AdminOverviewResponse) -> AdminOverviewViewModel:
+        credits = data.ai_credits
+
+        return AdminOverviewViewModel(
+            generated_at=data.generated_at.isoformat(),
+            users=UsersMetricsViewModel(
+                total=data.users.total,
+                verified=data.users.verified,
+                signups_this_month=data.users.signups_this_month,
+                signups_last_month=data.users.signups_last_month,
+                signups_delta_pct=data.users.signups_delta_pct,
+            ),
+            visitors=VisitorsMetricsViewModel(
+                unique_today=data.visitors.unique_today,
+                sessions_today=data.visitors.sessions_today,
+                page_views_today=data.visitors.page_views_today,
+                signed_in_today=data.visitors.signed_in_today,
+                anonymous_today=data.visitors.anonymous_today,
+            ),
+            applications=ApplicationsMetricsViewModel(
+                sent_total=data.applications.sent_total,
+                sent_this_month=data.applications.sent_this_month,
+                sent_last_month=data.applications.sent_last_month,
+            ),
+            ai_credits=AiCreditsMetricsViewModel(
+                consumed_total=credits.consumed_total,
+                consumed_this_month=credits.consumed_this_month,
+                consumed_last_month=credits.consumed_last_month,
+                consumed_current_period_estimate=credits.consumed_current_period_estimate,
+                ledger_started_at=(
+                    credits.ledger_started_at.isoformat()
+                    if credits.ledger_started_at else None
+                ),
+                is_ledger_complete_for_month=credits.is_ledger_complete_for_month,
+            ),
+        )
+
+    def present_error(self, message: str, error_code: Optional[str] = None) -> ErrorViewModel:
+        return ErrorViewModel(message=message, code=error_code)
+
+
+class WebAnalyticsPresenter(AnalyticsPresenter):
+    """Page-view tracking returns no body, so this only ever shapes errors."""
+
+    def present_error(self, message: str, error_code: Optional[str] = None) -> ErrorViewModel:
+        return ErrorViewModel(message=message, code=error_code)

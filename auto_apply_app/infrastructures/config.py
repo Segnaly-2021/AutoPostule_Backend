@@ -1,6 +1,6 @@
 from dotenv import load_dotenv
 from enum import Enum
-from typing import Any
+from typing import Any, Optional
 import pickle
 import os
 
@@ -105,6 +105,31 @@ class Config:
             return checkpointer
 
         raise ValueError(f"No checkpointer implementation for {repo_type}")
+
+    @classmethod
+    def get_admin_route_prefix(cls) -> Optional[str]:
+        """
+        Mount prefix for the admin router, e.g. "/x7f2q9-internal-ops".
+
+        Returns None when ADMIN_ROUTE_PREFIX is unset, in which case the admin router is
+        not mounted at all — an unconfigured deployment exposes no admin surface.
+
+        This is obscurity, not security. It raises the cost of stumbling onto the
+        endpoint, but the authorization check behind it is what actually holds: the
+        admin dependency re-reads is_admin from the database on every request and denies
+        by default, so knowing this prefix buys an attacker nothing.
+        """
+        prefix = os.getenv("ADMIN_ROUTE_PREFIX")
+        if not prefix:
+            return None
+        if not prefix.startswith("/"):
+            prefix = "/" + prefix
+        return prefix.rstrip("/")
+
+    @classmethod
+    def get_page_view_retention_days(cls) -> int:
+        """How long raw page_views rows are kept before pruning."""
+        return int(os.getenv("PAGE_VIEW_RETENTION_DAYS", "90"))
 
     @classmethod
     def get_gemini_key(cls) -> str:

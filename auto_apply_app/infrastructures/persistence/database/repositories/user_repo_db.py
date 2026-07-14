@@ -3,7 +3,7 @@
 # =============================================================================
 from uuid import UUID
 from typing import List
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auto_apply_app.domain.entities.user import User
@@ -41,6 +41,10 @@ class UserRepoDB(UserRepository):
     async def get_all(self, skip: int = 0, take: int = 100) -> List[User]:
         result = await self.session.execute(select(UserDB).offset(skip).limit(take))
         return [self._map_to_entity(u) for u in result.scalars().all()]
+
+    async def count_all(self) -> int:
+        result = await self.session.execute(select(func.count(UserDB.id)))
+        return int(result.scalar_one())
 
     async def save(self, user: User) -> None:
         """Upsert — handles both create and update."""

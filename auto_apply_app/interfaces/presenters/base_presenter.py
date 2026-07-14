@@ -28,6 +28,27 @@ from auto_apply_app.interfaces.viewmodels.agent_state_vm import (
 )
 from auto_apply_app.interfaces.viewmodels.preferences_vm import PreferencesViewModel
 from auto_apply_app.interfaces.viewmodels.free_search_vm import FreeSearchResultViewModel
+from auto_apply_app.application.dtos.admin_dtos import AdminOverviewResponse
+from auto_apply_app.interfaces.viewmodels.admin_vm import AdminOverviewViewModel
+
+
+class AdminPresenter(ABC):
+
+  @abstractmethod
+  def present_overview(self, data: AdminOverviewResponse) -> AdminOverviewViewModel:
+    pass
+
+  @abstractmethod
+  def present_error(self, message: str, error_code: Optional[str] = None, reason: Optional[str] = None) -> ErrorViewModel:
+    pass
+
+
+class AnalyticsPresenter(ABC):
+
+  @abstractmethod
+  def present_error(self, message: str, error_code: Optional[str] = None, reason: Optional[str] = None) -> ErrorViewModel:
+    pass
+
 
 class UserPresenter(ABC):
 

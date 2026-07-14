@@ -1,7 +1,7 @@
 # interfaces/api/dependencies/auth.py
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from typing import Annotated
+from typing import Annotated, Optional
 
 from auto_apply_app.infrastructures.configuration.container import Application
 from auto_apply_app.domain.exceptions import InvalidTokenException
@@ -10,6 +10,11 @@ from auto_apply_app.infrastructures.api.dependencies.container_dep import get_co
 
 # HTTPBearer scheme for extracting Bearer tokens from Authorization header
 security = HTTPBearer()
+
+# Same scheme, but tolerant of a missing header. auto_error=False is the whole point:
+# the default HTTPBearer raises 403 when there is no Authorization header, which would
+# make any route using it unusable by anonymous callers.
+optional_security = HTTPBearer(auto_error=False)
 
 
 async def get_current_user_id(
@@ -95,12 +100,42 @@ async def get_current_token(
     """
     Extracts the raw JWT token from the Authorization header.
     Does NOT validate the token - use this only when you need the raw token string.
-    
+
     For logout operations where you need to blacklist the token itself.
     """
     return credentials.credentials
 
 
+async def get_optional_user_id(
+    credentials: Annotated[Optional[HTTPAuthorizationCredentials], Depends(optional_security)],
+    container: Annotated[Application, Depends(get_container)],
+) -> Optional[str]:
+    """
+    Resolves the current user if a usable token happens to be present, else None.
+
+    For PUBLIC endpoints that want to attribute a request to an account when they can,
+    but must keep working for anonymous callers — the visitor tracker being the case
+    that matters. It NEVER raises: a missing, expired, forged or malformed token simply
+    means "anonymous", not "rejected". An endpoint that 401s an anonymous visitor would
+    measure nothing at all.
+
+    Deliberately does NOT check the Redis logout blacklist, unlike get_current_user_id.
+    This is attribution for a metric, not an authorization decision — nothing is exposed
+    on the strength of it — and a Redis round-trip on every page view is latency we
+    shouldn't pay. Worst case, an already-logged-out but not-yet-expired token attributes
+    a few page views to its owner. Do not "fix" this by adding the blacklist check.
+    """
+    if credentials is None:
+        return None
+
+    try:
+        payload = container.token_provider.decode_token(credentials.credentials)
+        return payload.get("sub")
+    except Exception:
+        return None
+
+
 # Type aliases for cleaner endpoint signatures
 CurrentUserId = Annotated[str, Depends(get_current_user_id)]
 CurrentToken = Annotated[str, Depends(get_current_token)]
+OptionalUserId = Annotated[Optional[str], Depends(get_optional_user_id)]

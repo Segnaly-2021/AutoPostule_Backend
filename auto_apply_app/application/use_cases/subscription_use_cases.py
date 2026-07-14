@@ -6,7 +6,8 @@ from datetime import datetime, UTC
 from auto_apply_app.application.common.result import Error, Result
 from auto_apply_app.application.service_ports.payment_port import PaymentPort
 from auto_apply_app.application.repositories.unit_of_work import UnitOfWorkFactory
-from auto_apply_app.domain.value_objects import ClientType
+from auto_apply_app.domain.entities.credit_transaction import CreditTransaction
+from auto_apply_app.domain.value_objects import ClientType, CreditTxKind
 from auto_apply_app.application.dtos.subscription_dtos import (
     GetUserSubscriptionRequest,
     UserSubscriptionResponse,
@@ -245,8 +246,20 @@ class HandlePaymentWebhookUseCase:
 
             # Save and return
             await uow.subscription_repo.save(subscription)
-            await uow.commit() 
-            
+
+            # Both branches above called replenish_credits(), which RESETS the balance.
+            # Record the grant in the ledger, in this same transaction, so the balance
+            # stays reconstructible from its movements — without this row, every cycle's
+            # consumption history would be wiped by the reset.
+            await uow.credit_tx_repo.record(CreditTransaction(
+                user_id=subscription.user_id,
+                delta=subscription.allocated_ai_credits,
+                balance_after=subscription.ai_credits_balance,
+                kind=CreditTxKind.REPLENISH,
+            ))
+
+            await uow.commit()
+
             return Result.success(UserSubscriptionResponse.from_entity(subscription))
 
     

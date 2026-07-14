@@ -21,6 +21,10 @@ class AuthUser(Entity):
 
     is_active: bool = True
     is_verified: bool = False
+    # Promotion is out-of-band (a SQL UPDATE), never a product flow — so there is no
+    # method to set this. It is re-read from the DB on every admin request rather than
+    # carried in the JWT, so revoking it takes effect immediately.
+    is_admin: bool = False
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     last_login: Optional[datetime] = None

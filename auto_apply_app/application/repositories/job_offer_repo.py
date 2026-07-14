@@ -3,6 +3,7 @@ This module defines the repository interface for JobOffer entity persistence.
 """
 
 from abc import ABC, abstractmethod
+from datetime import datetime
 from typing import Set, List, Optional, Tuple
 from uuid import UUID
 
@@ -121,6 +122,25 @@ class JobOfferRepository(ABC):
     
         pass
 
+
+    @abstractmethod
+    async def count_by_status(
+        self,
+        status: ApplicationStatus,
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
+    ) -> int:
+        """
+        Count offers in a given status across ALL users, optionally windowed by
+        application_date in [start, end). Used by the admin dashboard.
+
+        Caveat: application_date is stamped when the offer row is first created (while
+        it is still FOUND), not when it is submitted — it is immutable thereafter. Both
+        happen inside one agent run, so daily/monthly buckets are near-identical, but
+        this is find-time, not submit-time. get_daily_application_count already relies
+        on the same approximation.
+        """
+        pass
 
     @abstractmethod
     async def get_daily_application_count(self, user_id: str) -> int:

@@ -3,7 +3,7 @@
 # =============================================================================
 from uuid import UUID
 from datetime import datetime, timedelta, UTC, timezone
-from typing import Set, List, Tuple, Dict
+from typing import Set, List, Optional, Tuple, Dict
 from sqlalchemy import select, func, case, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -289,6 +289,30 @@ class JobOfferRepoDB(JobOfferRepository):
 
         return offers, total_filtered, aggregations
 
+
+    # =========================================================================
+    # ADMIN: PLATFORM-WIDE COUNTS
+    # =========================================================================
+
+    async def count_by_status(
+        self,
+        status: ApplicationStatus,
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
+    ) -> int:
+        """
+        Count offers in `status` across all users, optionally windowed by
+        application_date in [start, end). Served by the partial index on
+        (application_date) WHERE status = 'SUBMITTED'.
+        """
+        stmt = select(func.count(JobOfferDB.id)).where(JobOfferDB.status == status)
+
+        if start is not None:
+            stmt = stmt.where(JobOfferDB.application_date >= start)
+        if end is not None:
+            stmt = stmt.where(JobOfferDB.application_date < end)
+
+        return int((await self.session.execute(stmt)).scalar_one())
 
     # =========================================================================
     # DASHBOARD: ANALYTICS
