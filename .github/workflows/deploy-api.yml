@@ -67,3 +67,11 @@ jobs:
             PROXY_PROVIDER=${{ secrets.PROXY_PROVIDER }}
             ENV=${{ secrets.ENV }}
             TURNSTILE_SECRET_KEY=${{ secrets.TURNSTILE_SECRET_KEY }}
+            # Mount prefix for the admin router, e.g. /x7f2q9-internal-ops. Held as a
+            # secret so the path is not published in this repo. If it is unset the admin
+            # router is NOT mounted at all — the dashboard 404s rather than defaulting to
+            # a guessable path. It must match VITE_ADMIN_API_PREFIX in the Netlify build.
+            #
+            # This is obscurity, not security: authorization is enforced per request
+            # against auth_users.is_admin, and holds even if this value leaks.
+            ADMIN_ROUTE_PREFIX=${{ secrets.ADMIN_ROUTE_PREFIX }}
