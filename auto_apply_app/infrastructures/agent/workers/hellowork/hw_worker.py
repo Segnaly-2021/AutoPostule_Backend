@@ -455,13 +455,13 @@ class HelloWorkWorker:
         because the marker carries a 'hidden' class on narrow viewports."""
         try:
             await self.page.wait_for_selector(
-                'summary[data-cy="headerAccountMenu"]', state="attached", timeout=45000
+                'a[data-cy="headerAccountLogOut"]', state="attached", timeout=45000
             )
-            self._plog("session check: 'Se connecter' marker present -> session EXPIRED")
-            return False
-        except Exception:
-            self._plog("session check: no 'Se connecter' marker -> session VALID")
+            self._plog("session check: 'Deconnexion' marker present -> session VALID")
             return True
+        except Exception:
+            self._plog("session check: no 'Deconnexion' marker -> session EXPIRED")
+            return False
 
     async def _perform_auto_login(self, state: JobApplicationState) -> bool:
         """Full-automation credential login, mirroring request_login's logic.

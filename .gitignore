@@ -3,6 +3,9 @@
 venv/
 env/
 
+# Playwright browser session files (contain auth cookies — never commit)
+tmp/
+
 # GCP Service Account 
 *.json
 
