@@ -1006,7 +1006,7 @@ class ApecWorker():
                         job_desc = ""
 
                     try:
-                        await self.page.wait_for_selector('a[class="btn btn-primary ml-0"]', state="visible", timeout=5000)
+                        await self.page.wait_for_selector('a[class="btn btn-primary ml-0"]', state="visible", timeout=10000)
                     except Exception:
                         self._plog("no apply button on this offer -> going back to results")
                         await self.nav_back(result_url)

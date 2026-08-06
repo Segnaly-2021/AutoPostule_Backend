@@ -106,8 +106,8 @@ class StartJobSearchAgentUseCase:
                     daily_limit=subscription.agent_daily_limit,
                     base_cooldown_minutes=subscription.agent_cooldown_base_minutes,
                 )
-                if not allowed:
-                    return Result.failure(Error.too_many_requests(reason))
+                # if not allowed:
+                #     return Result.failure(Error.too_many_requests(reason))
 
                 # 4. Fetch User Preferences
                 preferences = await uow.user_pref_repo.get_by_user_id(user.id)
