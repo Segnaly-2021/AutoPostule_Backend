@@ -468,7 +468,7 @@ class MasterAgent(AgentServicePort):
             return ChatOpenAI(
                 api_key=self.api_keys.get("openai"), 
                 model="gpt-5.6-terra", 
-                temperature=temp
+                #temperature=temp
             )
         
         elif provider in ["claude", "anthropic"]:
@@ -476,7 +476,7 @@ class MasterAgent(AgentServicePort):
             return ChatAnthropic(
                 api_key=self.api_keys.get("anthropic"), 
                 model="claude-sonnet-5", 
-                temperature=temp
+                #temperature=temp
             )
         
         else:
