@@ -32,13 +32,30 @@ from auto_apply_app.infrastructures.agent.human_behavior import (
     human_delay,
     human_type,
     human_click,
+    human_hover,
     human_warmup,
+    human_scroll,
+    human_read_page,
+    human_idle_drift,
+    human_scan_list,
+    human_long_pause,
+    should_skip_card,
+    should_hover_without_clicking,
+    reset_mouse_state,
+)
+from auto_apply_app.infrastructures.agent.pacing import HumanPacing, Tier
+from auto_apply_app.infrastructures.agent.fingerprint_alignment import (
+    align_fingerprint_to_browser,
 )
 
 logger = logging.getLogger(__name__)
 
 
-class HelloWorkWorker:
+class HelloWorkWorker(HumanPacing):
+
+    # Reading band for this board: 30-90s.
+    _READ_BAND_S = (30.0, 90.0)
+    _READ_LONG_CHARS = 5400
 
     CARD_SELECTOR = 'li[data-id-storage-target="item"]'
 
@@ -67,6 +84,17 @@ class HelloWorkWorker:
 
         self._progress_callback = None
         self._source_name = "HELLOWORK"
+        # Canonical board key. Indexes this worker's slice of the per-board
+        # fingerprint and proxy maps the master builds.
+        self._board_key = "hellowork"
+        # The persona this run is wearing. Cookie jars are keyed on it, so a
+        # jar can never be replayed under a different device.
+        self._fingerprint_id: Optional[str] = None
+
+        # Human pacing. This worker had no budget guard and no heartbeat while
+        # idle, so slowing it down without the mixin would have got it declared
+        # dead at AGENT_HEARTBEAT_STALE_SECONDS.
+        self._init_pacing("HELLOWORK")
 
         # Current user id for print logging (set at node entry)
         self._uid = "unknown"
@@ -81,9 +109,16 @@ class HelloWorkWorker:
         print(f"[{self._source_name} for {uid}] : {task}", flush=True)
 
     def _get_session_file_path(self, user_id: str) -> str:
+        """Local path for this run's cookie jar.
+
+        Scoped by persona: the jar belongs to the device that acquired it, so
+        rotating to another device cannot pick up the previous one's cookies.
+        Falls back to "nofp" only when no fingerprint resolved at all.
+        """
         directory = os.path.join(os.getcwd(), "tmp", "sessions")
         os.makedirs(directory, exist_ok=True)
-        return os.path.join(directory, f"{user_id}_hellowork_session.json")
+        fp = self._fingerprint_id or "nofp"
+        return os.path.join(directory, f"{user_id}_hellowork_{fp}_session.json")
 
     async def _save_auth_state(self, user_id: str):
         if self.context:
@@ -93,7 +128,7 @@ class HelloWorkWorker:
             self._plog("session cookies saved to disk", user_id)
             # C-2: mirror the refreshed session to GCS (best-effort, never fatal).
             if self.session_store:
-                await self.session_store.save_from_local(user_id, "hellowork", path)
+                await self.session_store.save_from_local(user_id, "hellowork", self._fingerprint_id or "nofp", path)
 
     def _get_auth_state_path(self, user_id: str) -> str | None:
         path = self._get_session_file_path(user_id)
@@ -109,6 +144,10 @@ class HelloWorkWorker:
         error: str = None,
         error_code: str = None,
         stage_code: str = None,
+        progress_percent: int = None,
+        count_band: str = None,
+        count_done: int = None,
+        count_total: int = None,
     ):
         if not self._progress_callback:
             return
@@ -123,6 +162,18 @@ class HelloWorkWorker:
                 "error": error,
                 "error_code": error_code or ("SYSTEMERROR" if error else None),
                 "search_id": search_id,
+                "progress_percent": progress_percent,
+                # Raw counts for the counting bands. AgentRunner sums these
+                # across boards and rewrites progress_percent, because this
+                # worker only knows its own share of the total.
+                "count_band": count_band,
+                "count_done": count_done,
+                "count_total": count_total,
+                "progress_track": ("submit" if state.get("action_intent") == "SUBMIT"
+                                   else "launch"),
+                "is_premium": getattr(
+                    getattr(state.get("subscription"), "account_type", None),
+                    "name", "") == "PREMIUM",
             })
         except Exception:
             logger.exception("[HW] Progress emit failed")
@@ -201,8 +252,17 @@ class HelloWorkWorker:
     async def force_cleanup(self):
         logger.info("[HW] Force cleanup initiated")
         self._plog("force cleanup initiated")
+
+        # Before the page goes: the input backend is registered against it, and
+        # the Xvfb it may be driving outlives the browser unless stopped here.
+        await self._close_display()
+
         try:
             if self.page:
+                # _last_mouse_pos is keyed by id(page) and nothing evicts it, so
+                # entries pile up across runs and a recycled id would hand a new
+                # page some other page's stale cursor origin.
+                reset_mouse_state(self.page)
                 await self.page.close()
             if self.context:
                 await self.context.close()
@@ -278,7 +338,7 @@ class HelloWorkWorker:
                 try:
                     await self.page.wait_for_selector(FILTER_LABEL_SELECTOR, state="visible", timeout=20000)
                     all_filters_label = self.page.locator(FILTER_LABEL_SELECTOR).first
-                    await human_click(all_filters_label)
+                    await all_filters_label.click()
                     await self.page.wait_for_selector('input#toggle-salary', state="attached", timeout=10000)
                     break
                 except Exception:
@@ -300,7 +360,8 @@ class HelloWorkWorker:
                         if await checkbox.count() > 0 and not await checkbox.is_checked():
                             self._plog(f"checking contract type: {contract.value}")
                             await human_delay(300, 700)
-                            await self.page.locator(f'label[for="{await checkbox.get_attribute("id")}"]').click()
+                            contract_label = self.page.locator(f'label[for="c-{str(contract.value)}"]')
+                            await contract_label.click()
                     except Exception:
                         pass
 
@@ -309,14 +370,13 @@ class HelloWorkWorker:
                 if await toggle_salary.count() > 0:
                     self._plog(f"setting minimum salary: {min_salary}")
                     await human_delay(300, 700)
-                    await self.page.locator('label[for="toggle-salary"]').click()
+                    toggle_salary_label = self.page.locator('label[for="toggle-salary"]')
+                    await toggle_salary_label.click()
                     await self.page.wait_for_selector('input#msa:not([disabled])', timeout=3000)
-                    await self.page.evaluate("""(val) => {
-                        const el = document.querySelector('input#msa');
-                        el.value = val;
-                        el.dispatchEvent(new Event('change', { bubbles: true }));
-                        el.dispatchEvent(new Event('input', { bubbles: true }));
-                    }""", min_salary)
+                    # Typed, not injected. Setting .value from JS and hand-firing
+                    # change/input leaves no key events and no focus — the page
+                    # sees a number appear in a field nobody touched.
+                    await self._type(self.page.locator('input#msa'), str(min_salary))
 
             await human_delay(800, 1800)
 
@@ -366,7 +426,7 @@ class HelloWorkWorker:
 
             for attempt in range(3):
                 try:
-                    await next_button.click()
+                    await self._click(next_button)
                     await self.page.wait_for_load_state("domcontentloaded")
                     await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=15000)
                     await self._neutralize_pagination_input()
@@ -396,7 +456,7 @@ class HelloWorkWorker:
                 is_visible = True
                 self._plog("cookie banner detected -> continuing without accepting")
                 await human_delay(300, 800)
-                await cookie_btn.click()
+                await self._click(cookie_btn)
         except Exception:
             if is_visible:
                 self._plog("cookie banner click failed -> removing overlay via JS")
@@ -509,7 +569,7 @@ class HelloWorkWorker:
                     await human_delay(200, 500)
                     await human_type(self.page.locator('input[name="password2"]'), pass_plain)
                     await human_delay(600, 1500)
-                    await self.page.locator('button[type="button"][class="profile-button"]').click()
+                    await self._click(self.page.locator('button[type="button"][class="profile-button"]'))
                     await self.page.wait_for_selector('a[data-cy="cpMenuDashboard"]', state="attached", timeout=90000)
                     self._plog("re-login: credentials submitted -> dashboard menu detected")
                     break
@@ -552,49 +612,73 @@ class HelloWorkWorker:
     # =========================================================================
 
     async def start_session(self, state: JobApplicationState):
-        await self._emit(state, "Initializing Browser", stage_code=StageCode.INITIALIZING_BROWSER)
+        await self._emit(state, "Initializing Browser", stage_code=StageCode.INITIALIZING_BROWSER, progress_percent=self._progress(state, "start"))
         await self._beat(state)
         logger.info("[HW] Starting session")
         self._uid = str(state["user"].id)
+        self._start_pacing(state.get("run_token"))
         self._plog("NODE start_session -> launching stealth browser (SCRAPE track)")
         preferences = state["preferences"]
 
-        fingerprint = state.get("user_fingerprint")
+        fingerprint = (state.get("user_fingerprints") or {}).get(self._board_key)
+        proxy_config = (state.get("proxy_configs") or {}).get(self._board_key)
+        # Record the persona BEFORE any session path is built — _get_session_file_path
+        # reads it, and a stale value would point at another device's cookie jar.
+        self._fingerprint_id = str(fingerprint.id) if fingerprint else None
 
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless= preferences.browser_headless,
-                args=['--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage'],
+                **await self._browser_launch_kwargs(
+                    {
+                        "headless": preferences.run_browser_headless,
+                        "args": ['--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage'],
+                    },
+                    fingerprint,
+                )
             )
+            fingerprint = align_fingerprint_to_browser(
+                fingerprint, self.browser.version, self._plog
+            )
+            fingerprint = self._fit_to_display(fingerprint)
 
             context_kwargs = {}
             if fingerprint:
                 self._plog("applying user fingerprint to browser context")
                 context_kwargs.update(fingerprint.to_playwright_context_args())
             else:
-                self._plog("no fingerprint provided -> using default user agent")
-                context_kwargs["user_agent"] = (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-                )
+                # No fingerprint resolved. Every such run shares one identity, so
+                # this is a degraded path, not a normal one — log it loudly.
+                self._plog("NO FINGERPRINT RESOLVED -> falling back to a shared default identity")
+                logger.warning("[%s] running without a fingerprint", self._source_name)
 
-            # if proxy_config:
-            #     context_kwargs["proxy"] = {
-            #         "server": proxy_config["server"],
-            #         "username": proxy_config["username"],
-            #         "password": proxy_config["password"],
-            #     }
+            if proxy_config:
+                self._plog("routing browser context through proxy")
+                context_kwargs["proxy"] = {
+                    "server": proxy_config["server"],
+                    "username": proxy_config["username"],
+                    "password": proxy_config["password"],
+                }
 
             self.context = await self.browser.new_context(**context_kwargs)
+            await self._suppress_popups(self.context)
+
+            # Stealth FIRST, fingerprint SECOND. playwright_stealth registers its
+            # own WebGL getParameter patch hardcoded to "Intel Inc." / "Intel Iris
+            # OpenGL Engine"; init scripts run in registration order, so applying
+            # it after ours silently replaced the persona's GPU on every run.
+            stealth = Stealth()
+            await stealth.apply_stealth_async(self.context)
 
             if fingerprint:
                 await self.context.add_init_script(fingerprint.to_init_script())
-
-            stealth = Stealth()
-            await stealth.apply_stealth_async(self.context)
             await self._block_tracking()
+            # After _block_tracking, never before: the most recently registered
+            # route runs first, and _block_tracking ends its chain with
+            # continue_(), which would starve this one of every request.
+            await self._conserve_bandwidth(self.context)
             self.page = await self.context.new_page()
+            await self._mount_input()
             self._plog("browser session ready (tracking blocked)")
             return {}
         except Exception:
@@ -604,43 +688,54 @@ class HelloWorkWorker:
             return {"error": "Failed to start the secure browsing session.", "error_code": "BROWSER_START_FAILED"}
 
     async def start_session_with_auth(self, state: JobApplicationState):
-        await self._emit(state, "Initializing Secure Browser", stage_code=StageCode.INITIALIZING_BROWSER)
+        await self._emit(state, "Initializing Secure Browser", stage_code=StageCode.INITIALIZING_BROWSER, progress_percent=self._progress(state, "start_with_session"))
         await self._beat(state)
         logger.info("[HW] Booting browser (session injection)")
         user_id = str(state["user"].id)
         self._uid = user_id
+        self._start_pacing(state.get("run_token"))
         self._plog("NODE start_session_with_auth -> booting browser (SUBMIT track)")
 
-        fingerprint = state.get("user_fingerprint")
+        fingerprint = (state.get("user_fingerprints") or {}).get(self._board_key)
+        proxy_config = (state.get("proxy_configs") or {}).get(self._board_key)
+        # Record the persona BEFORE any session path is built — _get_session_file_path
+        # reads it, and a stale value would point at another device's cookie jar.
+        self._fingerprint_id = str(fingerprint.id) if fingerprint else None
 
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless= state["preferences"].browser_headless,
-                args=['--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage'],
+                **await self._browser_launch_kwargs(
+                    {
+                        "headless": state["preferences"].run_browser_headless,
+                        "args": ['--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage'],
+                    },
+                    fingerprint,
+                )
             )
+            fingerprint = align_fingerprint_to_browser(
+                fingerprint, self.browser.version, self._plog
+            )
+            fingerprint = self._fit_to_display(fingerprint)
 
             # C-2: pull the durable session from GCS into the local path first, so
             # _get_auth_state_path finds it. No session / any error -> logs in fresh.
             if self.session_store:
                 await self.session_store.load_to_local(
-                    user_id, "hellowork", self._get_session_file_path(user_id)
+                    user_id, "hellowork", self._fingerprint_id or "nofp",
+                    self._get_session_file_path(user_id)
                 )
             session_path = self._get_auth_state_path(user_id)
 
             context_kwargs = {}
             if fingerprint:
+                # One source for both tracks. The auth track used to bolt on
+                # device_scale_factor/has_touch/is_mobile that the scrape track
+                # lacked, so a single run presented two different contexts.
                 context_kwargs.update(fingerprint.to_playwright_context_args())
-                context_kwargs.update({
-                    "device_scale_factor": fingerprint.device_scale_factor,
-                    "has_touch": False,
-                    "is_mobile": False,
-                })
             else:
-                context_kwargs["user_agent"] = (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-                )
+                self._plog("NO FINGERPRINT RESOLVED -> falling back to a shared default identity")
+                logger.warning("[%s] running without a fingerprint", self._source_name)
 
             if session_path:
                 self._plog("saved session found -> injecting cookies")
@@ -648,22 +743,32 @@ class HelloWorkWorker:
             else:
                 self._plog("no saved session -> booting fresh context")
 
-            # if proxy_config:
-            #     context_kwargs["proxy"] = {
-            #         "server": proxy_config["server"],
-            #         "username": proxy_config["username"],
-            #         "password": proxy_config["password"],
-            #     }
+            if proxy_config:
+                self._plog("routing browser context through proxy")
+                context_kwargs["proxy"] = {
+                    "server": proxy_config["server"],
+                    "username": proxy_config["username"],
+                    "password": proxy_config["password"],
+                }
 
             self.context = await self.browser.new_context(**context_kwargs)
+            await self._suppress_popups(self.context)
+
+            # Stealth FIRST, fingerprint SECOND. playwright_stealth registers its
+            # own WebGL getParameter patch hardcoded to "Intel Inc." / "Intel Iris
+            # OpenGL Engine"; init scripts run in registration order, so applying
+            # it after ours silently replaced the persona's GPU on every run.
+            stealth = Stealth()
+            await stealth.apply_stealth_async(self.context)
 
             if fingerprint:
                 await self.context.add_init_script(fingerprint.to_init_script())
-
-            stealth = Stealth()
-            await stealth.apply_stealth_async(self.context)
             await self._block_tracking()
+            # See the note at the other context site: must come after
+            # _block_tracking, whose continue_() would otherwise end the chain.
+            await self._conserve_bandwidth(self.context)
             self.page = await self.context.new_page()
+            await self._mount_input()
 
             self._plog("navigating to hellowork.com homepage")
             for attempt in range(3):
@@ -718,12 +823,23 @@ class HelloWorkWorker:
 
             try:
                 self._plog(f"typing search: '{job_title}'" + (f" in '{location}'" if location and location.strip() else ""))
-                await human_type(self.page.locator('input[id="k"]'), job_title)
+
+                await self.page.wait_for_selector('input[id="k"]', state="visible", timeout=15000)
+                search_field = self.page.locator('input[id="k"]')
+                # Click before typing, as APEC does (apec_worker.py:541). `clear()`
+                # focuses the node inside the renderer but leaves the BROWSER's
+                # focused widget alone, so under XTEST the keys could go to the
+                # address bar instead. Only a real press moves focus to the page.
+                await self._click(search_field, hesitation=False)
+                await search_field.clear()
+                await human_delay(200, 500)
+                await human_type(search_field, job_title)
+
                 if location and location.strip() != "":
-                    await human_delay(300, 700)
+                    await human_delay(300, 500)
                     await human_type(self.page.locator('input[id="l"]'), location)
                 await human_delay(500, 1200)
-                await self.page.keyboard.press("Enter")
+                await self._press("Enter")
 
                 await self.page.wait_for_load_state("domcontentloaded")
                 await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=30000)
@@ -747,7 +863,7 @@ class HelloWorkWorker:
             return {"error": "Failed to initialize HelloWork browser.", "error_code": "BROWSER_AUTH_FAILED"}
 
     async def go_to_job_board(self, state: JobApplicationState):
-        await self._emit(state, "Navigating to Job Board", stage_code=StageCode.NAVIGATING)
+        await self._emit(state, "Navigating to Job Board", stage_code=StageCode.NAVIGATING, progress_percent=self._progress(state, "nav"))
         await self._beat(state)
         logger.info("[HW] Navigating to HelloWork")
         self._plog("NODE go_to_job_board -> navigating to hellowork.com")
@@ -769,6 +885,7 @@ class HelloWorkWorker:
 
             self._plog("homepage loaded -> performing human warmup")
             await human_warmup(self.page, self.base_url)
+            await self._arrival_browse(state, "hellowork homepage")
             return {}
         except Exception:
             logger.exception("[HW] Navigation error")
@@ -777,7 +894,7 @@ class HelloWorkWorker:
             return {"error": "Navigation failed.", "error_code": "JOB_BOARD_UNAVAILABLE"}
 
     async def request_login(self, state: JobApplicationState):
-        await self._emit(state, "Authenticating", stage_code=StageCode.AUTHENTICATING)
+        await self._emit(state, "Authenticating", stage_code=StageCode.AUTHENTICATING, progress_percent=self._progress(state, "login"))
         await self._beat(state)
         prefs = state["preferences"]
         creds = state.get("credentials")
@@ -826,7 +943,7 @@ class HelloWorkWorker:
                         await human_type(self.page.locator('input[name="password2"]'), pass_plain)
 
                         await human_delay(600, 1500)
-                        await self.page.locator('button[type="button"][class="profile-button"]').click()
+                        await self._click(self.page.locator('button[type="button"][class="profile-button"]'))
                         await self.page.wait_for_selector('a[data-cy="cpMenuDashboard"]', state="attached", timeout=90000)
                         self._plog("credentials submitted -> dashboard menu detected")
                         break
@@ -853,6 +970,7 @@ class HelloWorkWorker:
                 await self._save_auth_state(user_id)
                 logger.info("[HW] Auto-login successful")
                 self._plog("auto-login successful")
+                await self._settle(state, "post-login")
                 return {}
 
             except Exception:
@@ -870,12 +988,14 @@ class HelloWorkWorker:
         else:
             self._plog("semi-automation mode -> waiting for manual login (90s)")
             try:
-                await self.page.locator('[data-cy="headerAccountMenu"]').click()
-                await self.page.locator('[data-cy="headerAccountLogIn"]').click()
+                await self._click(self.page.locator('[data-cy="headerAccountMenu"]'))
+                await self._click(self.page.locator('[data-cy="headerAccountLogIn"]'))
                 logger.info("[HW] ACTION REQUIRED: Please log in manually within 90 seconds")
-                await asyncio.sleep(90)
+                # Heartbeat-safe: a bare sleep beats nothing for 90s, which is over half
+                # the AGENT_HEARTBEAT_STALE_SECONDS budget.
+                await human_long_pause(90, 90, on_tick=lambda: self._beat(state), tick_every=30.0)
                 self._plog("manual login window elapsed -> verifying access")
-                await self.page.locator('a[href="/fr-fr"]').first.click()
+                await self._click(self.page.locator('a[href="/fr-fr"]').first)
                 await self._save_auth_state(user_id)
                 self._plog("manual login confirmed")
                 return {}
@@ -886,7 +1006,7 @@ class HelloWorkWorker:
                 return {"error": "Manual login timed out.", "error_code": "LOGIN_TIMEOUT"}
 
     async def search_jobs(self, state: JobApplicationState):
-        await self._emit(state, "Searching for Jobs", stage_code=StageCode.SEARCHING)
+        await self._emit(state, "Searching for Jobs", stage_code=StageCode.SEARCHING, progress_percent=self._progress(state, "search"))
         await self._beat(state)
 
         search_entity = state["job_search"]
@@ -903,15 +1023,22 @@ class HelloWorkWorker:
             for attempt in range(3):
                 try:
                     await self.page.wait_for_selector('input[id="k"]', state="visible", timeout=15000)
-                    await self.page.locator('input[id="k"]').clear()
+                    search_field = self.page.locator('input[id="k"]')
+                    # See the note at the other search-field site: click first so
+                    # the browser's focus is on the page, not the omnibox.
+                    await self._click(search_field, hesitation=False)
+                    await search_field.clear()
                     await human_delay(200, 500)
-                    await human_type(self.page.locator('input[id="k"]'), job_title)
+                    await human_type(search_field, job_title)
                     if location and location.strip() != "":
                         await human_delay(300, 700)
                         await self.page.locator('input[id="l"]').clear()
                         await human_type(self.page.locator('input[id="l"]'), location)
                     await human_delay(500, 1200)
-                    await self.page.keyboard.press("Enter")
+
+                    # Look over what was typed before firing the search.
+                    #await self._pause(state, 0.8, 2.0, tier=Tier.NAV)
+                    await self._press("Enter")
                     await self.page.wait_for_load_state("domcontentloaded")
                     await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=30000)
                     await self._neutralize_pagination_input()
@@ -934,6 +1061,9 @@ class HelloWorkWorker:
                 await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=10000)
                 logger.info("[HW] Search results loaded")
                 self._plog("search results loaded")
+                # Skim the result list before opening anything — the last beat
+                # before the scrape loop takes over.
+                await self._arrival_browse(state, "results page")
             except Exception:
                 self._plog("no results found for this search")
                 return {"error": "No new matching jobs were found for this search today.", "error_code": "NO_JOBS_FOUND"}
@@ -946,7 +1076,7 @@ class HelloWorkWorker:
             return {"error": "Failed to search HelloWork.", "error_code": "SEARCH_FILTERS_FAILED"}
 
     async def get_matched_jobs(self, state: JobApplicationState):
-        await self._emit(state, "Extracting Job Data", stage_code=StageCode.EXTRACTING_DATA)
+        await self._emit(state, "Extracting Job Data", stage_code=StageCode.EXTRACTING_DATA, progress_percent=self._progress(state, "scrape"))
         await self._beat(state)
         logger.info("[HW] Scraping jobs")
 
@@ -955,7 +1085,7 @@ class HelloWorkWorker:
         search_id = state["job_search"].id
         found_job_entities = []
 
-        worker_job_limit = min(state.get("worker_job_limit",10), 12)
+        worker_job_limit = min(state.get("worker_job_limit", 10), 12)
         hash_result = await self.get_ignored_hashes.execute(user_id=user_id, days=14)
         ignored_hashes = hash_result.value if hash_result.is_success else set()
 
@@ -976,6 +1106,17 @@ class HelloWorkWorker:
                     return {"error": "Agent has been stopped.", "error_code": "AGENT_STOPPED", "found_raw_offers": found_job_entities}
 
                 logger.info("[HW] Processing page %s", page_number)
+                # HelloWork previously went straight from page load to clicking a
+                # card. Scan the list first, the way someone choosing between
+                # results does.
+                if self.page:
+                    await human_scan_list(
+                        self.page,
+                        self._scaled(2.5, Tier.SCROLL),
+                        self._scaled(6.0, Tier.SCROLL),
+                        pace=self._pace,
+                    )
+                    await self._distracted_stop(state)
                 self._plog(f"processing results page {page_number}")
 
                 cards_locator = self.page.locator(self.CARD_SELECTOR)
@@ -1008,7 +1149,7 @@ class HelloWorkWorker:
                     try:
                         card = self.page.locator(self.CARD_SELECTOR).nth(i)
 
-                        await card.scroll_into_view_if_needed()
+                        await self._scroll_to(card)
                         await human_delay(400, 1000)
 
                         raw_company, raw_title, raw_location = await self.get_raw_job_data(card)
@@ -1031,9 +1172,13 @@ class HelloWorkWorker:
                             try:
                                 card = self.page.locator(self.CARD_SELECTOR).nth(i)
                                 link = card.locator('a[data-cy="offerTitle"]')
-                                await link.scroll_into_view_if_needed()
+                                await self._scroll_to(link)
                                 await human_delay(300, 800)
-                                await human_click(link)
+                                # DEBUG (stray-window investigation): a plain Playwright
+                                # click, NOT human_click. The wheel scroll above is kept
+                                # so the ONLY variable changed is the click itself.
+                                # Revert to human_click once the cause is known.
+                                await link.click()
                                 await self.page.wait_for_load_state("domcontentloaded")
                                 await self.page.wait_for_selector('div[id="content"]', state="visible", timeout=15000)
                                 click_success = True
@@ -1058,7 +1203,7 @@ class HelloWorkWorker:
                             continue
 
                         self._plog(f"opened offer detail page for '{raw_title}'")
-                        await human_delay(1500, 3500)
+                        await self._pause(state, 1.0, 2.5, tier=Tier.CARD)
 
                         try:
                             desc_el = self.page.locator('div[id="content"]')
@@ -1068,13 +1213,27 @@ class HelloWorkWorker:
                         except Exception:
                             job_desc = ""
 
+                        # Read the offer in proportion to its length. HelloWork had
+                        # no reading behaviour whatsoever — it opened a description
+                        # and clicked straight through.
+                        # desc_len = len(job_desc) if job_desc else 0
+                        # read_min, read_max = self._read_bounds(desc_len)
+                        # self._plog(f"reading offer (~{desc_len} chars) for {read_min:.0f}-{read_max:.0f}s")
+                        # await human_read_page(
+                        #     self.page,
+                        #     min_seconds=read_min,
+                        #     max_seconds=max(read_min, read_max),
+                        #     pace=self._pace,
+                        # )
+
                         moving_to_form_btn = self.page.locator('a[data-cy="applyButtonHeader"]').first
                         if await moving_to_form_btn.count() > 0:
                             self._plog("clicking apply button to probe form type")
                             click_ok = False
                             for attempt in range(3):
                                 try:
-                                    await human_click(moving_to_form_btn)
+                                    await moving_to_form_btn.click()
+                                    await self.page.wait_for_load_state("domcontentloaded")
                                     click_ok = True
                                     break
                                 except Exception:
@@ -1108,12 +1267,29 @@ class HelloWorkWorker:
                                         job_desc=job_desc,
                                     )
                                     found_job_entities.append(offer)
+                                    # Progress advances on KEEPERS only. The loop is already
+                                    # keeper-driven (while len(found) < worker_job_limit), so the
+                                    # denominator is known before it starts.
+                                    await self._emit(
+                                        state,
+                                        f"Found: {offer.job_title}",
+                                        stage_code=StageCode.EXTRACTING_DATA,
+                                        count_band="scrape",
+                                    count_done=len(found_job_entities),
+                                    count_total=state.get("max_jobs") or worker_job_limit,
+                                    )
                                     self._plog(f"offer captured ({len(found_job_entities)}/{worker_job_limit}): '{raw_title}' @ {raw_company or 'No Name'}")
                         else:
                             self._plog("no apply button on this offer -> skipping")
 
                         if not await self._nav_back_to_search(search_url):
                             break
+
+                        # Breathe between cards — back-to-back offers at a fixed
+                        # interval is the clearest pattern in request timing.
+                        await self._pause(state, 6.0, 30.0, tier=Tier.CARD)
+                        await self._distracted_stop(state)
+                        await self._maybe_break(state, f"after card {len(found_job_entities)}")
 
                     except Exception:
                         logger.exception("[HW] Error processing card %s on page %s", i, page_number)
@@ -1128,6 +1304,7 @@ class HelloWorkWorker:
 
                 if not await self._handle_hw_pagination(page_number):
                     break
+                await self._maybe_break(state, f"between pages {page_number}")
                 page_number += 1
 
         except Exception:
@@ -1145,7 +1322,7 @@ class HelloWorkWorker:
         return {"found_raw_offers": found_job_entities}
 
     async def submit_applications(self, state: JobApplicationState):
-        await self._emit(state, "Submitting Applications", stage_code=StageCode.SUBMITTING)
+        await self._emit(state, "Submitting Applications", stage_code=StageCode.SUBMITTING, progress_percent=self._progress(state, "submit"))
         await self._beat(state)
         logger.info("[HW] Submitting applications")
         jobs_to_submit = state.get("processed_offers", [])
@@ -1216,24 +1393,28 @@ class HelloWorkWorker:
                     resume_bytes = await self.file_storage.download_file(user.resume_path)
                     human_name = user.resume_file_name or f"{user.firstname}_{user.lastname}_CV.pdf"
                     self._plog(f"uploading resume: {human_name}")
-                    await self.page.locator('[data-cy="cv-uploader-input"]').set_input_files({
-                        "name": human_name,
-                        "mimeType": "application/pdf",
-                        "buffer": resume_bytes,
-                    })
+                    await self._upload(
+                        self.page.locator('[data-cy="cv-uploader-input"]'),
+                        {
+                            "name": human_name,
+                            "mimeType": "application/pdf",
+                            "buffer": resume_bytes,
+                        },
+                    )
                     await human_delay(1000, 2000)
 
                 if offer.cover_letter:
                     self._plog("filling cover letter")
                     await human_click(self.page.locator('[data-cy="motivationFieldButton"]'))
                     await self.page.wait_for_selector('textarea[name="MotivationLetter"]', state="visible", timeout=10000)
-                    await self.page.locator('textarea[name="MotivationLetter"]').fill(offer.cover_letter)
+                    await self._type(self.page.locator('textarea[name="MotivationLetter"]'), offer.cover_letter)
 
-                await human_delay(1500, 3500)
                 submit_btn = self.page.locator('[data-cy="submitButton"]')
                 if await submit_btn.is_visible():
                     self._plog("clicking submit button (no retry: duplicate risk)")
-                    await submit_btn.click()
+                    # No stray-window retry: a repeated submit is an application
+                    # sent twice. The window is still closed, just not re-clicked.
+                    await self._click(submit_btn, retry_on_popup=False)
 
                     try:
                         notification = self.page.locator('[data-intersect-name-value="notification"]')
@@ -1258,6 +1439,15 @@ class HelloWorkWorker:
                     self._plog(f"application SUBMITTED: '{offer.job_title}' @ {offer.company_name} ({len(successful_submissions) + 1}/{assigned_submit_limit})")
                     offer.status = ApplicationStatus.SUBMITTED
                     successful_submissions.append(offer)
+                    await self._emit(
+                        state,
+                        f"Submitted: {offer.job_title}",
+                        stage_code=StageCode.SUBMITTING,
+                        count_band="submit",
+                                    count_done=len(successful_submissions),
+                                    count_total=len([j for j in jobs_to_submit
+                                                     if j.status == ApplicationStatus.APPROVED]),
+                    )
                 else:
                     logger.warning("[HW] Submit button not visible")
                     self._plog("submit button not visible -> skipping offer")
@@ -1265,6 +1455,14 @@ class HelloWorkWorker:
             except Exception:
                 logger.exception("[HW] Submission failed for %s", offer.url)
                 self._plog(f"submission crashed for '{offer.job_title}' -> moving to next offer")
+
+            # Nobody fires off applications back to back.
+            # Shorter than it was, and now the ONLY thing pacing this
+            # loop: the review read that used to precede the send is gone, so
+            # without this the node is fill, submit, next form, at whatever
+            # speed the forms load.
+            await self._pause(state, 15.0, 25.0, tier=Tier.SUBMIT)
+            await self._maybe_break(state, "between submissions")
             i += 1
 
         if not successful_submissions:
@@ -1276,7 +1474,7 @@ class HelloWorkWorker:
         return {"submitted_offers": successful_submissions}
 
     async def cleanup(self, state: JobApplicationState):
-        await self._emit(state, "Cleaning Up", stage_code=StageCode.CLEANING_UP)
+        await self._emit(state, "Cleaning Up", stage_code=StageCode.CLEANING_UP, progress_percent=self._progress(state, "cleanup"))
         self._plog("NODE cleanup -> closing browser session")
         await self.force_cleanup()
 

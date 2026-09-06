@@ -24,6 +24,29 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN playwright install chromium
 RUN playwright install-deps chromium
 
+
+# 6b. OS-level input (AGENT_INPUT_BACKEND=x11).
+#
+# XTEST events need an X server and a real window: the headless shell has
+# neither, so the x11 backend runs the browser headful inside Xvfb. `xdotool`
+# does the keyboard side, including the temporary keycode remap that typing
+# French accents requires. `x11-utils` is for diagnosing a display that will
+# not come up (xdpyinfo).
+#
+# Fonts matter here in a way they do not headless: a headful browser renders
+# real text, and a box with no fonts produces different text metrics --
+# measurable from the page, and a rendering fingerprint of its own.
+#
+# `playwright install-deps` does NOT pull any of this; it installs the shared
+# libraries Chromium links against, not a display server.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        xvfb \
+        xdotool \
+        x11-utils \
+        fonts-dejavu-core \
+        fonts-liberation \
+    && rm -rf /var/lib/apt/lists/*
+
 # 7. Copy the rest of your backend code into the container
 COPY . .
 

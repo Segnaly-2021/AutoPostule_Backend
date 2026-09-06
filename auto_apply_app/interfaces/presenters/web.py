@@ -20,6 +20,7 @@ from auto_apply_app.interfaces.presenters.base_presenter import (
   AgentStatePresenter,
   AdminPresenter,
   AnalyticsPresenter,
+  AnnouncementPresenter,
 
 )
 from auto_apply_app.application.dtos.admin_dtos import AdminOverviewResponse
@@ -544,6 +545,13 @@ class WebAdminPresenter(AdminPresenter):
 
 class WebAnalyticsPresenter(AnalyticsPresenter):
     """Page-view tracking returns no body, so this only ever shapes errors."""
+
+    def present_error(self, message: str, error_code: Optional[str] = None) -> ErrorViewModel:
+        return ErrorViewModel(message=message, code=error_code)
+
+
+class WebAnnouncementPresenter(AnnouncementPresenter):
+    """The announcement DTOs are already client-shaped, so this only shapes errors."""
 
     def present_error(self, message: str, error_code: Optional[str] = None) -> ErrorViewModel:
         return ErrorViewModel(message=message, code=error_code)

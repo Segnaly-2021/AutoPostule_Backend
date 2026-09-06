@@ -40,8 +40,19 @@ class JobApplicationState(TypedDict):
     job_search: Annotated[JobSearch, keep_first]
     preferences: Annotated[UserPreferences, keep_first]
     credentials: Annotated[Optional[Dict[str, BoardCredential]], keep_first]
-    user_fingerprint: Annotated[Optional[UserFingerprint], keep_first]
-    proxy_config: Annotated[Optional[dict], keep_first]
+    # Per-board browser identity. A map, not a single value: each board is pinned
+    # to its own device persona, so the three workers in one run present three
+    # different machines. Keyed by the canonical board key ("apec", "hellowork",
+    # "wttj") — see Worker._board_key.
+    user_fingerprints: Annotated[Optional[Dict[str, UserFingerprint]], keep_first]
+    # Per-board proxy, keyed the same way. The sticky exit IP is derived from the
+    # persona id, so a board's device keeps its IP across runs instead of the
+    # fingerprint and the IP rotating on unrelated schedules.
+    proxy_configs: Annotated[Optional[Dict[str, dict]], keep_first]
+    # Identifies ONE execution. Seeds the per-session fingerprint variant, so a
+    # human-review resume of the same run reproduces the same browser instead of
+    # appearing to swap machines mid-session.
+    run_token: Annotated[Optional[str], keep_first]
     max_jobs: Annotated[int, take_latest]
     worker_job_limit: Annotated[int, take_latest]
 

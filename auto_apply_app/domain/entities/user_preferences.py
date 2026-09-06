@@ -38,7 +38,30 @@ class UserPreferences(Entity):
     
     @property
     def browser_headless(self) -> bool:
+        """DEPRECATED — reads as its own opposite. Use `run_browser_headless`.
+
+        It returns `is_full_automation`, and every worker then negated it:
+        `headless = not preferences.browser_headless`. Two inversions cancelling
+        out means the name has never described the value, and a reader checking
+        whether a run is headless got the wrong answer from the property that
+        claims to say so.
+        """
         return self.is_full_automation
+
+    @property
+    def run_browser_headless(self) -> bool:
+        """Whether this run's browser should be headless.
+
+        Says what it means, and defaults SAFE. The old chain defaulted the other
+        way: `is_full_automation` is True on a fresh in-memory entity, so a user
+        with no preferences row — which `run_context_use_cases` constructs on the
+        spot — resolved to a headful launch. In Cloud Run there is no X server,
+        so that browser cannot start at all.
+
+        Headful is now something a run opts into by having a display, not
+        something it falls into by having no preferences.
+        """
+        return not self.is_full_automation
     
     # Business Logic
     def is_board_active(self, board_name: str) -> bool:

@@ -60,10 +60,10 @@ jobs:
             RESEND_API_KEY=${{ secrets.RESEND_API_KEY }}
             FRONTEND_URL=${{ secrets.FRONTEND_URL }}
             EMAIL_FROM=${{ secrets.EMAIL_FROM }}
-            IPROYAL_HOST=${{ secrets.IPROYAL_HOST }}
-            IPROYAL_PORT=${{ secrets.IPROYAL_PORT }}
-            IPROYAL_USERNAME=${{ secrets.IPROYAL_USERNAME }}
-            IPROYAL_PASSWORD_TEMPLATE=${{ secrets.IPROYAL_PASSWORD_TEMPLATE }}
+            TWOCAPTCHA_HOST=${{ secrets.TWOCAPTCHA_HOST }}
+            TWOCAPTCHA_PORT=${{ secrets.TWOCAPTCHA_PORT }}
+            TWOCAPTCHA_USERNAME_TEMPLATE=${{ secrets.TWOCAPTCHA_USERNAME_TEMPLATE }}
+            TWOCAPTCHA_PASSWORD_TEMPLATE=${{ secrets.TWOCAPTCHA_PASSWORD_TEMPLATE }}
             PROXY_PROVIDER=${{ secrets.PROXY_PROVIDER }}
             ENV=${{ secrets.ENV }}
             TURNSTILE_SECRET_KEY=${{ secrets.TURNSTILE_SECRET_KEY }}
@@ -75,3 +75,65 @@ jobs:
             # This is obscurity, not security: authorization is enforced per request
             # against auth_users.is_admin, and holds even if this value leaks.
             ADMIN_ROUTE_PREFIX=${{ secrets.ADMIN_ROUTE_PREFIX }}
+
+      # --- Messaging Job (lifecycle emails) ---
+      # Runs on the THIN image: it sends email and talks to Postgres, and never
+      # opens a browser. deploy-cloudrun is Services-only, so raw gcloud again.
+      #
+      # --max-retries=1 is safe here in a way it is not for the agent: every send
+      # is guarded by message_log's UNIQUE on (user_id, kind), so a retried task
+      # re-selects the same cohort and sends nothing. A transient DB blip should
+      # not cost a day of onboarding email.
+      - name: Deploy autopostule-messaging Job
+        run: |
+          gcloud run jobs deploy autopostule-messaging \
+            --image="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO_NAME }}/api:${{ github.sha }}" \
+            --region="${{ env.REGION }}" \
+            --service-account="autopostule-runtime@${{ env.PROJECT_ID }}.iam.gserviceaccount.com" \
+            --command="python" --args="-m,auto_apply_app.messaging_main" \
+            --cpu=1 --memory=512Mi \
+            --max-retries=1 \
+            --task-timeout=900 \
+            --set-env-vars="REPOSITORY_TYPE=${{ secrets.REPOSITORY_TYPE }},DATABASE_URL=${{ secrets.DATABASE_URL }},REDIS_URL=${{ secrets.REDIS_URL }},ENCRYPTION_KEY=${{ secrets.ENCRYPTION_KEY }},GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }},GCP_RESUME_BUCKET=${{ secrets.GCP_RESUME_BUCKET }},JWT_SECRET=${{ secrets.JWT_SECRET }},RESEND_API_KEY=${{ secrets.RESEND_API_KEY }},EMAIL_FROM=${{ secrets.EMAIL_FROM }},EMAIL_REPLY_TO=${{ secrets.EMAIL_REPLY_TO }},FRONTEND_URL=${{ secrets.FRONTEND_URL }},API_PUBLIC_URL=${{ secrets.API_PUBLIC_URL }},MESSAGING_ANCHOR_DAYS=${{ vars.MESSAGING_ANCHOR_DAYS || '3' }},MESSAGING_DRY_RUN=${{ vars.MESSAGING_DRY_RUN || 'false' }},ENV=${{ secrets.ENV }}"
+
+      # Lets Cloud Scheduler actually fire the job. Needs run.jobs.setIamPolicy,
+      # already inside the run.admin this SA must hold to create the job above --
+      # so no new permission. Idempotent: re-adding an existing binding is a no-op.
+      # Declared here rather than run once by hand, because a binding that lives
+      # only in someone's shell history is invisible when the project is rebuilt.
+      - name: Allow Scheduler to invoke autopostule-messaging
+        run: |
+          gcloud run jobs add-iam-policy-binding autopostule-messaging \
+            --region="${{ env.REGION }}" \
+            --member="serviceAccount:autopostule-runtime@${{ env.PROJECT_ID }}.iam.gserviceaccount.com" \
+            --role="roles/run.invoker"
+
+      # --- Daily trigger for the messaging Job ---
+      # The first scheduled infrastructure in the project. Declared here rather
+      # than clicked once in the console so it is reviewable and survives a
+      # project rebuild -- and so a change to the hour is a diff, not a memory.
+      #
+      # 08:00 Europe/Paris: the messages are read by people over morning coffee,
+      # and the window they select is a closed UTC day, so the hour can move
+      # without changing who is selected.
+      #
+      # create-then-update because gcloud has no upsert. A failure that is NOT
+      # "already exists" fails the step on purpose: a silently missing schedule
+      # is exactly the invisible failure this feature is most exposed to.
+      - name: Schedule autopostule-messaging daily
+        run: |
+          JOB_URI="https://${{ env.REGION }}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${{ env.PROJECT_ID }}/jobs/autopostule-messaging:run"
+          SA="autopostule-runtime@${{ env.PROJECT_ID }}.iam.gserviceaccount.com"
+          COMMON=(
+            --location="${{ env.REGION }}"
+            --schedule="0 8 * * *"
+            --time-zone="Europe/Paris"
+            --uri="$JOB_URI"
+            --http-method=POST
+            --oauth-service-account-email="$SA"
+          )
+          if ! gcloud scheduler jobs create http autopostule-messaging-daily "${COMMON[@]}" 2> /tmp/sched.err; then
+            grep -qi "already exists" /tmp/sched.err || { cat /tmp/sched.err; exit 1; }
+            gcloud scheduler jobs update http autopostule-messaging-daily "${COMMON[@]}"
+          fi
+

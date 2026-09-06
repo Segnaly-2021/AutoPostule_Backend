@@ -37,12 +37,22 @@ class AuthUser(Entity):
     # --- Pending email change (verification-gated) ---
     pending_email: Optional[str] = None
 
+    # --- Marketing consent ---
+    # Gates the free-account reminder only. Lifecycle mail tied to a purchase is
+    # transactional and ignores this, which is why the cohort query takes it as an
+    # argument rather than filtering unconditionally.
+    marketing_opt_out: bool = False
+
     def change_password(self, new_password_hash: str) -> None:
         self.password_hash = new_password_hash
         self.updated_at = datetime.now(timezone.utc)
 
     def record_login(self) -> None:
         self.last_login = datetime.now(timezone.utc)
+
+    def set_marketing_opt_out(self, opted_out: bool) -> None:
+        self.marketing_opt_out = opted_out
+        self.updated_at = datetime.now(timezone.utc)
 
     # ------------------------------------------------------------------
     # Email verification

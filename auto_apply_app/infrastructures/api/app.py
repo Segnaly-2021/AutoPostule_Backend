@@ -41,6 +41,7 @@ from auto_apply_app.interfaces.presenters.web import (
   WebAgentStatePresenter,
   WebAdminPresenter,
   WebAnalyticsPresenter,
+  WebAnnouncementPresenter,
 )
 
 # Import routers
@@ -54,6 +55,8 @@ from auto_apply_app.infrastructures.api.routers import (
   agent_state,
   admin,
   analytics,
+  messaging,
+  announcement,
 )
 
 from auto_apply_app.infrastructures.api.cors import ALLOWED_ORIGINS
@@ -93,6 +96,7 @@ async def lifespan(app: FastAPI):
         free_search_presenter=WebFreeSearchPresenter(),
         admin_presenter=WebAdminPresenter(),
         analytics_presenter=WebAnalyticsPresenter(),
+        announcement_presenter=WebAnnouncementPresenter(),
     )
     
     app.state.container = container
@@ -200,6 +204,23 @@ def create_fastapi_app() -> FastAPI:
             analytics.router,
             prefix="/api/v1/site",
             tags=["Site"]
+        )
+
+        # Unauthenticated by design -- the link in an email is the only way in, and
+        # the token in it carries the subject. Kept out of the OpenAPI schema so the
+        # public docs do not advertise an endpoint that takes a bearer-equivalent
+        # token in a query string.
+        app.include_router(
+            messaging.router,
+            prefix="/api/v1/messaging",
+            tags=["Messaging"],
+            include_in_schema=False,
+        )
+
+        app.include_router(
+            announcement.router,
+            prefix="/api/v1/announcements",
+            tags=["Announcements"],
         )
 
         # Admin is mounted under a secret prefix and hidden from the OpenAPI schema.

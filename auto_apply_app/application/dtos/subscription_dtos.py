@@ -38,6 +38,11 @@ class UserSubscriptionResponse:
     ai_credits_balance: int
     allocated_ai_credits: int
 
+    # Applications included per billing cycle. The daily_limit above rations it;
+    # this is the headline number of the plan. Usage against it is NOT here --
+    # it needs a row count, which a from_entity() mapper has no session for.
+    volume_limit: int
+
     @classmethod
     def from_entity(cls, entity: UserSubscription) -> "UserSubscriptionResponse":
         return cls(
@@ -55,6 +60,7 @@ class UserSubscriptionResponse:
             # --- [NEW] Map the credit properties ---
             ai_credits_balance=entity.ai_credits_balance,
             allocated_ai_credits=entity.allocated_ai_credits,
+            volume_limit=entity.volume_limit,
         )
 
 

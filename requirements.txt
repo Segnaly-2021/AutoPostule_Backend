@@ -46,7 +46,7 @@ google-cloud-storage==3.9.0
 # env overrides. >=0.10 provides the run_v2 RunJobRequest.Overrides API.
 google-cloud-run>=0.10.0,<1.0.0
 
-
-
-
-
+# OS-level input (AGENT_INPUT_BACKEND=x11): XTEST fake events for the mouse.
+# Pure Python, no build step. The keyboard side uses the xdotool BINARY, which
+# is installed in Dockerfile.worker rather than here.
+python-xlib==0.33

@@ -121,6 +121,13 @@ class ForgotPasswordRequest:
 class ResetPasswordRequest:
     token: str
     new_password: str
+
+
+@dataclass(frozen=True)
+class UnsubscribeRequest:
+    """The token is the whole request: it carries the subject, so an unsubscribe
+    link cannot be edited to opt someone else out."""
+    token: str
     
 
 @dataclass(frozen=True)

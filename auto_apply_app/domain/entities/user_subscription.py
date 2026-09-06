@@ -80,19 +80,60 @@ class UserSubscription(Entity):
 
     # --- [NEW] Credit System Logic ---
     @property
-    def allocated_ai_credits(self) -> int:
-        """
-        Logic for AI generation limits per billing cycle (Cost Control).
-        Includes a buffer of bonus credits for unsubmitted generations.
-        """
-        # Premium: Monthly (30 days) * (25 limit + 10 bonus) = 1050 credits
-        if self.account_type == ClientType.PREMIUM:
-            return 1050
+    def volume_limit(self) -> int:
+        """Applications a plan may SEND per billing cycle.
 
-        # Basic: Monthly (30 days) * (10 limit + 3 bonus) = 390 credits
+        The headline number of the plan, and the one the daily limit rations:
+        300 at 25/day is twelve days of running, 180 at 10/day is eighteen. The
+        daily cap therefore governs bursts, this governs the month.
+
+        Resets with the billing period, next to replenish_credits().
+        """
+        if self.account_type == ClientType.PREMIUM:
+            return 300
         if self.account_type == ClientType.BASIC:
-            return 390
-            
+            return 180
+        return 0
+
+    @property
+    def daily_scrape_budget(self) -> int:
+        """How many offers a day's runs may scrape -- deliberately MORE than
+        daily_limit.
+
+        The ranker needs something to choose between: scraping exactly the daily
+        cap would mean submitting whatever was found, best fit or not. The
+        surplus is what makes 'the ones that fit best' meaningful.
+
+        Credits are charged on the letters KEPT, not on the surplus (see
+        master_agent.analyze_and_generate), which is what keeps the allocation
+        below solvent.
+        """
+        if self.account_type == ClientType.PREMIUM:
+            return 32   # keeps 25
+        if self.account_type == ClientType.BASIC:
+            return 15   # keeps 10
+        return 0
+
+    @property
+    def allocated_ai_credits(self) -> int:
+        """AI credits per billing cycle. One credit = one cover letter kept.
+
+        Sized against volume_limit, not against the scrape budget: a letter that
+        loses the ranking cut is not charged to the user. That leaves headroom
+        for drafts a Premium reviewer rejects and re-runs.
+
+            PREMIUM  300 kept/cycle vs 400 credits -> 100 spare
+            BASIC    180 kept/cycle vs 250 credits ->  70 spare
+
+        These were 1050/390, sized as (daily limit + bonus) x 30 days, which
+        assumed billing on every generated letter.
+        """
+        if self.account_type == ClientType.PREMIUM:
+            return 400
+
+        if self.account_type == ClientType.BASIC:
+            return 250
+
         return 0
 
     def has_sufficient_credits(self, amount: int) -> bool:
@@ -108,6 +149,24 @@ class UserSubscription(Entity):
     def replenish_credits(self):
         """Called by your Stripe webhook when a new billing cycle starts."""
         self.ai_credits_balance = self.allocated_ai_credits
+
+    def start_new_cycle(self, period_start: datetime, period_end: datetime) -> None:
+        """Begin a billing cycle: fresh credits AND fresh application volume.
+
+        Volume has no counter of its own -- it is COUNT(job_offers submitted
+        within [current_period_start, current_period_end)) -- so moving the window
+        is what resets it. That makes the period dates part of the billing
+        contract, not just display data, and it is why they are set here rather
+        than left to whichever webhook happens to carry them.
+
+        Both halves must move together. Replenishing credits without rolling the
+        window would hand the user a new wallet while last cycle's applications
+        still counted against their volume.
+        """
+        self.current_period_start = period_start
+        self.current_period_end = period_end
+        self.next_billing_date = period_end
+        self.replenish_credits()
 
 
     # ── Agent run limits (new) ──────────────────────────────────

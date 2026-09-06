@@ -39,15 +39,27 @@ from auto_apply_app.infrastructures.agent.human_behavior import (
     human_click,
     human_hover,
     human_warmup,
+    human_scroll,
     human_read_page,
-    # human_mouse_move,
-    # should_skip_card,
+    human_idle_drift,
+    human_scan_list,
+    human_long_pause,
+    should_skip_card,
     should_hover_without_clicking,
+    reset_mouse_state,
+)
+from auto_apply_app.infrastructures.agent.pacing import HumanPacing, Tier
+from auto_apply_app.infrastructures.agent.fingerprint_alignment import (
+    align_fingerprint_to_browser,
 )
 logger = logging.getLogger(__name__)
 
 
-class WelcomeToTheJungleWorker:
+class WelcomeToTheJungleWorker(HumanPacing):
+
+    # Reading band for this board: 60-180s.
+    _READ_BAND_S = (60.0, 180.0)
+    _READ_LONG_CHARS = 5400
 
 
     NEW_MATCHES_LIST = 'div[data-testid="job-list"]'
@@ -83,6 +95,16 @@ class WelcomeToTheJungleWorker:
 
         self._progress_callback = None
         self._source_name = "WTTJ"
+        # Canonical board key. Indexes this worker's slice of the per-board
+        # fingerprint and proxy maps the master builds.
+        self._board_key = "wttj"
+        # The persona this run is wearing. Cookie jars are keyed on it, so a
+        # jar can never be replayed under a different device.
+        self._fingerprint_id: Optional[str] = None
+
+        # Human pacing. This worker previously had NO budget guard and no
+        # heartbeat during idle, so it could not be slowed down safely at all.
+        self._init_pacing("WTTJ")
 
         # Current user id for print logging (set at node entry)
         self._uid = "unknown"
@@ -111,6 +133,10 @@ class WelcomeToTheJungleWorker:
         error: str = None,
         error_code: str = None,
         stage_code: str = None,
+        progress_percent: int = None,
+        count_band: str = None,
+        count_done: int = None,
+        count_total: int = None,
     ):
         if not self._progress_callback:
             return
@@ -125,6 +151,18 @@ class WelcomeToTheJungleWorker:
                 "error": error,
                 "error_code": error_code or ("SYSTEMERROR" if error else None),
                 "search_id": search_id,
+                "progress_percent": progress_percent,
+                # Raw counts for the counting bands. AgentRunner sums these
+                # across boards and rewrites progress_percent, because this
+                # worker only knows its own share of the total.
+                "count_band": count_band,
+                "count_done": count_done,
+                "count_total": count_total,
+                "progress_track": ("submit" if state.get("action_intent") == "SUBMIT"
+                                   else "launch"),
+                "is_premium": getattr(
+                    getattr(state.get("subscription"), "account_type", None),
+                    "name", "") == "PREMIUM",
             })
         except Exception:
             logger.exception("[WTTJ] Progress emit failed")
@@ -138,9 +176,16 @@ class WelcomeToTheJungleWorker:
         return hashlib.md5(raw_string.encode()).hexdigest()
 
     def _get_session_file_path(self, user_id: str) -> str:
+        """Local path for this run's cookie jar.
+
+        Scoped by persona: the jar belongs to the device that acquired it, so
+        rotating to another device cannot pick up the previous one's cookies.
+        Falls back to "nofp" only when no fingerprint resolved at all.
+        """
         directory = os.path.join(os.getcwd(), "tmp", "sessions")
         os.makedirs(directory, exist_ok=True)
-        return os.path.join(directory, f"{user_id}_wttj_session.json")
+        fp = self._fingerprint_id or "nofp"
+        return os.path.join(directory, f"{user_id}_wttj_{fp}_session.json")
 
     async def _save_auth_state(self, user_id: str):
         if self.context:
@@ -150,7 +195,7 @@ class WelcomeToTheJungleWorker:
             self._plog("session cookies saved to disk", user_id)
             # C-2: mirror the refreshed session to GCS (best-effort, never fatal).
             if self.session_store:
-                await self.session_store.save_from_local(user_id, "wttj", path)
+                await self.session_store.save_from_local(user_id, "wttj", self._fingerprint_id or "nofp", path)
 
     def _get_auth_state_path(self, user_id: str) -> str | None:
         path = self._get_session_file_path(user_id)
@@ -159,21 +204,48 @@ class WelcomeToTheJungleWorker:
         return None
 
     async def _handle_cookies(self):
+        """Dismiss the Axeptio consent widget (WTTJ). Non-fatal if absent."""
+        BTN = "#axeptio_btn_dismiss, #axeptio_btn_acceptAll, #axeptio_main_button"
         try:
-            await self.page.wait_for_selector('#axeptio_overlay', state='attached', timeout=5000)
+            btn = self.page.locator(BTN).first
+            await btn.wait_for(state="visible", timeout=5000)
+            # Through the pacing layer like every other click. A consent banner
+            # is the first thing a page watches you dismiss, and this was the one
+            # click in the worker still going out as a driver event.
+            await self._click(btn)
+            # wait for the widget to actually go away
+            await self.page.locator(".ax-website-overlay").first.wait_for(
+                state="hidden", timeout=3000
+            )
+            self._plog("cookie banner dismissed via button")
+            logger.debug("[WTTJ] Axeptio banner dismissed")
+            return
+        except Exception as e:
+            logger.debug("[WTTJ] Button dismiss failed (%s), falling back to DOM removal", e)
+
+        # Fallback: nuke whatever is left
+        try:
             count = await self.page.evaluate("""() => {
-                const overlays = document.querySelectorAll('#axeptio_overlay, .axeptio_mount');
+                const sel = [
+                    '.ax-website-overlay',
+                    '[data-testid="widget-container"]',
+                    '.axeptio_widget',
+                    '#axeptio_overlay',
+                    '.axeptio_mount',
+                    '#axeptio_main_button',
+                ].join(',');
                 let removed = 0;
-                overlays.forEach(el => {
-                    el.remove();
-                    removed++;
-                });
+                document.querySelectorAll(sel).forEach(el => { el.remove(); removed++; });
+                document.documentElement.style.overflow = '';
+                document.body.style.overflow = '';
                 return removed;
             }""")
-            self._plog(f"cookie overlay detected -> removed {count} Axeptio element(s)")
-            logger.debug("[WTTJ] Removed %s Axeptio overlay(s)", count)
-        except Exception:
-            logger.debug("[WTTJ] No cookie popup detected")
+            if count:
+                self._plog(f"cookie overlay removed from DOM ({count} element(s))")
+            else:
+                self._plog("no cookie overlay detected")
+        except Exception as e:
+            self._plog(f"[WTTJ] cookie handling failed: {e}")
 
 
     async def _get_promoted_hrefs(self) -> set[str]:
@@ -242,8 +314,17 @@ class WelcomeToTheJungleWorker:
     async def force_cleanup(self):
         logger.info("[WTTJ] Force cleanup initiated")
         self._plog("force cleanup initiated")
+
+        # Before the page goes: the input backend is registered against it, and
+        # the Xvfb it may be driving outlives the browser unless stopped here.
+        await self._close_display()
+
         try:
             if self.page:
+                # _last_mouse_pos is keyed by id(page) and nothing evicts it, so
+                # entries pile up across runs and a recycled id would hand a new
+                # page some other page's stale cursor origin.
+                reset_mouse_state(self.page)
                 await self.page.close()
         except Exception:
             logger.exception("[WTTJ] Page close error")
@@ -352,7 +433,7 @@ class WelcomeToTheJungleWorker:
 
             for attempt in range(3):
                 try:
-                    await next_button.click()
+                    await self._click(next_button)
                     await self.page.wait_for_load_state("networkidle")
                     await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=10000)
                     break
@@ -411,7 +492,7 @@ class WelcomeToTheJungleWorker:
             if is_checked == should_be_checked:
                 return
             await human_delay(250, 600)
-            await label.click()
+            await self._click(label)
         except Exception:
             logger.warning("[WTTJ] Could not toggle '%s'", name)
             self._plog(f"could not toggle checkbox '{name}'")
@@ -447,7 +528,6 @@ class WelcomeToTheJungleWorker:
             # ============ 1. RÔLE SECTION ============
             self._plog(f"filters step 1/4: 'Rôle' -> typing '{job_title}' + experience levels")
             await self._expand_section("Rôle")
-
             role_input = self.page.locator('input[name="futureRole"]')
             await role_input.wait_for(state="visible", timeout=10000)
             await role_input.clear()
@@ -474,7 +554,7 @@ class WelcomeToTheJungleWorker:
                 if chip_count > 0:
                     self._plog(f"clearing {chip_count} existing location chip(s)")
                 for _ in range(chip_count):
-                    await self.page.locator('button[aria-label="remove tag"]').first.click()
+                    await self._click(self.page.locator('button[aria-label="remove tag"]').first)
                     await human_delay(200, 400)
             except Exception:
                 logger.warning("[WTTJ] Could not clear location chips")
@@ -570,7 +650,7 @@ class WelcomeToTheJungleWorker:
                         state="visible",
                         timeout=10000,
                     )
-                    await save_btn.click()
+                    await self._click(save_btn)
                     await self.page.wait_for_load_state("networkidle")
                     await self.page.wait_for_selector(self.CARD_SELECTOR, state="attached", timeout=15000)
                     self._plog("filters applied -> results page loaded")
@@ -621,7 +701,7 @@ class WelcomeToTheJungleWorker:
                     self._plog("'Retourner aux résultats' link never appeared -> nav back failed")
                     return False
         try:
-            await self.page.locator('a[title="Retourner aux résultats"]').click()
+            await self._click(self.page.locator('a[title="Retourner aux résultats"]'))
             await self.page.wait_for_load_state("networkidle")
             await self._handle_cookies()
             await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=60000)
@@ -746,7 +826,7 @@ class WelcomeToTheJungleWorker:
                     submit_btn = self.page.locator('button[data-testid="sign-in-form-submit-button"]')
                     if await submit_btn.count() == 0:
                         submit_btn = self.page.locator('button[type="submit"]')
-                    await submit_btn.click()
+                    await self._click(submit_btn)
                     self._plog("re-login: credentials submitted")
                     break
                 except Exception:
@@ -792,49 +872,72 @@ class WelcomeToTheJungleWorker:
     # =========================================================================
 
     async def start_session(self, state: JobApplicationState):
-        await self._emit(state, "Initializing Browser", stage_code=StageCode.INITIALIZING_BROWSER)
+        await self._emit(state, "Initializing Browser", stage_code=StageCode.INITIALIZING_BROWSER, progress_percent=self._progress(state, "start"))
         await self._beat(state)
         logger.info("[WTTJ] Starting session")
         self._uid = str(state["user"].id)
+        self._start_pacing(state.get("run_token"))
         self._plog("NODE start_session -> launching stealth browser (SCRAPE track)")
 
         preferences = state["preferences"]
 
-        fingerprint = state.get("user_fingerprint")
+        fingerprint = (state.get("user_fingerprints") or {}).get(self._board_key)
+        proxy_config = (state.get("proxy_configs") or {}).get(self._board_key)
+        # Record the persona BEFORE any session path is built — _get_session_file_path
+        # reads it, and a stale value would point at another device's cookie jar.
+        self._fingerprint_id = str(fingerprint.id) if fingerprint else None
 
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless= preferences.browser_headless,
-                args=['--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage'],
+                **await self._browser_launch_kwargs(
+                    {
+                        "headless": preferences.run_browser_headless,
+                        "args": ['--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage'],
+                    },
+                    fingerprint,
+                )
             )
+            fingerprint = align_fingerprint_to_browser(
+                fingerprint, self.browser.version, self._plog
+            )
+            fingerprint = self._fit_to_display(fingerprint)
 
             context_kwargs = {}
             if fingerprint:
                 self._plog("applying user fingerprint to browser context")
                 context_kwargs.update(fingerprint.to_playwright_context_args())
             else:
-                self._plog("no fingerprint provided -> using default user agent")
-                context_kwargs["user_agent"] = (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-                )
+                # No fingerprint resolved. Every such run shares one identity, so
+                # this is a degraded path, not a normal one — log it loudly.
+                self._plog("NO FINGERPRINT RESOLVED -> falling back to a shared default identity")
+                logger.warning("[%s] running without a fingerprint", self._source_name)
 
-            # if proxy_config:
-            #     context_kwargs["proxy"] = {
-            #         "server": proxy_config["server"],
-            #         "username": proxy_config["username"],
-            #         "password": proxy_config["password"],
-            #     }
+            if proxy_config:
+                self._plog("routing browser context through proxy")
+                context_kwargs["proxy"] = {
+                    "server": proxy_config["server"],
+                    "username": proxy_config["username"],
+                    "password": proxy_config["password"],
+                }
 
             self.context = await self.browser.new_context(**context_kwargs)
+            await self._suppress_popups(self.context)
+            # No other context.route on this worker, so registration order is
+            # unconstrained here -- unlike HelloWork, see the note there.
+            await self._conserve_bandwidth(self.context)
+
+            # Stealth FIRST, fingerprint SECOND. playwright_stealth registers its
+            # own WebGL getParameter patch hardcoded to "Intel Inc." / "Intel Iris
+            # OpenGL Engine"; init scripts run in registration order, so applying
+            # it after ours silently replaced the persona's GPU on every run.
+            stealth = Stealth()
+            await stealth.apply_stealth_async(self.context)
 
             if fingerprint:
                 await self.context.add_init_script(fingerprint.to_init_script())
-
-            stealth = Stealth()
-            await stealth.apply_stealth_async(self.context)
             self.page = await self.context.new_page()
+            await self._mount_input()
 
             self._plog("browser session ready")
             return {}
@@ -846,43 +949,54 @@ class WelcomeToTheJungleWorker:
 
     
     async def start_session_with_auth(self, state: JobApplicationState):
-        await self._emit(state, "Initializing Secure Browser", stage_code=StageCode.INITIALIZING_BROWSER)
+        await self._emit(state, "Initializing Secure Browser", stage_code=StageCode.INITIALIZING_BROWSER, progress_percent=self._progress(state, "start_with_session"))
         await self._beat(state)
         logger.info("[WTTJ] Booting browser (session injection)")
         user_id = str(state["user"].id)
         self._uid = user_id
+        self._start_pacing(state.get("run_token"))
         self._plog("NODE start_session_with_auth -> booting browser (SUBMIT track)")
 
-        fingerprint = state.get("user_fingerprint")
+        fingerprint = (state.get("user_fingerprints") or {}).get(self._board_key)
+        proxy_config = (state.get("proxy_configs") or {}).get(self._board_key)
+        # Record the persona BEFORE any session path is built — _get_session_file_path
+        # reads it, and a stale value would point at another device's cookie jar.
+        self._fingerprint_id = str(fingerprint.id) if fingerprint else None
 
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless= state["preferences"].browser_headless,
-                args=['--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage'],
+                **await self._browser_launch_kwargs(
+                    {
+                        "headless": state["preferences"].run_browser_headless,
+                        "args": ['--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage'],
+                    },
+                    fingerprint,
+                )
             )
+            fingerprint = align_fingerprint_to_browser(
+                fingerprint, self.browser.version, self._plog
+            )
+            fingerprint = self._fit_to_display(fingerprint)
 
             # C-2: pull the durable session from GCS into the local path first, so
             # _get_auth_state_path finds it. No session / any error -> logs in fresh.
             if self.session_store:
                 await self.session_store.load_to_local(
-                    user_id, "wttj", self._get_session_file_path(user_id)
+                    user_id, "wttj", self._fingerprint_id or "nofp",
+                    self._get_session_file_path(user_id)
                 )
             session_path = self._get_auth_state_path(user_id)
 
             context_kwargs = {}
             if fingerprint:
+                # One source for both tracks. The auth track used to bolt on
+                # device_scale_factor/has_touch/is_mobile that the scrape track
+                # lacked, so a single run presented two different contexts.
                 context_kwargs.update(fingerprint.to_playwright_context_args())
-                context_kwargs.update({
-                    "device_scale_factor": fingerprint.device_scale_factor,
-                    "has_touch": False,
-                    "is_mobile": False,
-                })
             else:
-                context_kwargs["user_agent"] = (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-                )
+                self._plog("NO FINGERPRINT RESOLVED -> falling back to a shared default identity")
+                logger.warning("[%s] running without a fingerprint", self._source_name)
 
             if session_path:
                 self._plog("saved session found -> injecting cookies")
@@ -890,21 +1004,31 @@ class WelcomeToTheJungleWorker:
             else:
                 self._plog("no saved session -> booting fresh context")
 
-            # if proxy_config:
-            #     context_kwargs["proxy"] = {
-            #         "server": proxy_config["server"],
-            #         "username": proxy_config["username"],
-            #         "password": proxy_config["password"],
-            #     }
+            if proxy_config:
+                self._plog("routing browser context through proxy")
+                context_kwargs["proxy"] = {
+                    "server": proxy_config["server"],
+                    "username": proxy_config["username"],
+                    "password": proxy_config["password"],
+                }
 
             self.context = await self.browser.new_context(**context_kwargs)
+            await self._suppress_popups(self.context)
+            # No other context.route on this worker, so registration order is
+            # unconstrained here -- unlike HelloWork, see the note there.
+            await self._conserve_bandwidth(self.context)
+
+            # Stealth FIRST, fingerprint SECOND. playwright_stealth registers its
+            # own WebGL getParameter patch hardcoded to "Intel Inc." / "Intel Iris
+            # OpenGL Engine"; init scripts run in registration order, so applying
+            # it after ours silently replaced the persona's GPU on every run.
+            stealth = Stealth()
+            await stealth.apply_stealth_async(self.context)
 
             if fingerprint:
                 await self.context.add_init_script(fingerprint.to_init_script())
-
-            stealth = Stealth()
-            await stealth.apply_stealth_async(self.context)
             self.page = await self.context.new_page()
+            await self._mount_input()
 
             self._plog("navigating to welcometothejungle.com")
             for attempt in range(3):
@@ -1002,7 +1126,7 @@ class WelcomeToTheJungleWorker:
     
 
     async def go_to_job_board(self, state: JobApplicationState):
-        await self._emit(state, "Navigating to Job Board", stage_code=StageCode.NAVIGATING)
+        await self._emit(state, "Navigating to Job Board", stage_code=StageCode.NAVIGATING, progress_percent=self._progress(state, "nav"))
         await self._beat(state)
         logger.info("[WTTJ] Navigating")
         self._plog("NODE go_to_job_board -> navigating to welcometothejungle.com")
@@ -1013,16 +1137,25 @@ class WelcomeToTheJungleWorker:
                     await self._handle_cookies()
                     await self.page.wait_for_selector('a[data-testid="nav-sign-in-button"]', state="visible", timeout=30000)
                     break
-                except Exception:
+                except Exception as e:
+                    # The reason, not just the fact. Three different failures
+                    # look identical from outside this block — the goto, the
+                    # cookie widget, and the sign-in selector — and "unreachable"
+                    # names only the first of them. Diagnosing this cost an
+                    # afternoon of ruling out the site, the selector and the
+                    # proxy, all of which were fine.
+                    detail = f"{type(e).__name__}: {str(e).splitlines()[0][:200]}"
                     if attempt == 2:
-                        self._plog("welcometothejungle.com unreachable after 3 attempts -> aborting")
+                        self._plog(f"welcometothejungle.com unreachable after 3 attempts -> aborting ({detail})")
+                        logger.warning("[WTTJ] Navigation failed 3x", exc_info=True)
                         await self._emit(state, stage="Failed", status="error", error="Could not reach Welcome to the Jungle.", error_code="JOB_BOARD_UNAVAILABLE")
                         return {"error": "Could not reach Welcome to the Jungle. The job board might be down or undergoing maintenance.", "error_code": "JOB_BOARD_UNAVAILABLE"}
-                    self._plog(f"navigation attempt {attempt + 1} failed -> retrying")
+                    self._plog(f"navigation attempt {attempt + 1} failed -> retrying ({detail})")
                     await asyncio.sleep(2 ** attempt)
 
             self._plog("homepage loaded -> performing human warmup")
             await human_warmup(self.page, self.base_url)
+            await self._arrival_browse(state, "wttj homepage")
             return {}
         except Exception:
             logger.exception("[WTTJ] Navigation error")
@@ -1031,7 +1164,7 @@ class WelcomeToTheJungleWorker:
             return {"error": "Navigation failed.", "error_code": "JOB_BOARD_UNAVAILABLE"}
 
     async def request_login(self, state: JobApplicationState):
-        await self._emit(state, "Authenticating", stage_code=StageCode.AUTHENTICATING)
+        await self._emit(state, "Authenticating", stage_code=StageCode.AUTHENTICATING, progress_percent=self._progress(state, "login"))
         await self._beat(state)
 
         prefs = state["preferences"]
@@ -1093,7 +1226,7 @@ class WelcomeToTheJungleWorker:
                         submit_btn = self.page.locator('button[data-testid="sign-in-form-submit-button"]')
                         if await submit_btn.count() == 0:
                             submit_btn = self.page.locator('button[type="submit"]')
-                        await submit_btn.click()
+                        await self._click(submit_btn)
                         self._plog("credentials submitted")
                         break
                     except Exception:
@@ -1123,6 +1256,7 @@ class WelcomeToTheJungleWorker:
                 logger.info("[WTTJ] Auto-login successful")
                 self._plog("auto-login successful")
                 await self._save_auth_state(user_id)
+                await self._settle(state, "post-login")
                 return {}
 
             except Exception:
@@ -1140,9 +1274,11 @@ class WelcomeToTheJungleWorker:
         else:
             self._plog("semi-automation mode -> waiting for manual login (90s)")
             try:
-                await self.page.locator('a[data-testid="nav-sign-in-button"]').click()
+                await self._click(self.page.locator('a[data-testid="nav-sign-in-button"]'))
                 logger.info("[WTTJ] ACTION REQUIRED: Manual login required (waiting 90s)")
-                await asyncio.sleep(90)
+                # Heartbeat-safe: a bare sleep beats nothing for 90s, which is over half
+                # the AGENT_HEARTBEAT_STALE_SECONDS budget.
+                await human_long_pause(90, 90, on_tick=lambda: self._beat(state), tick_every=30.0)
                 self._plog("manual login window elapsed -> verifying access")
                 await self.page.wait_for_selector(
                     'button[data-testid="nav-my-space-button"]',
@@ -1159,7 +1295,7 @@ class WelcomeToTheJungleWorker:
                 return {"error": "Manual login timed out.", "error_code": "LOGIN_TIMEOUT"}
 
     async def search_jobs(self, state: JobApplicationState):
-        await self._emit(state, "Searching for Jobs", stage_code=StageCode.SEARCHING)
+        await self._emit(state, "Searching for Jobs", stage_code=StageCode.SEARCHING, progress_percent=self._progress(state, "search"))
         await self._beat(state)
 
         user = state["user"]
@@ -1179,22 +1315,26 @@ class WelcomeToTheJungleWorker:
             self._plog("opening 'Trouver un job' preferences form")
             for attempt in range(3):
                 try:
-                    await human_click(self.page.locator('a[data-testid="nav-find-a-job-button"]'))
+                    find_a_job_button = self.page.locator('a[data-testid="nav-find-a-job-button"]')
+                    await find_a_job_button.click()
                     await self.page.wait_for_load_state("networkidle")
+                    await self._handle_cookies()
                     await self.page.wait_for_selector(
                         'button[aria-expanded="false"] div p:has-text("Rôle")',
                         state="visible",
                         timeout=30000,
                     )
                     break
-                except Exception:
+                except Exception as e:
                     if attempt == 2:
                         self._plog("preferences form never reached -> aborting")
                         await self._emit(state, stage="Failed", status="error", error="We encountered an issue applying your search filters.", error_code="SEARCH_FILTERS_FAILED")
                         return {"error": f"Could not reach the WTTJ preferences form for '{job_title}'.", "error_code": "SEARCH_FILTERS_FAILED"}
-                    self._plog(f"preferences form attempt {attempt + 1} failed -> retrying")
+                    self._plog(f"preferences form attempt {attempt + 1} failed -> retrying, error: {str(e)}")
                     await asyncio.sleep(2 ** attempt)
+                    await self._handle_cookies()
 
+            await self._settle(state, "opening filters")
             await self._apply_filters(
                 user=user,
                 job_title=job_title,
@@ -1207,6 +1347,9 @@ class WelcomeToTheJungleWorker:
                 await self.page.wait_for_selector(self.CARD_SELECTOR, state="attached", timeout=60000)
                 logger.info("[WTTJ] Search results loaded")
                 self._plog("search results loaded")
+                # Skim the result list before opening anything — the last beat
+                # before the scrape loop takes over.
+                await self._arrival_browse(state, "results page")
             except Exception:
                 self._plog("no results found for this search")
                 return {"error": "No new matching jobs were found for this search today.", "error_code": "NO_JOBS_FOUND"}
@@ -1222,7 +1365,7 @@ class WelcomeToTheJungleWorker:
 
 
     async def get_matched_jobs(self, state: JobApplicationState):
-        await self._emit(state, "Extracting Job Data", stage_code=StageCode.EXTRACTING_DATA)
+        await self._emit(state, "Extracting Job Data", stage_code=StageCode.EXTRACTING_DATA, progress_percent=self._progress(state, "scrape"))
         await self._beat(state)
         logger.info("[WTTJ] Scraping jobs")
 
@@ -1283,7 +1426,16 @@ class WelcomeToTheJungleWorker:
                     break
 
                 # --- Page-arrival "browsing" pause: a real user scans before clicking ---
-                await human_read_page(self.page, min_seconds=2.0, max_seconds=4.5)
+                # human_scan_list models choosing BETWEEN results (down, back up,
+                # cursor drift); human_read_page models reading one document
+                # top-to-bottom. A results page is the former.
+                await human_scan_list(
+                    self.page,
+                    self._scaled(2.5, Tier.SCROLL),
+                    self._scaled(6.0, Tier.SCROLL),
+                    pace=self._pace,
+                )
+                await self._distracted_stop(state)
 
                 result_url = self.page.url
                 promoted_hrefs = await self._get_promoted_hrefs()
@@ -1343,7 +1495,7 @@ class WelcomeToTheJungleWorker:
 
                     try:
                         # Scroll into view with a natural delay
-                        await target_card.scroll_into_view_if_needed()
+                        await self._scroll_to(target_card)
                         await human_delay(500, 1300)
 
                         raw_company, raw_title, raw_location = await self.get_raw_job_data(target_card)
@@ -1386,20 +1538,29 @@ class WelcomeToTheJungleWorker:
                             continue
 
                         # --- THE CLICK: opens detail, which moves card to "Consultés" ---
+                        #
+                        # DEBUG (stray-window investigation): a plain Playwright
+                        # click, NOT self._click/human_click. Playwright aims at the
+                        # element's centre and re-checks the hit target inside the
+                        # renderer before dispatching; the OS-level click aims at a
+                        # random point and presses whatever pixel is there. This is
+                        # here to isolate which of the two opens the stray window.
+                        # Revert to self._click once that is answered.
                         click_success = False
                         for attempt in range(3):
                             try:
                                 if attempt == 0:
-                                    await human_click(target_card.locator(self.CARD_LINK).first)
-                                else:
-                                    # Re-resolve by href: the DOM may have shifted on retry.
-                                    retry_link = self.page.locator(
-                                        f'{self.CARD_SELECTOR} {self.CARD_LINK}[href="{target_href}"]'
-                                    ).first
-                                    if await retry_link.count() > 0:
-                                        await human_click(retry_link)
-                                    else:
-                                        await human_click(target_card.locator(self.CARD_LINK).first)
+                                    await target_card.click()
+                                # I commented this out because this is bulleshit
+                                # else:
+                                #     # Re-resolve by href: the DOM may have shifted on retry.
+                                #     retry_link = self.page.locator(
+                                #         f'{self.CARD_SELECTOR} {self.CARD_LINK}[href="{target_href}"]'
+                                #     ).first
+                                #     if await retry_link.count() > 0:
+                                #         await human_click(retry_link)
+                                #     else:
+                                #         await human_click(target_card.locator(self.CARD_LINK).first)
 
                                 await self._handle_cookies()
                                 await self.page.wait_for_selector(
@@ -1447,9 +1608,14 @@ class WelcomeToTheJungleWorker:
                             job_desc = ""
 
                         desc_len = len(job_desc) if job_desc else 0
-                        read_min = max(2.0, min(4.0, desc_len / 1200))
-                        read_max = max(4.0, min(9.0, desc_len / 600))
-                        await human_read_page(self.page, min_seconds=read_min, max_seconds=read_max)
+                        read_min, read_max = self._read_bounds(desc_len)
+                        self._plog(f"reading offer (~{desc_len} chars) for {read_min:.0f}-{read_max:.0f}s")
+                        await human_read_page(
+                            self.page,
+                            min_seconds=read_min,
+                            max_seconds=max(read_min, read_max),
+                            pace=self._pace,
+                        )
 
                         apply_btn = self.page.locator('[data-testid="job_header-button-apply"]')
 
@@ -1485,6 +1651,17 @@ class WelcomeToTheJungleWorker:
                                     job_desc=job_desc,
                                 )
                                 found_job_entities.append(offer)
+                                # Progress advances on KEEPERS only. The loop is already
+                                # keeper-driven (while len(found) < worker_job_limit), so the
+                                # denominator is known before it starts.
+                                await self._emit(
+                                    state,
+                                    f"Found: {offer.job_title}",
+                                    stage_code=StageCode.EXTRACTING_DATA,
+                                    count_band="scrape",
+                                    count_done=len(found_job_entities),
+                                    count_total=state.get("max_jobs") or worker_job_limit,
+                                )
                                 self._plog(f"offer captured ({len(found_job_entities)}/{worker_job_limit}): '{raw_title}' @ {raw_company or 'No Name'}")
 
                         if not await self.nav_back(result_url):
@@ -1494,8 +1671,13 @@ class WelcomeToTheJungleWorker:
                         # Real progress: a card was consumed this iteration.
                         no_progress_streak = 0
 
-                        # Inter-card pause
-                        await human_delay(1200, 3200)
+                        # Inter-card pause. Back-to-back offers at a constant
+                        # interval is the clearest signature a scrape leaves in
+                        # request timing, so this is a heavy tier plus a chance
+                        # of drifting off entirely.
+                        await self._pause(state, 6.0, 30.0, tier=Tier.CARD)
+                        await self._distracted_stop(state)
+                        await self._maybe_break(state, f"after card {len(found_job_entities)}")
 
                     except Exception:
                         logger.exception("[WTTJ] Error on card %s", target_href)
@@ -1516,6 +1698,7 @@ class WelcomeToTheJungleWorker:
 
                 if not await self._handle_wttj_pagination(page_number):
                     break
+                await self._maybe_break(state, f"between pages {page_number}")
                 page_number += 1
 
         except Exception:
@@ -1658,7 +1841,7 @@ class WelcomeToTheJungleWorker:
             return {}
 
     async def submit_applications(self, state: JobApplicationState):
-        await self._emit(state, "Submitting Applications", stage_code=StageCode.SUBMITTING)
+        await self._emit(state, "Submitting Applications", stage_code=StageCode.SUBMITTING, progress_percent=self._progress(state, "submit"))
         await self._beat(state)
         logger.info("[WTTJ] Submitting applications")
 
@@ -1750,11 +1933,14 @@ class WelcomeToTheJungleWorker:
                     resume_bytes = await self.file_storage.download_file(user.resume_path)
                     human_name = user.resume_file_name or f"{user.firstname}_{user.lastname}_CV.pdf"
                     self._plog(f"uploading resume: {human_name}")
-                    await self.page.get_by_test_id("apply-form-field-resume").set_input_files({
-                        "name": human_name,
-                        "mimeType": "application/pdf",
-                        "buffer": resume_bytes,
-                    })
+                    await self._upload(
+                        self.page.get_by_test_id("apply-form-field-resume"),
+                        {
+                            "name": human_name,
+                            "mimeType": "application/pdf",
+                            "buffer": resume_bytes,
+                        },
+                    )
                     await human_delay(1000, 2000)
 
                 if resume_bytes:
@@ -1768,19 +1954,19 @@ class WelcomeToTheJungleWorker:
                             try:
                                 match field["type"]:
                                     case "text":
-                                        await self.page.locator(f'[data-testid="{testid}-input"]').fill(field["value"])
+                                        await self._type(self.page.locator(f'[data-testid="{testid}-input"]'), field["value"])
                                     case "textarea":
-                                        await self.page.locator(f'[data-testid="{testid}-input"]').fill(field["value"])
+                                        await self._type(self.page.locator(f'[data-testid="{testid}-input"]'), field["value"])
                                     case "radio":
-                                        await self.page.locator(
+                                        await self._click(self.page.locator(
                                             f'[data-testid^="{testid}-RADIO"][label="{field["value"]}"]'
-                                        ).click()
+                                        ))
                                     case "dropdown":
-                                        await self.page.locator(f'[data-testid="{testid}-DROPDOWN"]').click()
+                                        await self._click(self.page.locator(f'[data-testid="{testid}-DROPDOWN"]'))
                                         await self.page.wait_for_selector('[role="listbox"]', state="visible", timeout=5000)
-                                        await self.page.locator('[role="listbox"] li').filter(has_text=field["value"]).click()
+                                        await self._click(self.page.locator('[role="listbox"] li').filter(has_text=field["value"]))
                                     case "checkbox":
-                                        await self.page.locator(f'[data-testid="{testid}-input"]').check()
+                                        await self._check(self.page.locator(f'[data-testid="{testid}-input"]'))
                                 await human_delay(300, 700)
                             except Exception:
                                 logger.warning("[WTTJ] Could not fill question %s", testid)
@@ -1789,21 +1975,27 @@ class WelcomeToTheJungleWorker:
 
                 if offer.cover_letter:
                     self._plog("filling cover letter")
-                    await self.page.get_by_test_id("apply-form-field-cover_letter").fill(offer.cover_letter)
+                    cl_text_area = self.page.get_by_test_id("apply-form-field-cover_letter")
+
+                    if await cl_text_area.count() > 0:
+                        await self._type(cl_text_area, offer.cover_letter)
 
                 checkbox = self.page.locator('input[id="consent"]')
                 if await checkbox.count() > 0 and not await checkbox.is_checked():
                     self._plog("checking consent checkbox")
                     await human_delay(300, 700)
-                    await self.page.locator('label[for="consent"]').click()
+                    await self._click(self.page.locator('label[for="consent"]'))
 
-                await human_delay(1500, 3500)
                 await self.page.wait_for_selector('[data-testid="apply-form-submit"]', state="attached")
                 submit_btn = self.page.locator('[data-testid="apply-form-submit"]')
 
                 if await submit_btn.is_visible():
                     self._plog("clicking submit button (no retry: duplicate risk)")
-                    await submit_btn.click()
+                    # The stray-window retry is off here for the reason the log
+                    # line already gives: a repeated submit is an application sent
+                    # twice, and nothing undoes that. A window opened by this click
+                    # is still closed, just not clicked through again.
+                    await self._click(submit_btn, retry_on_popup=False)
 
                     try:
                         await self.page.wait_for_selector('svg[alt="Paperplane"]', state="visible", timeout=45000)
@@ -1811,6 +2003,15 @@ class WelcomeToTheJungleWorker:
                         self._plog(f"application SUBMITTED: '{offer.job_title}' @ {offer.company_name} ({len(successful_submissions) + 1}/{assigned_submit_limit})")
                         offer.status = ApplicationStatus.SUBMITTED
                         successful_submissions.append(offer)
+                        await self._emit(
+                            state,
+                            f"Submitted: {offer.job_title}",
+                            stage_code=StageCode.SUBMITTING,
+                            count_band="submit",
+                                    count_done=len(successful_submissions),
+                                    count_total=len([j for j in jobs_to_submit
+                                                     if j.status == ApplicationStatus.APPROVED]),
+                        )
                     except Exception:
                         logger.warning("[WTTJ] Submission of %s failed — confirmation not received", offer.url)
                         self._plog("submission NOT confirmed -> Paperplane confirmation never appeared")
@@ -1822,6 +2023,15 @@ class WelcomeToTheJungleWorker:
             except Exception:
                 logger.exception("[WTTJ] Submission failed for %s", offer.url)
                 self._plog(f"submission crashed for '{offer.job_title}' -> moving to next offer")
+
+            # Nobody fires off applications back to back. SUBMIT is the heaviest
+            # tier — sending an application is the most deliberate act in a run.
+            # Shorter than it was, and now the ONLY thing pacing this
+            # loop: the review read that used to precede the send is gone, so
+            # without this the node is fill, submit, next form, at whatever
+            # speed the forms load.
+            await self._pause(state, 15.0, 25.0, tier=Tier.SUBMIT)
+            await self._maybe_break(state, "between submissions")
 
             i += 1
 
@@ -1835,7 +2045,7 @@ class WelcomeToTheJungleWorker:
         return {"submitted_offers": successful_submissions}
 
     async def cleanup(self, state: JobApplicationState):
-        await self._emit(state, "Cleaning Up", stage_code=StageCode.CLEANING_UP)
+        await self._emit(state, "Cleaning Up", stage_code=StageCode.CLEANING_UP, progress_percent=self._progress(state, "cleanup"))
         self._plog("NODE cleanup -> closing browser session")
         await self.force_cleanup()
 

@@ -14,6 +14,8 @@ from auto_apply_app.application.repositories.agent_usage_repo import AgentUsageR
 from auto_apply_app.application.repositories.free_search_usage_repo import FreeSearchUsageRepository
 from auto_apply_app.application.repositories.page_view_repo import PageViewRepository
 from auto_apply_app.application.repositories.credit_transaction_repo import CreditTransactionRepository
+from auto_apply_app.application.repositories.message_log_repo import MessageLogRepository
+from auto_apply_app.application.repositories.announcement_repo import AnnouncementRepository
 
 
 class UnitOfWork(ABC):
@@ -35,6 +37,8 @@ class UnitOfWork(ABC):
     free_search_usage_repo: FreeSearchUsageRepository
     page_view_repo: PageViewRepository
     credit_tx_repo: CreditTransactionRepository
+    message_log_repo: MessageLogRepository
+    announcement_repo: AnnouncementRepository
 
     async def __aenter__(self):
         return self

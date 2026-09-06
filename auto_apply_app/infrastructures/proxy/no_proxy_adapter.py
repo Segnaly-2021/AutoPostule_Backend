@@ -13,11 +13,11 @@ logger = logging.getLogger(__name__)
 class NoProxyAdapter(ProxyServicePort):
     """
     No-op adapter for local development and testing.
-    Returns None for every user — Playwright runs without a proxy.
+    Returns None for every run — Playwright runs without a proxy.
     """
 
     def __init__(self):
         logger.info("⚠️  NoProxyAdapter initialized — agent will run WITHOUT proxies")
 
-    def get_proxy_for_user(self, user_id: str) -> Optional[ProxyConfig]:
+    def get_proxy_for_run(self, user_id: str, session_key: str) -> Optional[ProxyConfig]:
         return None

@@ -32,6 +32,17 @@ if database_url:
     # SQLAlchemy requires 'postgresql+asyncpg://' for async connections
     if database_url.startswith("postgresql://"):
         database_url = database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        # The asyncpg dialect hands the query string straight to asyncpg.connect(),
+        # which knows 'ssl' but not libpq's 'sslmode' -- an unmigrated URL dies with
+        # "connect() got an unexpected keyword argument 'sslmode'". Same values
+        # ('require', 'prefer', 'disable', ...), so a rename is the whole fix.
+        from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
+
+        parts = urlsplit(database_url)
+        params = parse_qsl(parts.query)
+        if any(k == "sslmode" for k, _ in params):
+            params = [("ssl" if k == "sslmode" else k, v) for k, v in params]
+            database_url = urlunsplit(parts._replace(query=urlencode(params)))
     config.set_main_option("sqlalchemy.url", database_url)
 
 # 3. Import your Base and set 

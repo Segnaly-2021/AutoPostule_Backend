@@ -47,6 +47,12 @@ class CreditTxKind(Enum):
     REPLENISH = "REPLENISH"  # credits granted on checkout / invoice.paid (delta > 0)
 
 
- 
+class MessageKind(Enum):
+    """One value per lifecycle message.
 
-  
+    These strings are persisted in message_log and are half of its uniqueness
+    constraint, so renaming a member would re-send that message to everyone who
+    already received it. Add new kinds; do not rename old ones.
+    """
+    NEW_CUSTOMER_CHECKIN = "NEW_CUSTOMER_CHECKIN"    # 3 days after a plan is bought
+    FREE_ACCOUNT_REMINDER = "FREE_ACCOUNT_REMINDER"  # 3 days after a free signup

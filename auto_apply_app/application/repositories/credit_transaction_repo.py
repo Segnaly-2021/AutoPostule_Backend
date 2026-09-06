@@ -43,6 +43,18 @@ class CreditTransactionRepository(ABC):
         pass
 
     @abstractmethod
+    async def first_purchase_between(self, start: datetime, end: datetime) -> list:
+        """user_ids whose FIRST ever REPLENISH landed in [start, end).
+
+        This is the only durable 'when did they pay' evidence in the schema.
+        user_subscriptions has no created_at, and current_period_start is
+        rewritten on every renewal by start_new_cycle() -- so a month-old
+        customer looks freshly subscribed. The ledger is append-only and cannot
+        drift, and ix_credit_tx_user_created already serves the grouping.
+        """
+        pass
+
+    @abstractmethod
     async def earliest_created_at(self) -> Optional[datetime]:
         """
         Timestamp of the oldest ledger row, or None if the ledger is empty.

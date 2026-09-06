@@ -50,6 +50,15 @@ class AnalyticsPresenter(ABC):
     pass
 
 
+class AnnouncementPresenter(ABC):
+  """Announcements are already DTOs the client can render as-is -- both languages,
+  no server-side formatting -- so the only thing left to shape is the error."""
+
+  @abstractmethod
+  def present_error(self, message: str, error_code: Optional[str] = None, reason: Optional[str] = None) -> ErrorViewModel:
+    pass
+
+
 class UserPresenter(ABC):
 
   @abstractmethod

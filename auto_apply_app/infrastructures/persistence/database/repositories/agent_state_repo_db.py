@@ -44,11 +44,15 @@ class AgentStateRepoDB(AgentStateRepository):
         )
 
     async def set_shutdown(self, search_id: UUID) -> bool:
-        # Field-scoped UPDATE: only is_shutdown. Disjoint from touch_heartbeat.
+        # Field-scoped UPDATE. last_heartbeat is cleared in the SAME statement so
+        # a heartbeat racing this write cannot resurrect the run: after shutdown
+        # the agent must not read as alive, and `is_alive` is derived purely from
+        # heartbeat freshness. Without this the widget showed "Terminating..."
+        # until the last beat aged out.
         result = await self.session.execute(
             update(AgentStateDB)
             .where(AgentStateDB.search_id == search_id)
-            .values(is_shutdown=True)
+            .values(is_shutdown=True, last_heartbeat=None)
         )
         return (result.rowcount or 0) > 0
 

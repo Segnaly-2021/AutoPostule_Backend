@@ -5,7 +5,7 @@ from datetime import datetime, timezone, timedelta
 from uuid import UUID
 #from typing import Optional, Callable
 
-from auto_apply_app.application.common.result import Result, Error
+from auto_apply_app.application.common.result import Result, Error, ErrorReason
 from auto_apply_app.application.repositories.unit_of_work import UnitOfWorkFactory
 from auto_apply_app.application.service_ports.agent_port import AgentServicePort
 from auto_apply_app.application.service_ports.dispatch_port import DispatchPort
@@ -95,17 +95,62 @@ class StartJobSearchAgentUseCase:
 
                 # 2. Fetch Subscription (Authorization — tier + active status)
                 subscription = await uow.subscription_repo.get_by_user_id(str(user.id))
-                if not subscription or not subscription.can_run_agent():
+                if not subscription:
                     return Result.failure(
                         Error.unauthorized("Subscription invalid or expired")
                     )
 
-                # 3. NEW: Daily quota + cooldown check (atomic with usage row)
-                usage = await uow.agent_usage_repo.get_or_create_for_today(user.id)
-                allowed, reason = usage.can_start_run(
-                    daily_limit=subscription.agent_daily_limit,
-                    base_cooldown_minutes=subscription.agent_cooldown_base_minutes,
+                # Credits first, and named: can_run_agent() folds an empty wallet
+                # into the same 'invalid or expired' as a cancelled plan, which
+                # tells a paying user nothing about what to do next.
+                if subscription.ai_credits_balance <= 0:
+                    return Result.failure(Error.too_many_requests(
+                        message="You are out of AI credits for this billing cycle.",
+                        reason=ErrorReason.OUT_OF_CREDITS,
+                    ))
+
+                if not subscription.can_run_agent():
+                    return Result.failure(
+                        Error.unauthorized("Subscription invalid or expired")
+                    )
+
+                # Volume and daily debit are enforced HERE, before dispatch,
+                # because the mid-run check in master_agent.dispatch_submit only
+                # fires after cover letters have been generated and paid for. A
+                # user at their cap could previously start a run and burn credits
+                # on letters that could never be sent.
+                volume_used = await uow.job_repo.count_submitted_between(
+                    user_id=str(user.id),
+                    start=subscription.current_period_start,
+                    end=subscription.current_period_end,
                 )
+                if volume_used >= subscription.volume_limit:
+                    return Result.failure(Error.too_many_requests(
+                        message=(
+                            f"You have used all {subscription.volume_limit} applications "
+                            "included this billing cycle."
+                        ),
+                        reason=ErrorReason.VOLUME_EXHAUSTED,
+                        details={"used": volume_used, "limit": subscription.volume_limit},
+                    ))
+
+                daily_used = await uow.job_repo.get_daily_application_count(str(user.id))
+                if daily_used >= subscription.daily_limit:
+                    return Result.failure(Error.too_many_requests(
+                        message=(
+                            f"You have reached your daily limit of "
+                            f"{subscription.daily_limit} applications. Please try again tomorrow."
+                        ),
+                        reason=ErrorReason.DAILY_LIMIT_REACHED,
+                        details={"used": daily_used, "limit": subscription.daily_limit},
+                    ))
+
+                # # 3. NEW: Daily quota + cooldown check (atomic with usage row)
+                # usage = await uow.agent_usage_repo.get_or_create_for_today(user.id)
+                # allowed, reason = usage.can_start_run(
+                #     daily_limit=subscription.agent_daily_limit,
+                #     base_cooldown_minutes=subscription.agent_cooldown_base_minutes,
+                # )
                 # if not allowed:
                 #     return Result.failure(Error.too_many_requests(reason))
 
@@ -229,6 +274,52 @@ class ResumeJobApplicationUseCase:
                 subscription = await uow.subscription_repo.get_by_user_id(str(user.id))
                 if not subscription:
                     return Result.failure(Error.not_found("Subscription", str(user_id)))
+
+                # Resume SENDS applications, so it consumes the same allowances as a
+                # fresh run and has to be gated the same way. Previously this path
+                # only checked that a subscription EXISTED -- a Premium user whose
+                # volume, credits or daily debit had run out could still push their
+                # approved drafts out, which is the one way around the start gate.
+                #
+                # Note the drafts already exist here: the LLM cost is spent and the
+                # credits were charged when they were generated. What is being
+                # rationed at this point is the SENDING.
+                if subscription.ai_credits_balance <= 0:
+                    return Result.failure(Error.too_many_requests(
+                        message="You are out of AI credits for this billing cycle.",
+                        reason=ErrorReason.OUT_OF_CREDITS,
+                    ))
+
+                if not subscription.can_run_agent():
+                    return Result.failure(
+                        Error.unauthorized("Subscription invalid or expired")
+                    )
+
+                volume_used = await uow.job_repo.count_submitted_between(
+                    user_id=str(user.id),
+                    start=subscription.current_period_start,
+                    end=subscription.current_period_end,
+                )
+                if volume_used >= subscription.volume_limit:
+                    return Result.failure(Error.too_many_requests(
+                        message=(
+                            f"You have used all {subscription.volume_limit} applications "
+                            "included this billing cycle."
+                        ),
+                        reason=ErrorReason.VOLUME_EXHAUSTED,
+                        details={"used": volume_used, "limit": subscription.volume_limit},
+                    ))
+
+                daily_used = await uow.job_repo.get_daily_application_count(str(user.id))
+                if daily_used >= subscription.daily_limit:
+                    return Result.failure(Error.too_many_requests(
+                        message=(
+                            f"You have reached your daily limit of "
+                            f"{subscription.daily_limit} applications. Please try again tomorrow."
+                        ),
+                        reason=ErrorReason.DAILY_LIMIT_REACHED,
+                        details={"used": daily_used, "limit": subscription.daily_limit},
+                    ))
 
                 search_mission = await uow.search_repo.get(search_id)
                 if not search_mission:

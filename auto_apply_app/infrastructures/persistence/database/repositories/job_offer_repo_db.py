@@ -26,6 +26,12 @@ class JobOfferRepoDB(JobOfferRepository):
 
     async def save(self, offer: JobOffer) -> None:
         """Upsert — handles both create and status updates."""
+        # Stamp the send time on the transition to SUBMITTED, once. Not in
+        # IMMUTABLE_FIELDS because it must be writable exactly when it is still
+        # None; the `or` keeps a later re-save from moving it.
+        if offer.status == ApplicationStatus.SUBMITTED and offer.submitted_at is None:
+            offer.submitted_at = datetime.now(UTC)
+
         try:
             posting_id = offer.get_job_posting_id()
         except Exception:
@@ -47,6 +53,7 @@ class JobOfferRepoDB(JobOfferRepository):
             ranking=offer.ranking,
             job_desc=offer.job_desc,
             application_date=offer.application_date or datetime.now(UTC),
+            submitted_at=offer.submitted_at,
             followup_date=offer.followup_date,
             status=offer.status,
             has_interview=offer.has_interview,
@@ -182,6 +189,21 @@ class JobOfferRepoDB(JobOfferRepository):
         offer_db.has_interview = has_interview
         return self._map_to_entity(offer_db)
 
+
+    async def count_submitted_between(
+        self, user_id: str, start: datetime, end: datetime
+    ) -> int:
+        """Sent applications in [start, end). Served by
+        ix_job_offers_user_submitted_at."""
+        stmt = (
+            select(func.count(JobOfferDB.id))
+            .where(JobOfferDB.user_id == UUID(str(user_id)))
+            .where(JobOfferDB.status == ApplicationStatus.SUBMITTED)
+            .where(JobOfferDB.submitted_at.isnot(None))
+            .where(JobOfferDB.submitted_at >= start)
+            .where(JobOfferDB.submitted_at < end)
+        )
+        return int((await self.session.execute(stmt)).scalar_one())
 
     async def get_daily_application_count(self, user_id: str) -> int:
         """
@@ -404,6 +426,7 @@ class JobOfferRepoDB(JobOfferRepository):
             ranking=offer_db.ranking,
             job_desc=offer_db.job_desc,
             application_date=offer_db.application_date,
+            submitted_at=offer_db.submitted_at,
             followup_date=offer_db.followup_date,
             status=offer_db.status,
             has_interview=offer_db.has_interview,

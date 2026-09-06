@@ -70,9 +70,48 @@ class AgentRunner:
         self._load_resume = load_resume_ctx
 
     def _make_callback(self, sid: str):
+        """The one place that sees EVERY frame of a run, from all three workers.
+
+        That matters for the counting bands. A worker only knows its own share:
+        a board that submits its 4 of 12 reports "4/4 done" and, taken alone,
+        would drive the bar to the end of the submit band while two thirds of the
+        run is still going. No worker can fix this itself -- they are parallel
+        LangGraph branches and none of them can see the others.
+
+        So the frames carry RAW COUNTS and the percentage is recomputed here,
+        against the total across boards. Everything else passes through
+        untouched, and the frontend keeps taking Math.max, which is still correct:
+        this makes the number it receives true rather than changing how it uses it.
+        """
         broker = self._broker
+        # (band, source) -> (done, total). Per run, so it dies with the closure.
+        counts: dict = {}
 
         async def _callback(event: dict) -> None:
+            band = event.get("count_band")
+            if band and event.get("count_total"):
+                from auto_apply_app.infrastructures.agent.stage_codes import progress_for
+
+                counts[(band, event.get("source"))] = (
+                    int(event.get("count_done") or 0),
+                    int(event.get("count_total") or 0),
+                )
+                # done SUMS across boards; total does NOT. Every worker reports
+                # the same run-wide denominator (max_jobs, or the approved-offer
+                # count), so summing it would inflate as each board's first frame
+                # arrived -- which made the bar jump AND move backwards.
+                done = sum(d for (b, _), (d, _t) in counts.items() if b == band)
+                total = max(t for (b, _), (_d, t) in counts.items() if b == band)
+                event = {
+                    **event,
+                    "progress_percent": progress_for(
+                        band,
+                        event.get("progress_track") or "launch",
+                        bool(event.get("is_premium")),
+                        done=done,
+                        total=total,
+                    ),
+                }
             await broker.publish(sid, event)
 
         return _callback

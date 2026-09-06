@@ -15,22 +15,26 @@ class ProxyConfig(TypedDict):
 
 class ProxyServicePort(ABC):
     """
-    Interface for resolving a proxy configuration for a given user.
-    The Infrastructure layer must implement this (e.g. IPRoyalProxyAdapter).
-    
-    The user_id is used to derive a stable session identifier so the same
-    user always gets the same sticky exit IP across runs.
+    Interface for resolving a proxy configuration for a given run.
+    The Infrastructure layer must implement this (e.g. TwoCaptchaProxyAdapter).
+
+    The session_key derives a stable session identifier so a single run
+    (including a human-review resume of the same search) keeps the same
+    sticky exit IP, while a new run rotates to a fresh IP.
     """
-    
+
     @abstractmethod
-    def get_proxy_for_user(self, user_id: str) -> Optional[ProxyConfig]:
+    def get_proxy_for_run(self, user_id: str, session_key: str) -> Optional[ProxyConfig]:
         """
-        Returns a Playwright-compatible proxy config for this user,
+        Returns a Playwright-compatible proxy config for this run,
         or None if no proxy should be used (e.g. local development).
-        
+
         Args:
-            user_id: The user's UUID as a string.
-            
+            user_id: The user's UUID as a string (used for logging).
+            session_key: A per-run identifier (e.g. the JobSearch id as a
+                string). Same key -> same sticky exit IP; different key ->
+                a different exit IP.
+
         Returns:
             A ProxyConfig dict ready to be passed to Playwright,
             or None if no proxy is configured.

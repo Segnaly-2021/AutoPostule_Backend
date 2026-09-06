@@ -143,6 +143,21 @@ class JobOfferRepository(ABC):
         pass
 
     @abstractmethod
+    async def count_submitted_between(
+        self, user_id: str, start: datetime, end: datetime
+    ) -> int:
+        """Applications this user actually SENT in [start, end).
+
+        Counts on `submitted_at`, not `application_date`: the latter is stamped
+        at find time and is immutable, so an offer found on the last day of a
+        cycle and sent on the first day of the next would bill to the wrong one.
+
+        Used to enforce the per-cycle volume allowance, so it must not
+        over-count: rows with a NULL submitted_at were never sent.
+        """
+        pass
+
+    @abstractmethod
     async def get_daily_application_count(self, user_id: str) -> int:
         """
         Get the total number of applications submitted by the user today.
