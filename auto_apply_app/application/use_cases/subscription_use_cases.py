@@ -1,7 +1,7 @@
 import logging
 import os
 from dataclasses import dataclass
-from datetime import datetime, UTC
+from datetime import datetime, timedelta, UTC
 
 from auto_apply_app.application.common.result import Error, Result
 from auto_apply_app.application.service_ports.payment_port import PaymentPort
@@ -201,8 +201,14 @@ class HandlePaymentWebhookUseCase:
                 subscription.account_type = ClientType(account_type)                    
                 subscription.grace_days = subscription.calculate_grace_days()
                 
-                # 🚨 [NEW] Fill the user's AI wallet for their new plan!
-                subscription.replenish_credits()
+                # Fresh credits AND a fresh volume window. checkout.session
+                # carries no period dates, and the row's defaults are its
+                # creation time -- leaving them meant a new subscriber started
+                # with an already-expired period (can_run_agent reads it) and an
+                # undefined volume window. invoice.paid corrects these to the real
+                # Stripe dates moments later; this is the provisional cycle.
+                now = datetime.now(UTC)
+                subscription.start_new_cycle(now, now + timedelta(days=30))
 
             # ---------------------------------------------------------
             # SCENARIO 2: RECURRING PAYMENTS (Invoice)
@@ -231,15 +237,20 @@ class HandlePaymentWebhookUseCase:
                     stripe_start = lines[0].get("period", {}).get("start")
                     stripe_end = lines[0].get("period", {}).get("end")
                     
-                    subscription.current_period_start = datetime.fromtimestamp(stripe_start, tz=UTC) if stripe_start else None
-                    subscription.current_period_end = datetime.fromtimestamp(stripe_end, tz=UTC)
-                    subscription.next_billing_date = datetime.fromtimestamp(stripe_end, tz=UTC)
+                    # Authoritative dates from Stripe. start_new_cycle also
+                    # refills credits, so the wallet and the volume window always
+                    # move as one.
+                    subscription.start_new_cycle(
+                        datetime.fromtimestamp(stripe_start, tz=UTC) if stripe_start
+                        else datetime.now(UTC),
+                        datetime.fromtimestamp(stripe_end, tz=UTC),
+                    )
                 
                 subscription.is_active = True
                 subscription.is_past_due = False
                 
-                # 🚨 [NEW] Replenish AI wallet for the new recurring billing cycle!
-                subscription.replenish_credits()
+                # Credits were refilled by start_new_cycle above, together with
+                # the volume window.
 
             else:
                 return Result.failure(Error.system_error(f"Unhandled event type: {event_type}"))

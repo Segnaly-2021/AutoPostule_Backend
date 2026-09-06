@@ -22,10 +22,15 @@ from auto_apply_app.application.repositories.preferences_repo import UserPrefere
 from auto_apply_app.domain.entities.user_preferences import UserPreferences
 from auto_apply_app.application.repositories.board_credentials_repo import BoardCredentialsRepository
 from auto_apply_app.domain.entities.board_credentials import BoardCredential
+from auto_apply_app.application.repositories.user_fingerprint_repo import UserFingerprintRepository
 from auto_apply_app.application.repositories.page_view_repo import PageViewRepository
 from auto_apply_app.domain.entities.page_view import PageView
 from auto_apply_app.application.repositories.credit_transaction_repo import CreditTransactionRepository
 from auto_apply_app.domain.entities.credit_transaction import CreditTransaction
+from auto_apply_app.application.repositories.message_log_repo import MessageLogRepository
+from auto_apply_app.domain.value_objects import MessageKind
+from auto_apply_app.application.repositories.announcement_repo import AnnouncementRepository
+from auto_apply_app.domain.entities.announcement import Announcement
 
 class InMemoryUserRepository(UserRepository):
     """In-memory implementation of UserRepository"""
@@ -361,6 +366,21 @@ class InMemoryJobOfferRepository(JobOfferRepository):
         self._jobs[uuid_id] = job
         return job
 
+    async def count_submitted_between(self, user_id: str, start, end) -> int:
+        """Mirrors the DB adapter: sent-time window, NULLs excluded."""
+        count = 0
+        for job in self._jobs.values():
+            if str(job.user_id).strip() != str(user_id).strip():
+                continue
+            if job.status != ApplicationStatus.SUBMITTED:
+                continue
+            sent = getattr(job, 'submitted_at', None)
+            if sent is None:
+                continue
+            if start <= sent < end:
+                count += 1
+        return count
+
     async def get_daily_application_count(self, user_id: str) -> int:
         """
         Get the total number of applications submitted by the user today.
@@ -673,6 +693,15 @@ class InMemoryAuthRepository(AuthRepository):
         uuid = UUID(str(user_id)) if not isinstance(user_id, UUID) else user_id
         return self._storage.get(uuid, None)
 
+    async def list_created_between(
+        self, start: datetime, end: datetime, exclude_opted_out: bool = False
+    ) -> List[AuthUser]:
+        return [
+            auth for auth in self._storage.values()
+            if start <= auth.created_at < end
+            and not (exclude_opted_out and auth.marketing_opt_out)
+        ]
+
     async def count_created_between(self, start: datetime, end: datetime) -> int:
         return sum(
             1 for auth in self._storage.values()
@@ -844,10 +873,171 @@ class InMemoryCreditTransactionRepository(CreditTransactionRepository):
             total += -tx.delta
         return total
 
+    async def first_purchase_between(self, start: datetime, end: datetime) -> List[UUID]:
+        # Mirrors the SQL: group to each user's FIRST replenish, then window it.
+        # Filtering first and taking the min would return anyone who happened to
+        # replenish in the window, including month-old customers renewing.
+        first: Dict[UUID, datetime] = {}
+        for tx in self._transactions.values():
+            if tx.kind is not CreditTxKind.REPLENISH:
+                continue
+            seen = first.get(tx.user_id)
+            if seen is None or tx.created_at < seen:
+                first[tx.user_id] = tx.created_at
+        return [uid for uid, at in first.items() if start <= at < end]
+
     async def earliest_created_at(self) -> Optional[datetime]:
         if not self._transactions:
             return None
         return min(tx.created_at for tx in self._transactions.values())
+
+
+class InMemoryMessageLogRepository(MessageLogRepository):
+    """In-memory mirror of the send log.
+
+    The DB adapter gets its idempotency from a UNIQUE constraint; here the set
+    membership is the constraint. `record` must report the conflict the same way,
+    because callers branch on the return value rather than catching.
+    """
+
+    def __init__(self, storage: Set[Tuple[UUID, MessageKind]]) -> None:
+        self._sent = storage
+
+    async def record(self, user_id: UUID, kind: MessageKind) -> bool:
+        key = (user_id, kind)
+        if key in self._sent:
+            return False
+        self._sent.add(key)
+        return True
+
+    async def already_sent(self, user_id: UUID, kind: MessageKind) -> bool:
+        return (user_id, kind) in self._sent
+
+
+class InMemoryAnnouncementRepository(AnnouncementRepository):
+    """In-memory mirror of announcements + dismissals.
+
+    Two stores because the DB has two tables, and the interesting behaviour lives
+    in how they combine: `list_active_for_user` subtracts one from the other, and
+    getting that subtraction wrong is the bug that shows a user the same release
+    note forever.
+    """
+
+    def __init__(
+        self,
+        storage: Dict[UUID, Announcement],
+        views_storage: Set[Tuple[UUID, UUID]],
+    ) -> None:
+        self._announcements = storage
+        # (user_id, announcement_id) -- the pair IS the key, mirroring the UNIQUE.
+        self._views = views_storage
+
+    async def list_active_for_user(
+        self, user_id: UUID, moment: datetime
+    ) -> List[Announcement]:
+        live = [
+            a for a in self._announcements.values()
+            if a.is_live_at(moment) and (user_id, a.id) not in self._views
+        ]
+        live.sort(key=lambda a: a.starts_at, reverse=True)
+        return live
+
+    async def dismiss(self, user_id: UUID, announcement_id: UUID) -> bool:
+        key = (user_id, announcement_id)
+        if key in self._views:
+            return False
+        self._views.add(key)
+        return True
+
+    async def get(self, announcement_id: UUID) -> Optional[Announcement]:
+        return self._announcements.get(announcement_id)
+
+    async def list_all(self, limit: int = 100) -> List[Announcement]:
+        rows = sorted(
+            self._announcements.values(), key=lambda a: a.created_at, reverse=True
+        )
+        return rows[:limit]
+
+    async def save(self, announcement: Announcement) -> Announcement:
+        self._announcements[announcement.id] = announcement
+        return announcement
+
+    async def delete(self, announcement_id: UUID) -> bool:
+        if announcement_id not in self._announcements:
+            return False
+        del self._announcements[announcement_id]
+        # Mirrors ON DELETE CASCADE: leaving orphaned views here would let a
+        # recycled id silently start out already-dismissed.
+        for key in [k for k in self._views if k[1] == announcement_id]:
+            self._views.discard(key)
+        return True
+
+
+class InMemoryUserFingerprintRepository(UserFingerprintRepository):
+    """In-memory mirror of the persona pool.
+
+    This did not exist before, and InMemoryUnitOfWork never set
+    user_fingerprint_repo at all — so under REPOSITORY_TYPE=memory the fingerprint
+    use case raised AttributeError, the blanket except swallowed it, and every
+    local run went out unfingerprinted on one shared hardcoded UA. Wiring it means
+    dev runs now exercise the same rotation path as prod.
+    """
+
+    def __init__(self, storage: Dict[UUID, any]):
+        self._db = storage
+
+    async def list_by_user(self, user_id: UUID, include_retired: bool = False):
+        rows = [fp for fp in self._db.values() if fp.user_id == user_id]
+        if not include_retired:
+            rows = [fp for fp in rows if fp.retired_at is None]
+        return sorted(rows, key=lambda fp: fp.slot)
+
+    async def get_by_user_and_board(self, user_id: UUID, board: str):
+        rows = await self.list_by_user(user_id)
+        return next((fp for fp in rows if fp.board == board), None)
+
+    async def save(self, fingerprint):
+        # Upsert on (user_id, slot), matching the DB adapter — and keeping the
+        # existing row's id, which the cookie jar and proxy session key on.
+        existing = next(
+            (
+                fp for fp in self._db.values()
+                if fp.user_id == fingerprint.user_id and fp.slot == fingerprint.slot
+            ),
+            None,
+        )
+        if existing is not None:
+            fingerprint.id = existing.id
+            if fingerprint.created_at is None:
+                fingerprint.created_at = existing.created_at
+        self._db[fingerprint.id] = fingerprint
+        return fingerprint
+
+    async def touch_used(self, fingerprint_id: UUID) -> None:
+        fp = self._db.get(fingerprint_id)
+        if fp is not None:
+            fp.last_used_at = datetime.now(timezone.utc)
+            fp.session_count += 1
+
+    async def retire(self, fingerprint_id: UUID) -> None:
+        fp = self._db.get(fingerprint_id)
+        if fp is not None and fp.retired_at is None:
+            fp.retired_at = datetime.now(timezone.utc)
+            fp.board = None
+
+    async def purge_retired(self, user_id: UUID, keep_last: int) -> None:
+        retired = sorted(
+            [fp for fp in self._db.values()
+             if fp.user_id == user_id and fp.retired_at is not None],
+            key=lambda fp: fp.slot,
+            reverse=True,
+        )
+        for fp in retired[max(0, keep_last):]:
+            self._db.pop(fp.id, None)
+
+    async def delete(self, user_id: UUID) -> None:
+        for key in [k for k, fp in self._db.items() if fp.user_id == user_id]:
+            del self._db[key]
 
 
 class InMemoryUnitOfWork(UnitOfWork):
@@ -861,8 +1051,13 @@ class InMemoryUnitOfWork(UnitOfWork):
     _shared_prefs_db: Dict[UUID, any] = {}
     _shared_creds_db: Dict[UUID, any] = {}
 
+    _shared_fingerprints_db: Dict[UUID, any] = {}
     _shared_page_views_db: Dict[UUID, any] = {}
     _shared_credit_txs_db: Dict[UUID, any] = {}
+    # A set, not a dict: the (user_id, kind) pair IS the key, mirroring the UNIQUE.
+    _shared_message_log_db: Set[Tuple[UUID, any]] = set()
+    _shared_announcements_db: Dict[UUID, any] = {}
+    _shared_announcement_views_db: Set[Tuple[UUID, UUID]] = set()
 
     def __init__(self):
         # Reference the shared class-level storage
@@ -875,8 +1070,12 @@ class InMemoryUnitOfWork(UnitOfWork):
         self._prefs_db = self.__class__._shared_prefs_db
         self._creds_db = self.__class__._shared_creds_db
 
+        self._fingerprints_db = self.__class__._shared_fingerprints_db
         self._page_views_db = self.__class__._shared_page_views_db
         self._credit_txs_db = self.__class__._shared_credit_txs_db
+        self._message_log_db = self.__class__._shared_message_log_db
+        self._announcements_db = self.__class__._shared_announcements_db
+        self._announcement_views_db = self.__class__._shared_announcement_views_db
 
         # Snapshots for rollback
         self._users_snapshot = {}
@@ -889,8 +1088,13 @@ class InMemoryUnitOfWork(UnitOfWork):
         self._prefs_snapshot = {}
         self._creds_snapshot = {}
 
+        self._fingerprints_snapshot = {}
+        self._fingerprints_snapshot = {}
         self._page_views_snapshot = {}
         self._credit_txs_snapshot = {}
+        self._message_log_snapshot = set()
+        self._announcements_snapshot = {}
+        self._announcement_views_snapshot = set()
 
     async def __aenter__(self):
         # Debug logging
@@ -908,8 +1112,12 @@ class InMemoryUnitOfWork(UnitOfWork):
         self._prefs_snapshot = copy.deepcopy(self._prefs_db)
         self._creds_snapshot = copy.deepcopy(self._creds_db)
 
+        self._fingerprints_snapshot = copy.deepcopy(self._fingerprints_db)
         self._page_views_snapshot = copy.deepcopy(self._page_views_db)
         self._credit_txs_snapshot = copy.deepcopy(self._credit_txs_db)
+        self._message_log_snapshot = set(self._message_log_db)
+        self._announcements_snapshot = copy.deepcopy(self._announcements_db)
+        self._announcement_views_snapshot = set(self._announcement_views_db)
 
         # 2. Initialize repos with SHARED storage
         self.user_repo = InMemoryUserRepository(self._users_db)
@@ -924,9 +1132,15 @@ class InMemoryUnitOfWork(UnitOfWork):
         self.user_pref_repo = InMemoryPreferencesRepository(self._prefs_db)
         self.board_cred_repo = InMemoryCredentialsRepository(self._creds_db)
 
+        self.user_fingerprint_repo = InMemoryUserFingerprintRepository(self._fingerprints_db)
+
         # Observability
         self.page_view_repo = InMemoryPageViewRepository(self._page_views_db)
         self.credit_tx_repo = InMemoryCreditTransactionRepository(self._credit_txs_db)
+        self.message_log_repo = InMemoryMessageLogRepository(self._message_log_db)
+        self.announcement_repo = InMemoryAnnouncementRepository(
+            self._announcements_db, self._announcement_views_db
+        )
 
         return self
 
@@ -945,6 +1159,9 @@ class InMemoryUnitOfWork(UnitOfWork):
 
         self._page_views_snapshot = {}
         self._credit_txs_snapshot = {}
+        self._message_log_snapshot = set()
+        self._announcements_snapshot = {}
+        self._announcement_views_snapshot = set()
 
     async def rollback(self):
         print("[UoW DEBUG] Rolling back")
@@ -964,6 +1181,9 @@ class InMemoryUnitOfWork(UnitOfWork):
 
         self._searchs_db.clear()
         self._searchs_db.update(self._searchs_snapshot)
+
+        self._fingerprints_db.clear()
+        self._fingerprints_db.update(self._fingerprints_snapshot)
         
         # [NEW] Restore new repos
         self._prefs_db.clear()
@@ -977,6 +1197,15 @@ class InMemoryUnitOfWork(UnitOfWork):
 
         self._credit_txs_db.clear()
         self._credit_txs_db.update(self._credit_txs_snapshot)
+
+        self._message_log_db.clear()
+        self._message_log_db.update(self._message_log_snapshot)
+
+        self._announcements_db.clear()
+        self._announcements_db.update(self._announcements_snapshot)
+
+        self._announcement_views_db.clear()
+        self._announcement_views_db.update(self._announcement_views_snapshot)
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         if exc_type:
@@ -1000,3 +1229,6 @@ class InMemoryUnitOfWork(UnitOfWork):
 
         cls._shared_page_views_db.clear()
         cls._shared_credit_txs_db.clear()
+        cls._shared_message_log_db.clear()
+        cls._shared_announcements_db.clear()
+        cls._shared_announcement_views_db.clear()

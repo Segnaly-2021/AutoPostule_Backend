@@ -28,6 +28,19 @@ class AuthRepository(ABC):
         pass
 
     @abstractmethod
+    async def list_created_between(
+        self, start: datetime, end: datetime, exclude_opted_out: bool = False
+    ) -> list:
+        """Accounts created in [start, end). The list sibling of the count below.
+
+        `exclude_opted_out` drops anyone who unsubscribed -- the marketing
+        reminder must filter, the transactional check-in must not. Making it an
+        argument rather than two methods keeps the consent decision at the call
+        site, where it is visible.
+        """
+        pass
+
+    @abstractmethod
     async def count_created_between(self, start: datetime, end: datetime) -> int:
         """
         Count accounts created in [start, end).

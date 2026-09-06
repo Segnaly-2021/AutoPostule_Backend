@@ -27,7 +27,7 @@ from auto_apply_app.application.use_cases.agent_state_use_cases import (
 )
 from auto_apply_app.application.use_cases.agent_use_cases import SetSearchStatusUseCase  # NEW
 from auto_apply_app.application.use_cases.agent_usage_use_cases import CompleteAgentRunUseCase
-from auto_apply_app.application.use_cases.fingerprint_use_cases import GetOrCreateUserFingerprintUseCase
+from auto_apply_app.application.use_cases.fingerprint_use_cases import ResolveRunFingerprintUseCase
 
 from auto_apply_app.application.service_ports.encryption_port import EncryptionServicePort
 from auto_apply_app.application.service_ports.file_storage_port import FileStoragePort
@@ -48,7 +48,7 @@ def create_agent(
     set_search_status_use_case: SetSearchStatusUseCase,                 # NEW
     cleanup_unsubmitted_use_case: CleanupUnsubmittedJobsUseCase,
     get_daily_stats_use_case: GetDailyStatsUseCase,
-    get_or_create_fingerprint_use_case: GetOrCreateUserFingerprintUseCase,
+    resolve_run_fingerprint_use_case: ResolveRunFingerprintUseCase,
     proxy_service: ProxyServicePort,
 ) -> MasterAgent:
 
@@ -122,6 +122,8 @@ def create_agent(
         heartbeat=heartbeat_use_case,  # NEW
         set_search_status=set_search_status_use_case,  # NEW
         get_daily_stats=get_daily_stats_use_case,
-        get_or_create_fingerprint=get_or_create_fingerprint_use_case,
+        resolve_run_fingerprint=resolve_run_fingerprint_use_case,
         proxy_service=proxy_service,
+        # Master needs it only to drop retired personas' cookie jars.
+        session_store=session_store,
     )

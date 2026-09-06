@@ -24,9 +24,17 @@ from google.cloud.exceptions import NotFound
 logger = logging.getLogger(__name__)
 
 
-def _key(user_id, board: str) -> str:
-    # One object per (user, board). Mirrors the workers' tmp/sessions naming.
-    return f"sessions/{user_id}_{board}_session.json"
+def _key(user_id, board: str, fingerprint_id: str) -> str:
+    """One object per (user, board, DEVICE).
+
+    The jar is keyed on the persona that created it, not just on (user, board).
+    Cookies and the browser that acquired them travel together: rotating to a
+    different device finds a cold jar and logs in fresh, coming back to a device
+    finds its own warm jar, and a retired device's jar can be deleted outright.
+    Keying on (user, board) alone meant one cookie jar was replayed under every
+    fingerprint the user ever had — the exact mismatch a board looks for.
+    """
+    return f"sessions/{user_id}/{board}/{fingerprint_id}.json"
 
 
 class BrowserSessionStore:
@@ -57,11 +65,11 @@ class BrowserSessionStore:
     def _upload_sync(self, blob_name: str, data: bytes) -> None:
         self._bucket.blob(blob_name).upload_from_string(data, content_type="application/json")
 
-    async def load_to_local(self, user_id, board: str, dest_path: str) -> Optional[str]:
+    async def load_to_local(self, user_id, board: str, fingerprint_id: str, dest_path: str) -> Optional[str]:
         """Download the stored session into ``dest_path``. Returns the path on success,
         or None (no session / any error) so the caller logs in fresh. Never raises."""
         try:
-            data = await asyncio.to_thread(self._download_sync, _key(user_id, board))
+            data = await asyncio.to_thread(self._download_sync, _key(user_id, board, fingerprint_id))
             if not data:
                 return None
             if self._encryptor is not None:
@@ -74,16 +82,31 @@ class BrowserSessionStore:
             logger.warning("session load failed for %s/%s; logging in fresh", user_id, board, exc_info=True)
             return None
 
-    async def save_from_local(self, user_id, board: str, local_path: str) -> None:
+    async def save_from_local(self, user_id, board: str, fingerprint_id: str, local_path: str) -> None:
         """Upload the refreshed session. Best-effort — a save miss must not fail the run."""
         try:
             with open(local_path, "rb") as f:
                 data = f.read()
             if self._encryptor is not None:
                 data = (await self._encryptor.encrypt(data.decode("utf-8"))).encode("utf-8")
-            await asyncio.to_thread(self._upload_sync, _key(user_id, board), data)
+            await asyncio.to_thread(self._upload_sync, _key(user_id, board, fingerprint_id), data)
         except Exception:
             logger.warning("session save failed for %s/%s (non-fatal)", user_id, board, exc_info=True)
+
+    def _delete_sync(self, blob_name: str) -> None:
+        try:
+            self._bucket.blob(blob_name).delete()
+        except NotFound:
+            pass  # already gone — the desired end state either way
+
+    async def delete(self, user_id, board: str, fingerprint_id: str) -> None:
+        """Drop a retired persona's jar. Best-effort, like everything else here:
+        a failed cleanup leaves an orphaned blob, which costs storage and nothing
+        more."""
+        try:
+            await asyncio.to_thread(self._delete_sync, _key(user_id, board, fingerprint_id))
+        except Exception:
+            logger.warning("session delete failed for %s/%s (non-fatal)", user_id, board, exc_info=True)
 
     @staticmethod
     def cleanup_local(local_path: Optional[str]) -> None:

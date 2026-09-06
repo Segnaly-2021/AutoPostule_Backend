@@ -14,6 +14,7 @@ from auto_apply_app.domain.value_objects import (
     ApplicationStatus,
     SearchStatus,
     CreditTxKind,
+    MessageKind,
 )
 
 
@@ -67,8 +68,8 @@ class UserDB(Base):
         "AgentStateDB", back_populates="user",
         cascade="all, delete-orphan", passive_deletes=True,
     )
-    fingerprint: Mapped[Optional["UserFingerprintDB"]] = relationship(
-        "UserFingerprintDB", back_populates="user", uselist=False,
+    fingerprints: Mapped[List["UserFingerprintDB"]] = relationship(
+        "UserFingerprintDB", back_populates="user",
         cascade="all, delete-orphan", passive_deletes=True,
     )
 
@@ -104,6 +105,12 @@ class AuthUserDB(Base):
         onupdate=lambda: datetime.now(timezone.utc),
     )
     last_login: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Marketing consent. Only the lifecycle REMINDER honours this -- transactional
+    # mail (verification, password reset) is sent regardless, as it must be.
+    marketing_opt_out: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False
+    )
  
     # --- Email verification (code-based) ---
     verification_code_hash: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
@@ -269,6 +276,11 @@ class JobOfferDB(Base):
         DateTime(timezone=True),
         nullable=True
     )
+    # Set once, when the offer transitions to SUBMITTED. application_date above
+    # is find-time and cannot serve as a billing clock.
+    submitted_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
     followup_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[ApplicationStatus] = mapped_column(
         SQLEnum(ApplicationStatus, native_enum=False),
@@ -339,26 +351,58 @@ class FreeSearchUsageDB(Base):
     searches_count: Mapped[int] = mapped_column(Integer, default=0)
 
 class UserFingerprintDB(Base):
+    """One device persona. A user owns a small POOL of these, not one.
+
+    `user_id` is deliberately NOT unique any more — that constraint was what made
+    a fingerprint permanent per user. Uniqueness moved to (user_id, slot), which
+    is also the key the repository upserts on.
+    """
+
     __tablename__ = "user_fingerprints"
+    __table_args__ = (
+        UniqueConstraint("user_id", "slot", name="uq_user_fingerprints_user_slot"),
+    )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     user_id: Mapped[UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"),
-        unique=True,
         index=True
     )
-    user_agent: Mapped[str] = mapped_column(String(500))
+
+    # --- Pool bookkeeping ---
+    # slot: index within the user's pool. board: the job board this persona is
+    # pinned to, so that board always sees the same machine (NULL = unassigned).
+    slot: Mapped[int] = mapped_column(Integer, default=0, nullable=False, server_default=text("0"))
+    board: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)
+    session_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False, server_default=text("0"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Set instead of deleting: a retired persona must stay addressable long enough
+    # to clean up the cookie jar that was keyed on its id.
+    retired_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # --- Device identity (stable for the life of the persona) ---
+    platform: Mapped[str] = mapped_column(String(50))
+    chrome_major: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("131"))
     viewport_width: Mapped[int] = mapped_column(Integer)
     viewport_height: Mapped[int] = mapped_column(Integer)
+    screen_width: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1920"))
+    screen_height: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1080"))
     device_scale_factor: Mapped[float] = mapped_column()
     locale: Mapped[str] = mapped_column(String(20))
     timezone_id: Mapped[str] = mapped_column(String(50))
     hardware_concurrency: Mapped[int] = mapped_column(Integer)
-    platform: Mapped[str] = mapped_column(String(50))
+    device_memory: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("8"))
     webgl_vendor: Mapped[str] = mapped_column(String(100))
     webgl_renderer: Mapped[str] = mapped_column(String(255))
 
-    user: Mapped["UserDB"] = relationship("UserDB", back_populates="fingerprint")
+    # --- Noise seeds ---
+    # Persisted as the persona's baseline; the run's variant overrides them in
+    # memory and is never written back.
+    canvas_seed: Mapped[str] = mapped_column(String(64), nullable=False, server_default=text("''"))
+    audio_seed: Mapped[str] = mapped_column(String(64), nullable=False, server_default=text("''"))
+
+    user: Mapped["UserDB"] = relationship("UserDB", back_populates="fingerprints")
 
 
 class PageViewDB(Base):
@@ -430,4 +474,132 @@ class CreditTransactionDB(Base):
         index=True,
     )
 
+
+class MessageLogDB(Base):
+    """One row per lifecycle message actually delivered to a user.
+
+    The UNIQUE on (user_id, kind) is not bookkeeping -- it IS the guarantee that
+    nobody is emailed twice. The scheduled job re-selects the same cohort every
+    day it runs, and a retry, a backfill or two concurrent executions would all
+    re-send without it. Insert the row in the same transaction as the send.
+
+    Written only after the send is accepted (EmailServicePort returns bool for
+    exactly this reason): a row written on a failed send would suppress the
+    message permanently.
+    """
+
+    __tablename__ = "message_log"
+    __table_args__ = (
+        UniqueConstraint("user_id", "kind", name="uq_message_log_user_kind"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        primary_key=True, default=uuid4, server_default=text("gen_random_uuid()"),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    kind: Mapped[MessageKind] = mapped_column(SQLEnum(MessageKind, native_enum=False))
+    sent_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=func.now(),
+    )
+
+
+class AnnouncementDB(Base):
+    """An in-app notice -- a release, a new feature -- composed from the admin
+    screen and shown once per user in a modal.
+
+    In the database rather than in the code because the whole point is publishing
+    one without a deploy. Bilingual columns rather than a JSON blob: the app is
+    FR/EN throughout, and a typed column is what the admin form validates against
+    and what a missing translation fails loudly on.
+
+    is_published and the starts_at/ends_at pair are separate controls on purpose.
+    is_published is the author's switch -- it is how a half-written draft stays
+    invisible. The window is the schedule. A draft inside its window must still
+    not appear, so both are ANDed at read time.
+    """
+
+    __tablename__ = "announcements"
+
+    id: Mapped[UUID] = mapped_column(
+        primary_key=True, default=uuid4, server_default=text("gen_random_uuid()"),
+    )
+
+    title_fr: Mapped[str] = mapped_column(String(160))
+    title_en: Mapped[str] = mapped_column(String(160))
+    body_fr: Mapped[str] = mapped_column(Text)
+    body_en: Mapped[str] = mapped_column(Text)
+
+    # A notice does not have to lead anywhere. When cta_url is null the modal
+    # renders a dismiss button alone, so the labels are optional with it.
+    cta_label_fr: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    cta_label_en: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    cta_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+
+    # An emoji, stored as text. Not an enum: the set of things worth illustrating
+    # is not knowable in advance, and this is decoration, not behaviour.
+    icon: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+
+    is_published: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false()
+    )
+    starts_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=func.now(),
+    )
+    # Null means open-ended. The alternative -- a far-future sentinel -- reads as a
+    # real date in the admin list and would eventually arrive.
+    ends_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=func.now(),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class AnnouncementViewDB(Base):
+    """One row per (user, announcement) the user has dismissed.
+
+    Server-side rather than localStorage because a dismissal has to follow the
+    user across devices -- being shown the same release note again on your phone
+    reads as a bug. localStorage was only ever acceptable for anonymous visitors,
+    which is why VisitorStorage still uses it and this does not.
+
+    The UNIQUE is what makes a double-click, or a dismiss racing a reload, a
+    no-op rather than a duplicate.
+    """
+
+    __tablename__ = "announcement_views"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "announcement_id", name="uq_announcement_view_user_announcement"
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        primary_key=True, default=uuid4, server_default=text("gen_random_uuid()"),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    announcement_id: Mapped[UUID] = mapped_column(
+        ForeignKey("announcements.id", ondelete="CASCADE"), index=True
+    )
+    dismissed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=func.now(),
+    )
 

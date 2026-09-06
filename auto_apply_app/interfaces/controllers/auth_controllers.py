@@ -15,6 +15,7 @@ from auto_apply_app.application.use_cases.user_use_cases import (
     ResendVerificationEmailUseCase,
     RequestEmailChangeUseCase,
     ConfirmEmailChangeUseCase,
+    UnsubscribeUseCase,
 )
 
 from auto_apply_app.application.dtos.auth_user_dtos import (
@@ -27,6 +28,7 @@ from auto_apply_app.application.dtos.auth_user_dtos import (
     ResetPasswordRequest,
     RequestEmailChangeRequest,
     ConfirmEmailChangeRequest,
+    UnsubscribeRequest,
 )
 
 
@@ -42,6 +44,7 @@ class AuthController:
     confirm_password_reset_use_case: ConfirmPasswordResetUseCase
     request_email_change_use_case: RequestEmailChangeUseCase
     confirm_email_change_use_case: ConfirmEmailChangeUseCase
+    unsubscribe_use_case: UnsubscribeUseCase
     presenter: UserPresenter
 
     async def handle_register(
@@ -117,6 +120,19 @@ class AuthController:
         try:
             request = ForgotPasswordRequest(email=email)
             result = await self.request_password_reset_use_case.execute(request)
+
+            if result.is_success:
+                return OperationResult.succeed(value=result.value)
+
+            return self._present_error(result)
+
+        except ValueError as e:
+            return self._present_validation_exception(e)
+
+    async def handle_unsubscribe(self, token: str) -> OperationResult:
+        try:
+            request = UnsubscribeRequest(token=token)
+            result = await self.unsubscribe_use_case.execute(request)
 
             if result.is_success:
                 return OperationResult.succeed(value=result.value)

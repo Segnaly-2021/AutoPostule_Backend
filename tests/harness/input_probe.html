@@ -1,0 +1,140 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>input probe</title>
+<style>
+  body { font: 13px monospace; margin: 0; padding: 24px; background: #111; color: #eee; }
+  #pad { height: 60vh; border: 1px dashed #555; margin-bottom: 16px; padding: 12px; }
+  input, textarea { width: 100%; box-sizing: border-box; background: #000; color: #0f0;
+                    border: 1px solid #444; font: inherit; padding: 8px; margin-bottom: 8px; }
+  #target { display: inline-block; padding: 14px 22px; background: #245; border: 1px solid #48a; }
+</style>
+<div id="pad">
+  <p>Everything a board could measure about how this page is being driven.</p>
+  <span id="target">click me</span>
+</div>
+<input id="line" placeholder="single line">
+<textarea id="area" rows="3" placeholder="multi line"></textarea>
+<div style="height:200vh"></div>
+<script>
+// Deliberately records raw samples and computes nothing until asked, so the
+// act of measuring cannot smooth out what is being measured.
+window.__probe = {
+  moves: [], downs: [], ups: [], keydowns: [], keyups: [], wheels: [], clicks: 0,
+};
+
+const now = () => performance.now();
+
+// pointermove, not mousemove: getCoalescedEvents() is a PointerEvent API, and
+// the coalesced count is one of the few things a synthesized move cannot fake —
+// a real pointer polls faster than the compositor draws, so several samples
+// arrive per delivered event.
+addEventListener('pointermove', (e) => {
+  let coalesced = -1;
+  try { coalesced = e.getCoalescedEvents ? e.getCoalescedEvents().length : -1; } catch (_) {}
+  window.__probe.moves.push({
+    t: now(), x: e.clientX, y: e.clientY,
+    sx: e.screenX, sy: e.screenY,
+    mx: e.movementX, my: e.movementY,
+    trusted: e.isTrusted, coalesced,
+  });
+}, true);
+
+addEventListener('mousedown', (e) => {
+  window.__probe.downs.push({ t: now(), x: e.clientX, y: e.clientY, trusted: e.isTrusted });
+}, true);
+addEventListener('mouseup', (e) => {
+  window.__probe.ups.push({ t: now(), trusted: e.isTrusted });
+}, true);
+addEventListener('click', () => { window.__probe.clicks++; }, true);
+addEventListener('wheel', (e) => {
+  window.__probe.wheels.push({ t: now(), dy: e.deltaY, mode: e.deltaMode, trusted: e.isTrusted });
+}, true);
+addEventListener('keydown', (e) => {
+  window.__probe.keydowns.push({ t: now(), key: e.key, code: e.code, trusted: e.isTrusted });
+}, true);
+addEventListener('keyup', (e) => {
+  window.__probe.keyups.push({ t: now(), key: e.key, trusted: e.isTrusted });
+}, true);
+// A value that appears with no key events at all is what fill() looks like.
+addEventListener('input', (e) => {
+  window.__probe.lastInputType = e.inputType || null;
+}, true);
+
+window.__report = () => {
+  const p = window.__probe;
+  const diffs = (arr, get) => arr.slice(1).map((v, i) => get(v) - get(arr[i]));
+  const stats = (xs) => {
+    if (!xs.length) return null;
+    const s = [...xs].sort((a, b) => a - b);
+    const mean = xs.reduce((a, b) => a + b, 0) / xs.length;
+    const sd = Math.sqrt(xs.reduce((a, b) => a + (b - mean) ** 2, 0) / xs.length);
+    return { n: xs.length, min: s[0], p50: s[Math.floor(s.length / 2)], max: s[s.length - 1],
+             mean, sd };
+  };
+
+  // How straight was the path? Area-based curvature: mean perpendicular
+  // deviation from the straight line between first and last point, in px.
+  let curvature = null;
+  if (p.moves.length > 2) {
+    const a = p.moves[0], b = p.moves[p.moves.length - 1];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len = Math.hypot(dx, dy);
+    if (len > 1) {
+      const devs = p.moves.map(m =>
+        Math.abs((m.x - a.x) * dy - (m.y - a.y) * dx) / len);
+      curvature = devs.reduce((s, v) => s + v, 0) / devs.length;
+    }
+  }
+
+  // Key dwell (down->up for the same key) vs gap (up->next down).
+  const dwells = [], gaps = [];
+  for (const kd of p.keydowns) {
+    const ku = p.keyups.find(u => u.t > kd.t && u.key === kd.key);
+    if (ku) dwells.push(ku.t - kd.t);
+  }
+  const orderedUps = [...p.keyups].sort((x, y) => x.t - y.t);
+  for (let i = 0; i < orderedUps.length; i++) {
+    const nextDown = p.keydowns.find(d => d.t > orderedUps[i].t);
+    if (nextDown) gaps.push(nextDown.t - orderedUps[i].t);
+  }
+
+  const pressDwells = p.downs.map((d, i) => (p.ups[i] ? p.ups[i].t - d.t : null))
+                             .filter(v => v !== null);
+
+  return {
+    moveCount: p.moves.length,
+    moveDt: stats(diffs(p.moves, m => m.t)),
+    moveStep: stats(p.moves.slice(1).map((m, i) =>
+      Math.hypot(m.x - p.moves[i].x, m.y - p.moves[i].y))),
+    curvature,
+    allTrusted: [...p.moves, ...p.downs, ...p.keydowns].every(e => e.trusted),
+    // A real window sits somewhere on a screen, so screenX exceeds clientX by
+    // the window origin plus the browser chrome. Zero means the browser has no
+    // position on any screen.
+    screenOffset: p.moves.length
+      ? { x: p.moves.at(-1).sx - p.moves.at(-1).x, y: p.moves.at(-1).sy - p.moves.at(-1).y }
+      : null,
+    coalesced: stats(p.moves.map(m => m.coalesced)),
+    clicks: p.clicks,
+    pressDwell: stats(pressDwells),
+    keyCount: p.keydowns.length,
+    keyDwell: stats(dwells),
+    keyGap: stats(gaps),
+    lastInputType: p.lastInputType || null,
+    wheelCount: p.wheels.length,
+    wheelDt: stats(diffs(p.wheels, w => w.t)),
+    wheelDelta: stats(p.wheels.map(w => Math.abs(w.dy))),
+    media: {
+      hover: matchMedia('(hover: hover)').matches,
+      finePointer: matchMedia('(pointer: fine)').matches,
+      coarsePointer: matchMedia('(pointer: coarse)').matches,
+    },
+    ua: navigator.userAgent,
+    webdriver: navigator.webdriver,
+  };
+};
+
+window.__reset = () => {
+  window.__probe = { moves: [], downs: [], ups: [], keydowns: [], keyups: [], wheels: [], clicks: 0 };
+};
+</script>

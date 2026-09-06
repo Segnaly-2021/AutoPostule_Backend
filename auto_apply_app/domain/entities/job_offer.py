@@ -25,6 +25,12 @@ class JobOffer(Entity):
     clean_title: Optional[str] = field(default=None) 
     _job_posting_id : Optional[str] = field(default=None, init=False) 
     application_date: Optional[datetime] = field(default=None)
+    # When the application was actually SENT. Distinct from application_date,
+    # which is stamped when the offer is FOUND and is relied on by 30-day dedup
+    # and follow-up scheduling. Billing volume per cycle must count sends, so it
+    # needs its own timestamp: an offer found on the 30th and sent on the 1st
+    # belongs to the new cycle.
+    submitted_at: Optional[datetime] = field(default=None)
     has_interview: bool = field(default=False)
     has_response: bool = field(default=False)
     status: ApplicationStatus = field(default=ApplicationStatus.FOUND)

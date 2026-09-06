@@ -52,6 +52,24 @@ class CreditTransactionRepoDB(CreditTransactionRepository):
 
         return int((await self.session.execute(stmt)).scalar_one())
 
+    async def first_purchase_between(self, start, end) -> list:
+        """Group to each user's first REPLENISH, then keep those inside the window."""
+        first = (
+            select(
+                CreditTransactionDB.user_id,
+                func.min(CreditTransactionDB.created_at).label("first_at"),
+            )
+            .where(CreditTransactionDB.kind == CreditTxKind.REPLENISH)
+            .group_by(CreditTransactionDB.user_id)
+            .subquery()
+        )
+        stmt = (
+            select(first.c.user_id)
+            .where(first.c.first_at >= start)
+            .where(first.c.first_at < end)
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
     async def earliest_created_at(self) -> Optional[datetime]:
         stmt = select(func.min(CreditTransactionDB.created_at))
         return (await self.session.execute(stmt)).scalar_one_or_none()

@@ -38,7 +38,7 @@ from auto_apply_app.application.service_ports.rate_limiter_port import RateLimit
 from auto_apply_app.infrastructures.redis_rate_limit.redis_rate_limiter import RedisRateLimiter  # NEW
 
 # Proxy / fingerprint
-from auto_apply_app.infrastructures.proxy.iproyal_proxy_adapter import IPRoyalProxyAdapter
+from auto_apply_app.infrastructures.proxy.twocaptcha_proxy_adapter import TwoCaptchaProxyAdapter
 from auto_apply_app.infrastructures.proxy.no_proxy_adapter import NoProxyAdapter
 from auto_apply_app.infrastructures.agent.fingerprint_generator import FingerprintGenerator
 
@@ -54,6 +54,7 @@ from auto_apply_app.interfaces.presenters.base_presenter import (
     AgentStatePresenter,
     AdminPresenter,
     AnalyticsPresenter,
+    AnnouncementPresenter,
 )
 
 # Use Cases
@@ -72,6 +73,7 @@ from auto_apply_app.application.use_cases.user_use_cases import (
     VerifyCodeUseCase,  # CHANGED: was VerifyEmailUseCase
     RequestEmailChangeUseCase,
     ConfirmEmailChangeUseCase,
+    UnsubscribeUseCase,
 )
 from auto_apply_app.application.use_cases.agent_use_cases import (
     ApproveJobUseCase,
@@ -120,7 +122,7 @@ from auto_apply_app.application.use_cases.agent_usage_use_cases import CompleteA
 from auto_apply_app.application.use_cases.free_search_use_cases import FreeSearchUseCase
 
 from auto_apply_app.application.use_cases.fingerprint_use_cases import (
-    GetOrCreateUserFingerprintUseCase,
+    ResolveRunFingerprintUseCase,
 )
 
 # Controllers
@@ -134,6 +136,7 @@ from auto_apply_app.interfaces.controllers.agent_state_controllers import AgentS
 from auto_apply_app.interfaces.controllers.free_search_controller import FreeSearchController
 from auto_apply_app.interfaces.controllers.admin_controllers import AdminController
 from auto_apply_app.interfaces.controllers.analytics_controllers import AnalyticsController
+from auto_apply_app.interfaces.controllers.announcement_controllers import AnnouncementController
 
 # Observability use cases
 from auto_apply_app.application.use_cases.admin_use_cases import (
@@ -141,6 +144,13 @@ from auto_apply_app.application.use_cases.admin_use_cases import (
     GetAdminOverviewMetricsUseCase,
 )
 from auto_apply_app.application.use_cases.analytics_use_cases import RecordPageViewUseCase
+from auto_apply_app.application.use_cases.announcement_use_cases import (
+    DeleteAnnouncementUseCase,
+    DismissAnnouncementUseCase,
+    GetActiveAnnouncementsUseCase,
+    ListAnnouncementsUseCase,
+    SaveAnnouncementUseCase,
+)
 
 # Free-search infra
 from auto_apply_app.infrastructures.agent.fake_agent.create_fake_agent import create_fake_agent
@@ -149,8 +159,8 @@ from auto_apply_app.infrastructures.agent.fake_agent.create_fake_agent import cr
 def _resolve_proxy_service():
     """Resolves the proxy adapter based on the PROXY_PROVIDER env var."""
     provider = os.getenv("PROXY_PROVIDER", "none").lower()
-    if provider == "iproyal":
-        return IPRoyalProxyAdapter()
+    if provider == "twocaptcha":
+        return TwoCaptchaProxyAdapter()
     return NoProxyAdapter()
 
 
@@ -190,6 +200,7 @@ def create_application(
     free_search_presenter: FreeSearchPresenter,
     admin_presenter: AdminPresenter,
     analytics_presenter: AnalyticsPresenter,
+    announcement_presenter: AnnouncementPresenter,
 ) -> "Application":
 
     # create_repositories now returns the Redis client too — we reuse it for
@@ -219,10 +230,11 @@ def create_application(
         free_search_presenter=free_search_presenter,
         admin_presenter=admin_presenter,
         analytics_presenter=analytics_presenter,
+        announcement_presenter=announcement_presenter,
     )
 
 
-def create_worker_application() -> "Application":
+def create_worker_application(*, for_messaging: bool = False) -> "Application":
     """
     Minimal composition root for the Cloud Run Job worker (worker_main.py).
 
@@ -238,6 +250,13 @@ def create_worker_application() -> "Application":
 
     The runner is still built by Application.agent_runner — the single source of
     truth — so there is no hand-rolled use-case wiring on this path.
+
+    `for_messaging=True` is the messaging_main.py path, which needs two more
+    adapters: the email sender, and a token provider to sign unsubscribe links.
+    It is a flag rather than the default precisely because of the paragraph above —
+    JwtTokenProvider raises without JWT_SECRET, so building it unconditionally
+    would crash the agent Job at startup. The messaging Job does set JWT_SECRET;
+    it has to, since the links it signs are verified by the API.
     """
     from auto_apply_app.infrastructures.config import Config
     from auto_apply_app.infrastructures.resume_storage.gcs_storage_adapter import (
@@ -248,6 +267,19 @@ def create_worker_application() -> "Application":
     )
 
     token_repo, uow_factory, redis_client = create_repositories()
+
+    email_service_port = None
+    token_provider = None
+    if for_messaging:
+        from auto_apply_app.infrastructures.emailing_service.resend_email_service import (
+            ResendEmailService,
+        )
+        from auto_apply_app.infrastructures.authentication.token_provider import (
+            JwtTokenProvider,
+        )
+
+        email_service_port = ResendEmailService()
+        token_provider = JwtTokenProvider()
 
     return Application(
         token_repo=token_repo,
@@ -260,9 +292,9 @@ def create_worker_application() -> "Application":
         # Web-only ports/presenters — unused by the agent run path, left as None
         # so we never construct adapters that require absent web env vars.
         password_service=None,
-        token_provider=None,
+        token_provider=token_provider,
         payment_port=None,
-        email_service_port=None,
+        email_service_port=email_service_port,
         captcha_port=None,
         user_presenter=None,
         job_presenter=None,
@@ -274,6 +306,7 @@ def create_worker_application() -> "Application":
         free_search_presenter=None,
         admin_presenter=None,
         analytics_presenter=None,
+        announcement_presenter=None,
     )
 
 
@@ -311,6 +344,7 @@ class Application:
     # HTTP, does not have to construct web presenters it will never use.
     admin_presenter: Optional[AdminPresenter] = None
     analytics_presenter: Optional[AnalyticsPresenter] = None
+    announcement_presenter: Optional[AnnouncementPresenter] = None
 
     # =========================================================================
     # SINGLETONS (Phase A decoupling)
@@ -330,7 +364,7 @@ class Application:
     def _agent_service(self):
         uowf = self.uow_factory                      # pass the FACTORY, not a resolved instance
         proxy_service = _resolve_proxy_service()
-        get_or_create_fingerprint_uc = GetOrCreateUserFingerprintUseCase(
+        resolve_run_fingerprint_uc = ResolveRunFingerprintUseCase(
             uow_factory=uowf, generator=FingerprintGenerator(),
         )
         return create_agent(
@@ -347,7 +381,7 @@ class Application:
             set_search_status_use_case=SetSearchStatusUseCase(uowf),
             get_daily_stats_use_case=GetDailyStatsUseCase(uowf),
             cleanup_unsubmitted_use_case=CleanupUnsubmittedJobsUseCase(uowf),
-            get_or_create_fingerprint_use_case=get_or_create_fingerprint_uc,
+            resolve_run_fingerprint_use_case=resolve_run_fingerprint_uc,
             proxy_service=proxy_service,
         )
 
@@ -449,6 +483,10 @@ class Application:
                 payment_port=self.payment_port,
                 email_service=self.email_service_port,
             ),
+            unsubscribe_use_case=UnsubscribeUseCase(
+                uow_factory=self.uow_factory,
+                token_provider=self.token_provider,
+            ),
             presenter=self.user_presenter,
         )
 
@@ -542,4 +580,15 @@ class Application:
         return AnalyticsController(
             record_page_view_use_case=RecordPageViewUseCase(self.uow_factory),
             analytics_presenter=self.analytics_presenter,
+        )
+
+    @property
+    def announcement_controller(self) -> AnnouncementController:
+        return AnnouncementController(
+            get_active_use_case=GetActiveAnnouncementsUseCase(self.uow_factory),
+            dismiss_use_case=DismissAnnouncementUseCase(self.uow_factory),
+            list_use_case=ListAnnouncementsUseCase(self.uow_factory),
+            save_use_case=SaveAnnouncementUseCase(self.uow_factory),
+            delete_use_case=DeleteAnnouncementUseCase(self.uow_factory),
+            presenter=self.announcement_presenter,
         )

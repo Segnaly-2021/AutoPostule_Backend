@@ -14,6 +14,8 @@ from auto_apply_app.infrastructures.persistence.database.repositories.agent_usag
 from auto_apply_app.infrastructures.persistence.database.repositories.free_search_usage_repo_db import FreeSearchUsageRepoDB
 from auto_apply_app.infrastructures.persistence.database.repositories.page_view_repo_db import PageViewRepoDB
 from auto_apply_app.infrastructures.persistence.database.repositories.credit_transaction_repo_db import CreditTransactionRepoDB
+from auto_apply_app.infrastructures.persistence.database.repositories.message_log_repo_db import MessageLogRepoDB
+from auto_apply_app.infrastructures.persistence.database.repositories.announcement_repo_db import AnnouncementRepoDB
 
 
 class SqlAlchemyUnitOfWork(UnitOfWork):
@@ -41,6 +43,8 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         # Observability
         self.page_view_repo = PageViewRepoDB(self.session)
         self.credit_tx_repo = CreditTransactionRepoDB(self.session)
+        self.message_log_repo = MessageLogRepoDB(self.session)
+        self.announcement_repo = AnnouncementRepoDB(self.session)
 
         return self
 

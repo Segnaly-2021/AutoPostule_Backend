@@ -136,6 +136,8 @@ async def start_job_search_agent_stream(
             return
 
         # 4. RELAY until the sentinel ends the iterator.
+        # work needs: did the SERVER end the stream or did the CLIENT vanish,
+        # and how long / how many frames did it survive before that?
         async for frame in frames:
             if frame is None:
                 yield ": heartbeat\n\n"
@@ -211,6 +213,8 @@ async def resume_job_search_agent_stream(
             return
 
         # 4. RELAY until the sentinel ends the iterator.
+        # work needs: did the SERVER end the stream or did the CLIENT vanish,
+        # and how long / how many frames did it survive before that?
         async for frame in frames:
             if frame is None:
                 yield ": heartbeat\n\n"

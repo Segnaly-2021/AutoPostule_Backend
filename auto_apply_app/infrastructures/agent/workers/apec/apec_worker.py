@@ -3,6 +3,8 @@ import asyncio
 import hashlib
 import logging
 import os
+import random
+import time
 from datetime import datetime
 from typing import Optional
 from langgraph.graph import StateGraph, END
@@ -21,6 +23,10 @@ from auto_apply_app.application.use_cases.agent_state_use_cases import (
     HeartbeatAgentForSearchUseCase,
 )
 from auto_apply_app.infrastructures.agent.state import JobApplicationState
+from auto_apply_app.infrastructures.agent.pacing import HumanPacing, Tier
+from auto_apply_app.infrastructures.agent.fingerprint_alignment import (
+    align_fingerprint_to_browser,
+)
 from auto_apply_app.infrastructures.agent.stage_codes import StageCode
 from auto_apply_app.application.use_cases.agent_use_cases import (
     GetIgnoredHashesUseCase,
@@ -33,13 +39,54 @@ from auto_apply_app.infrastructures.agent.human_behavior import (
     human_delay,
     human_type,
     human_click,
+    human_hover,
     human_warmup,
+    human_scroll,
+    human_read_page,
+    human_idle_drift,
+    human_scan_list,
+    human_long_pause,
+    should_take_break,
+    plan_card_visit_order,
+    should_hover_without_clicking,
+    reset_mouse_state,
 )
+
+# Pacing now lives in agent/pacing.py, shared with WTTJ and HelloWork.
+# APEC_HUMAN_PACE / APEC_HUMAN_BUDGET_S still override the global
+# AGENT_HUMAN_PACE / AGENT_HUMAN_BUDGET_S for this board alone.
 
 logger = logging.getLogger(__name__)
 
 
-class ApecWorker():
+def _chromium_launch_kwargs(headless: bool) -> dict:
+    """Launch options for APEC's browser.
+
+    APEC only, for now: APEC_BROWSER_CHANNEL swaps Playwright's bundled
+    Chromium for a real installed browser ("chrome" / "msedge"). A stock Chrome
+    build carries things the open-source Chromium bundle simply does not —
+    proprietary codecs, real branding, the widevine module — and those are
+    cheap for a board to check.
+
+    Unset by default, and it has to stay that way for deploys: the worker image
+    (Dockerfile.worker) installs Chromium only, so a channel that isn't present
+    fails at launch. Set it in a local .env to test, not in the Cloud Run env.
+    """
+    kwargs = {
+        "headless": headless,
+        "args": ['--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage'],
+    }
+    channel = os.getenv("APEC_BROWSER_CHANNEL", "").strip()
+    if channel:
+        kwargs["channel"] = channel
+    return kwargs
+
+
+class ApecWorker(HumanPacing):
+
+    # Reading band for this board: 50-150s.
+    _READ_BAND_S = (50.0, 150.0)
+    _READ_LONG_CHARS = 7200
 
     # CLASS CONSTANT: Single source of truth for the job card selector
     CARD_SELECTOR = 'div[class*="card card-offer mb-20 card--clickable"]'
@@ -75,9 +122,18 @@ class ApecWorker():
         # Progress callback (set per-run by master)
         self._progress_callback = None
         self._source_name = "APEC"
+        # Canonical board key. Indexes this worker's slice of the per-board
+        # fingerprint and proxy maps the master builds.
+        self._board_key = "apec"
+        # The persona this run is wearing. Cookie jars are keyed on it, so a
+        # jar can never be replayed under a different device.
+        self._fingerprint_id: Optional[str] = None
 
         # Current user id for print logging (set at node entry)
         self._uid = "unknown"
+
+        # Human pacing (shared mixin; APEC_* env vars override the global knobs)
+        self._init_pacing("APEC")
 
     # =========================================================================
     # HELPERS
@@ -129,6 +185,10 @@ class ApecWorker():
         error: str = None,
         error_code: str = None,
         stage_code: str = None,
+        progress_percent: int = None,
+        count_band: str = None,
+        count_done: int = None,
+        count_total: int = None,
     ):
         if not self._progress_callback:
             return
@@ -143,6 +203,18 @@ class ApecWorker():
                 "error": error,
                 "error_code": error_code or ("SYSTEMERROR" if error else None),
                 "search_id": search_id,
+                "progress_percent": progress_percent,
+                # Raw counts for the counting bands. AgentRunner sums these
+                # across boards and rewrites progress_percent, because this
+                # worker only knows its own share of the total.
+                "count_band": count_band,
+                "count_done": count_done,
+                "count_total": count_total,
+                "progress_track": ("submit" if state.get("action_intent") == "SUBMIT"
+                                   else "launch"),
+                "is_premium": getattr(
+                    getattr(state.get("subscription"), "account_type", None),
+                    "name", "") == "PREMIUM",
             })
         except Exception:
             logger.exception("[APEC] Progress emit failed")
@@ -156,9 +228,16 @@ class ApecWorker():
         return hashlib.md5(raw_string.encode()).hexdigest()
 
     def _get_session_file_path(self, user_id: str) -> str:
+        """Local path for this run's cookie jar.
+
+        Scoped by persona: the jar belongs to the device that acquired it, so
+        rotating to another device cannot pick up the previous one's cookies.
+        Falls back to "nofp" only when no fingerprint resolved at all.
+        """
         directory = os.path.join(os.getcwd(), "tmp", "sessions")
         os.makedirs(directory, exist_ok=True)
-        return os.path.join(directory, f"{user_id}_apec_session.json")
+        fp = self._fingerprint_id or "nofp"
+        return os.path.join(directory, f"{user_id}_apec_{fp}_session.json")
 
     async def _save_auth_state(self, user_id: str):
         if self.context:
@@ -168,7 +247,7 @@ class ApecWorker():
             self._plog("session cookies saved to disk", user_id)
             # C-2: mirror the refreshed session to GCS (best-effort, never fatal).
             if self.session_store:
-                await self.session_store.save_from_local(user_id, "apec", path)
+                await self.session_store.save_from_local(user_id, "apec", self._fingerprint_id or "nofp", path)
 
     def _get_auth_state_path(self, user_id: str) -> str | None:
         path = self._get_session_file_path(user_id)
@@ -178,20 +257,26 @@ class ApecWorker():
 
     async def _handle_cookies(self):
         try:
-            await self.page.wait_for_selector('button:has-text("Refuser tous les cookies")', state='attached', timeout=5000)
+            await self.page.wait_for_selector('button:has-text("Refuser tous les cookies")', state='attached', timeout=15000)
             cookie_btn = self.page.locator('button:has-text("Refuser tous les cookies")')
             if await cookie_btn.count() > 0:
                 self._plog("cookie banner detected -> refusing all cookies")
                 await human_delay(300, 800)
-                await cookie_btn.click()
+                await human_click(cookie_btn)
         except Exception:
             logger.debug("[APEC] No cookies popup")
 
     async def force_cleanup(self):
         logger.info("[APEC] Force cleanup initiated")
         self._plog("force cleanup initiated")
+
+        # Before the page goes: the input backend is registered against it, and
+        # the Xvfb it may be driving outlives the browser unless stopped here.
+        await self._close_display()
+
         try:
             if self.page:
+                reset_mouse_state(self.page)
                 await self.page.close()
                 self.page = None
         except Exception:
@@ -268,23 +353,72 @@ class ApecWorker():
         )
 
     # --- HELPER: Nav Back ---
-    async def nav_back(self, url: str):
-        self._plog("navigating back to results page")
-        await self.page.goto(url, wait_until="networkidle")
+    # Back-button anchor on the interstitial APEC lands on after a browser Back
+    # from an offer. It is not the results page; it is the page that links to it.
+    RESULTS_BACK_LINK = 'a[class="backButton d-flex"]'
+
+    async def nav_back(self, at_redir_page: bool = False, has_back_button: bool = False):
+        """Return to the results list.
+
+        Two independent steps, because APEC puts up to two pages between an offer
+        and the list it came from.
+
+        `at_redir_page` says the current page is a redirect interstitial rather
+        than the offer, so one step back is spent leaving it. If the back link is
+        still not visible afterwards, a second step back is taken — the depth of
+        that stack varies with how the offer was opened.
+
+        `has_back_button` says the page we land on carries
+        `a[class="backButton d-flex"]`, which is what actually returns to the
+        results list; it is clicked through the OS-level pointer like any other
+        element.
+
+        Both default to False, and the card check at the end is the arbiter
+        either way — it is what decides whether the results are really back.
+        """
+        if at_redir_page:
+            self._plog("navigating back to results page (browser back)")
+            await self.page.go_back(wait_until="networkidle")
+            await asyncio.sleep(random.uniform(3.0, 5.0))  # settle after the Back
+            try:
+                self._plog("Checking if back button is visible")
+                back_link = self.page.locator(self.RESULTS_BACK_LINK)
+                await back_link.wait_for(state="visible", timeout=10000)
+            except Exception:
+                self._plog("Back button not found after browser back -> getting one page back in history") 
+                await self.page.go_back(wait_until="networkidle")   
+
+
+        if has_back_button:
+            # The Back button lands on the interstitial, not the results. The
+            # link out of it is what actually returns to the list.
+            try:
+                back_link = self.page.locator(self.RESULTS_BACK_LINK)
+                await back_link.wait_for(state="visible", timeout=35000)
+                self._plog("following the back link to the results list")
+                await self._click(back_link)
+                await self.page.wait_for_load_state("networkidle")
+            except Exception:
+                # No interstitial this time — either Back already landed on the
+                # results, or the page changed shape. The card check below is the
+                # real arbiter either way, and it has its own recovery.
+                self._plog("no back link found -> checking whether the results are already up")
+                logger.info("[APEC] No '%s' after browser back", self.RESULTS_BACK_LINK)
+
+       
 
         try:
-            await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=10000)
+            await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=45000)
             await human_delay(1000, 2500)
             await self._handle_cookies()
         except Exception:
-            logger.warning("[APEC] Cards didn't reappear after going back. Reloading...")
-            self._plog("cards missing after nav back -> reloading page")
-            await self.page.reload(wait_until="networkidle")
+            logger.warning("[APEC] Cards didn't reappear after going back. Waiting again...")
+            self._plog("cards missing after nav back -> waiting once more")
             try:
                 await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=10000)
             except Exception:
-                logger.warning("[APEC] Cards still not visible after reload. Page state may be broken.")
-                self._plog("cards still missing after reload -> page state may be broken")
+                logger.warning("[APEC] Cards still not visible. Page state may be broken.")
+                self._plog("cards still missing -> page state may be broken")
             await self._handle_cookies()
 
     # --- HELPER: Handle Pagination ---
@@ -307,20 +441,23 @@ class ApecWorker():
 
             logger.info("[APEC] Moving to page %s...", page_number + 1)
             self._plog(f"pagination -> moving to page {page_number + 1}")
-            await human_delay(1500, 3500)
+            await human_delay(2500, 5500)
 
             for attempt in range(3):
                 try:
-                    await next_button.click()
+                    await human_click(next_button)
                     await self.page.wait_for_load_state("domcontentloaded")
                     await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=10000)
+                    # Settle on the new page before scanning it.
+                    await human_idle_drift(self.page)
                     break
-                except Exception:
+                except Exception as e:
+                    detail = f"{type(e).__name__}: {str(e).splitlines()[0][:200]}"
                     if attempt == 2:
                         logger.exception("[APEC] Pagination failed after 3 attempts")
-                        self._plog("pagination click failed after 3 attempts -> stopping pagination")
+                        self._plog(f"pagination click failed after 3 attempts -> stopping pagination ({detail})")
                         return False
-                    self._plog(f"pagination click attempt {attempt + 1} failed -> retrying")
+                    self._plog(f"pagination click attempt {attempt + 1} failed -> retrying ({detail})")
                     await asyncio.sleep(2 ** attempt)
 
             await self._handle_cookies()
@@ -332,7 +469,7 @@ class ApecWorker():
             return False
 
     # --- HELPER: Apply APEC Advanced Filters ---
-    async def _apply_filters(self, job_title: str, contract_types: list[ContractType], min_salary: int):
+    async def _apply_filters(self, state: JobApplicationState, job_title: str, contract_types: list[ContractType], min_salary: int):
         logger.info("[APEC] Applying advanced filters")
         self._plog(f"opening advanced search to filter on '{job_title}'")
         try:
@@ -353,7 +490,13 @@ class ApecWorker():
 
             await self.page.wait_for_selector('input[id="keywords"]', state="visible", timeout=15000)
             self._plog(f"typing keywords: '{job_title}'")
+            await self._micro()
             await human_type(self.page.locator('input[id="keywords"]'), job_title)
+
+            # A person glances down the rest of the form before filling it in.
+            await human_delay(600, 1400)
+            await human_scroll(self.page, distance=random.randint(150, 350))
+            await self._pause(state, 0.8, 2.2, tier=Tier.SCROLL)
 
             contract_map = {
                 "CDI": "101888",
@@ -382,34 +525,57 @@ class ApecWorker():
                     val = contract_map.get(str(contract.value), None)
                     if val:
                         self._plog(f"selecting contract type: {contract.value}")
-                        await self.page.locator('select[formcontrolname="typesContrat"]').scroll_into_view_if_needed()
-                        await human_delay(400, 900)
-                        await self.page.select_option('select[formcontrolname="typesContrat"]', value=val)
+                        await human_delay(700, 1600)
+                        await self._select(
+                            self.page.locator('select[formcontrolname="typesContrat"]'), val
+                        )
                         break
 
             if min_salary > 0:
-                await self.page.locator('apec-slider input.pull-left').scroll_into_view_if_needed()
                 salary_input = self.page.locator('apec-slider input.pull-left')
+                await self._scroll_to(salary_input)
                 if await salary_input.count() > 0:
                     salary_k = str(min_salary // 1000) if min_salary >= 1000 else str(min_salary)
                     self._plog(f"setting minimum salary: {salary_k}k")
-                    await human_delay(300, 700)
+                    await human_delay(700, 1600)
                     await human_type(salary_input, salary_k)
 
-            await human_delay(800, 1800)
-            self._plog("clicking RECHERCHER button")
-            for attempt in range(3):
-                try:
-                    await self.page.locator('button:has-text("RECHERCHER")').click()
-                    break
-                except Exception:
-                    if attempt == 2:
-                        raise
-                    await asyncio.sleep(2 ** attempt)
+            # Look over the filters before firing the search.
+            await self._pause(state, 2.0, 5.0, tier=Tier.NAV)
+
+            # Submit from the keyboard, the way someone who just typed the
+            # keywords would: focus the field and hit Enter. Reaching across the
+            # page to click the button is the rarer behaviour of the two, and it
+            # is a mouse trajectory we would otherwise have to justify.
+            # The button stays as the fallback — Enter is not guaranteed to
+            # submit this Angular form, and a search that never fires is worse
+            # than a click.
+            submitted = False
+            try:
+                self._plog("submitting search with Enter from the keywords field")
+                keywords = self.page.locator('input[id="keywords"]')
+                await self._click(keywords, hesitation=False)
+                await self._micro()
+                await self._press("Enter", locator=keywords)
+                await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=15000)
+                submitted = True
+            except Exception:
+                self._plog("Enter did not submit the form -> falling back to the RECHERCHER button")
+
+            if not submitted:
+                for attempt in range(3):
+                    try:
+                        await human_click(self.page.locator('button:has-text("RECHERCHER")'))
+                        break
+                    except Exception:
+                        if attempt == 2:
+                            raise
+                        await asyncio.sleep(2 ** attempt)
 
             await self.page.wait_for_load_state("networkidle")
             await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=15000)
             self._plog("filters applied -> results page loaded")
+            await self._settle(state, "results loaded")
 
         except Exception:
             logger.exception("[APEC] Error applying filters")
@@ -484,7 +650,7 @@ class ApecWorker():
                     await human_type(self.page.locator('input[id="password"]'), pass_plain)
                     await human_delay(600, 1500)
                     await self.page.wait_for_selector('button[type="submit"][value="Login"]', state="visible", timeout=10000)
-                    await self.page.locator('button[type="submit"][value="Login"]').first.click()
+                    await human_click(self.page.locator('button[type="submit"][value="Login"]').first)
                     self._plog("re-login: credentials submitted")
                     break
                 except Exception:
@@ -527,49 +693,89 @@ class ApecWorker():
 
     # --- NODE 1: Start Session (SCRAPE track) ---
     async def start_session(self, state: JobApplicationState):
-        await self._emit(state, "Initializing Browser", stage_code=StageCode.INITIALIZING_BROWSER)
+        await self._emit(state, "Initializing Browser", stage_code=StageCode.INITIALIZING_BROWSER, progress_percent=self._progress(state, "start"))
         await self._beat(state)
         logger.info("[APEC] Starting session")
         self._uid = str(state["user"].id)
+        self._start_pacing(state.get("run_token"))
         self._plog("NODE start_session -> launching stealth browser (SCRAPE track)")
+        self._plog(f"browser: {os.getenv('APEC_BROWSER_CHANNEL') or 'bundled chromium'}")
         preferences = state["preferences"]
 
-        fingerprint = state.get("user_fingerprint")
-        #proxy_config = state.get("proxy_config")
+        fingerprint = (state.get("user_fingerprints") or {}).get(self._board_key)
+        proxy_config = (state.get("proxy_configs") or {}).get(self._board_key)
+        # Record the persona BEFORE any session path is built — _get_session_file_path
+        # reads it, and a stale value would point at another device's cookie jar.
+        self._fingerprint_id = str(fingerprint.id) if fingerprint else None
 
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless= preferences.browser_headless,
-                args=['--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage'],
+                **await self._browser_launch_kwargs(
+                    _chromium_launch_kwargs(preferences.run_browser_headless), fingerprint
+                )
             )
+            fingerprint = align_fingerprint_to_browser(
+                fingerprint, self.browser.version, self._plog
+            )
+            fingerprint = self._fit_to_display(fingerprint)
 
             context_kwargs = {}
             if fingerprint:
                 self._plog("applying user fingerprint to browser context")
                 context_kwargs.update(fingerprint.to_playwright_context_args())
             else:
-                self._plog("no fingerprint provided -> using default user agent")
-                context_kwargs["user_agent"] = (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-                )
+                # No fingerprint resolved. Every such run shares one identity, so
+                # this is a degraded path, not a normal one — log it loudly.
+                self._plog("NO FINGERPRINT RESOLVED -> falling back to a shared default identity")
+                logger.warning("[%s] running without a fingerprint", self._source_name)
 
-            # if proxy_config:
-            #     context_kwargs["proxy"] = {
-            #         "server": proxy_config["server"],
-            #         "username": proxy_config["username"],
-            #         "password": proxy_config["password"],
-            #     }
+            if proxy_config:
+                self._plog("routing browser context through proxy")
+                context_kwargs["proxy"] = {
+                    "server": proxy_config["server"],
+                    "username": proxy_config["username"],
+                    "password": proxy_config["password"],
+                }
 
             self.context = await self.browser.new_context(**context_kwargs)
+            await self._suppress_popups(self.context)
+            # No other context.route on this worker, so registration order is
+            # unconstrained here -- unlike HelloWork, see the note there.
+            await self._conserve_bandwidth(self.context)
+
+            # await self.context.add_init_script("""
+            #     // Override webdriver flag
+            #     Object.defineProperty(navigator, 'webdriver', {
+            #         get: () => undefined,
+            #     });
+
+            #     // Fake plugins
+            #     Object.defineProperty(navigator, 'plugins', {
+            #         get: () => [1, 2, 3, 4, 5],
+            #     });
+
+            #     // Fake chrome.runtime
+            #     if (!window.chrome) {
+            #         window.chrome = {};
+            #     }
+
+            #     if (!window.chrome.runtime) {
+            #         window.chrome.runtime = {};
+            #     }
+            # """)
+
+            # Stealth FIRST, fingerprint SECOND. playwright_stealth registers its
+            # own WebGL getParameter patch hardcoded to "Intel Inc." / "Intel Iris
+            # OpenGL Engine"; init scripts run in registration order, so applying
+            # it after ours silently replaced the persona's GPU on every run.
+            stealth = Stealth()
+            await stealth.apply_stealth_async(self.context)
 
             if fingerprint:
                 await self.context.add_init_script(fingerprint.to_init_script())
-
-            stealth = Stealth()
-            await stealth.apply_stealth_async(self.context)
             self.page = await self.context.new_page()
+            await self._mount_input()
 
             self._plog("browser session ready")
             return {}
@@ -579,43 +785,51 @@ class ApecWorker():
             return {"error": "Failed to start the secure browsing session. Our servers might be under heavy load, please try again."}
 
     async def start_session_with_auth(self, state: JobApplicationState):
-        await self._emit(state, "Initializing Secure Browser", stage_code=StageCode.INITIALIZING_BROWSER)
+        await self._emit(state, "Initializing Secure Browser", stage_code=StageCode.INITIALIZING_BROWSER, progress_percent=self._progress(state, "start_with_session"))
         await self._beat(state)
         logger.info("[APEC] Booting browser (session injection)")
         user_id = str(state["user"].id)
         self._uid = user_id
+        self._start_pacing(state.get("run_token"))
         self._plog("NODE start_session_with_auth -> booting browser (SUBMIT track)")
 
-        fingerprint = state.get("user_fingerprint")
+        fingerprint = (state.get("user_fingerprints") or {}).get(self._board_key)
+        proxy_config = (state.get("proxy_configs") or {}).get(self._board_key)
+        # Record the persona BEFORE any session path is built — _get_session_file_path
+        # reads it, and a stale value would point at another device's cookie jar.
+        self._fingerprint_id = str(fingerprint.id) if fingerprint else None
 
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless=state["preferences"].browser_headless,
-                args=['--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage'],
+                **await self._browser_launch_kwargs(
+                    _chromium_launch_kwargs(state["preferences"].run_browser_headless),
+                    fingerprint,
+                )
             )
+            fingerprint = align_fingerprint_to_browser(
+                fingerprint, self.browser.version, self._plog
+            )
+            fingerprint = self._fit_to_display(fingerprint)
 
             # C-2: pull the durable session from GCS into the local path first, so
             # _get_auth_state_path finds it. No session / any error -> logs in fresh.
             if self.session_store:
                 await self.session_store.load_to_local(
-                    user_id, "apec", self._get_session_file_path(user_id)
+                    user_id, "apec", self._fingerprint_id or "nofp",
+                    self._get_session_file_path(user_id)
                 )
             session_path = self._get_auth_state_path(user_id)
 
             context_kwargs = {}
             if fingerprint:
+                # One source for both tracks. The auth track used to bolt on
+                # device_scale_factor/has_touch/is_mobile that the scrape track
+                # lacked, so a single run presented two different contexts.
                 context_kwargs.update(fingerprint.to_playwright_context_args())
-                context_kwargs.update({
-                    "device_scale_factor": fingerprint.device_scale_factor,
-                    "has_touch": False,
-                    "is_mobile": False,
-                })
             else:
-                context_kwargs["user_agent"] = (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-                )
+                self._plog("NO FINGERPRINT RESOLVED -> falling back to a shared default identity")
+                logger.warning("[%s] running without a fingerprint", self._source_name)
 
             if session_path:
                 logger.info("[APEC] Found saved session for user. Injecting cookies.")
@@ -625,14 +839,31 @@ class ApecWorker():
                 logger.info("[APEC] No session found. Booting fresh context.")
                 self._plog("no saved session -> booting fresh context")
 
+            if proxy_config:
+                self._plog("routing browser context through proxy")
+                context_kwargs["proxy"] = {
+                    "server": proxy_config["server"],
+                    "username": proxy_config["username"],
+                    "password": proxy_config["password"],
+                }
+
             self.context = await self.browser.new_context(**context_kwargs)
+            await self._suppress_popups(self.context)
+            # No other context.route on this worker, so registration order is
+            # unconstrained here -- unlike HelloWork, see the note there.
+            await self._conserve_bandwidth(self.context)
+
+            # Stealth FIRST, fingerprint SECOND. playwright_stealth registers its
+            # own WebGL getParameter patch hardcoded to "Intel Inc." / "Intel Iris
+            # OpenGL Engine"; init scripts run in registration order, so applying
+            # it after ours silently replaced the persona's GPU on every run.
+            stealth = Stealth()
+            await stealth.apply_stealth_async(self.context)
 
             if fingerprint:
                 await self.context.add_init_script(fingerprint.to_init_script())
-
-            stealth = Stealth()
-            await stealth.apply_stealth_async(self.context)
             self.page = await self.context.new_page()
+            await self._mount_input()
 
             self._plog("navigating to apec.fr homepage")
             for attempt in range(3):
@@ -640,12 +871,13 @@ class ApecWorker():
                     await self.page.goto(self.base_url, wait_until="networkidle", timeout=90000)
                     await self.page.wait_for_selector('div[class="card-title"] h2:has-text("Je suis candidat")', state="visible", timeout=45000)
                     break
-                except Exception:
+                except Exception as e:
+                    detail = f"{type(e).__name__}: {str(e).splitlines()[0][:200]}"
                     if attempt == 2:
                         logger.exception("[APEC] Auth boot failed after 3 attempts")
-                        self._plog("homepage unreachable after 3 attempts -> aborting")
+                        self._plog(f"homepage unreachable after 3 attempts -> aborting ({detail})")
                         return {"error": "Failed to reach APEC after multiple attempts."}
-                    self._plog(f"homepage load attempt {attempt + 1} failed -> retrying")
+                    self._plog(f"homepage load attempt {attempt + 1} failed -> retrying ({detail})")
                     await asyncio.sleep(2 ** attempt)
 
             await self._handle_cookies()
@@ -677,7 +909,7 @@ class ApecWorker():
             min_salary = getattr(search_entity, 'min_salary', 0)
 
             try:
-                await self._apply_filters(job_title, contract_types, min_salary)
+                await self._apply_filters(state, job_title, contract_types, min_salary)
 
                 try:
                     await self.page.wait_for_selector(self.CARD_SELECTOR, timeout=25000)
@@ -700,7 +932,7 @@ class ApecWorker():
 
     # --- NODE 2: Navigation ---
     async def go_to_job_board(self, state: JobApplicationState):
-        await self._emit(state, "Navigating to Job Board", stage_code=StageCode.NAVIGATING)
+        await self._emit(state, "Navigating to Job Board", stage_code=StageCode.NAVIGATING, progress_percent=self._progress(state, "nav"))
         await self._beat(state)
         logger.info("[APEC] Navigating to board")
         self._plog("NODE go_to_job_board -> navigating to apec.fr")
@@ -711,15 +943,24 @@ class ApecWorker():
                     await self._handle_cookies()
                     await self.page.wait_for_selector('li[id="header-monespace"]', state="visible", timeout=30000)
                     break
-                except Exception:
+                except Exception as e:
+                    # The reason, not just the fact. This block covers the goto,
+                    # the cookie widget and a selector wait — three unrelated
+                    # failures that read identically from outside, while
+                    # "unreachable" names only the first. The same shape on WTTJ
+                    # cost an afternoon of ruling out the site, the selector and
+                    # the proxy, all of which were fine.
+                    detail = f"{type(e).__name__}: {str(e).splitlines()[0][:200]}"
                     if attempt == 2:
-                        self._plog("apec.fr unreachable after 3 attempts -> aborting")
+                        self._plog(f"apec.fr unreachable after 3 attempts -> aborting ({detail})")
+                        logger.warning("[APEC] Navigation failed 3x", exc_info=True)
                         return {"error": "Could not reach APEC.fr. The job board might be down or undergoing maintenance."}
-                    self._plog(f"navigation attempt {attempt + 1} failed -> retrying")
+                    self._plog(f"navigation attempt {attempt + 1} failed -> retrying ({detail})")
                     await asyncio.sleep(2 ** attempt)
 
             self._plog("homepage loaded -> performing human warmup")
             await human_warmup(self.page, self.base_url)
+            await self._arrival_browse(state, "apec.fr homepage")
             return {}
         except Exception:
             logger.exception("[APEC] Nav error")
@@ -728,7 +969,7 @@ class ApecWorker():
 
     # --- NODE 3: Login ---
     async def request_login(self, state: JobApplicationState):
-        await self._emit(state, "Authenticating", stage_code=StageCode.AUTHENTICATING)
+        await self._emit(state, "Authenticating", stage_code=StageCode.AUTHENTICATING, progress_percent=self._progress(state, "login"))
         await self._beat(state)
 
         prefs = state["preferences"]
@@ -758,13 +999,20 @@ class ApecWorker():
                         await human_click(self.page.locator('li[id="header-monespace"]'))
                         await self.page.wait_for_selector('input[id="emailid"]', state="visible", timeout=15000)
                         break
-                    except Exception:
+                    except Exception as e:
+                        detail = f"{type(e).__name__}: {str(e).splitlines()[0][:200]}"
                         if attempt == 2:
-                            self._plog("login modal never opened -> aborting login")
+                            self._plog(f"login modal never opened -> aborting login ({detail})")
+                            logger.warning("[APEC] Login modal failed 3x", exc_info=True)
                             return {"error": "Login failed. Could not open the login modal."}
-                        self._plog(f"login modal attempt {attempt + 1} failed -> reloading and retrying")
+                        self._plog(f"login modal attempt {attempt + 1} failed -> reloading and retrying ({detail})")
                         await self.page.reload(wait_until="networkidle")
                         await asyncio.sleep(2 ** attempt)
+
+                # Nobody starts typing the instant a modal renders. LOGIN tier:
+                # people enter a saved password quickly, so this stays short even
+                # at high pace.
+                await self._pause(state, 1.5, 4.0, tier=Tier.LOGIN)
 
                 # RETRY UNIT 2: Fill credentials with HUMAN typing
                 self._plog("typing credentials")
@@ -783,13 +1031,22 @@ class ApecWorker():
                         await human_delay(600, 1500)
 
                         await self.page.wait_for_selector('button[type="submit"][value="Login"]', state="visible", timeout=10000)
-                        await self.page.locator('button[type="submit"][value="Login"]').first.click()
+                        await human_click(self.page.locator('button[type="submit"][value="Login"]').first)
+
+                        await self.page.wait_for_url("**/candidat**", timeout=30000) # confirming auth before attepting again!
                         self._plog("credentials submitted")
                         break
-                    except Exception:
+                    except Exception as e:
+                        # This one had no per-attempt log at all, and the final
+                        # message named no cause — so a wrong password, a slow
+                        # redirect and a challenge page all aborted the login
+                        # identically.
+                        detail = f"{type(e).__name__}: {str(e).splitlines()[0][:200]}"
                         if attempt == 2:
-                            self._plog("credential submission failed after 3 attempts -> aborting login")
+                            self._plog(f"credential submission failed after 3 attempts -> aborting login ({detail})")
+                            logger.warning("[APEC] Credential submission failed 3x", exc_info=True)
                             return {"error": "Login failed. Could not submit credentials."}
+                        self._plog(f"credential submission attempt {attempt + 1} failed -> retrying ({detail})")
                         await asyncio.sleep(2 ** attempt)
 
                 # RETRY UNIT 3: Proof of login
@@ -808,6 +1065,7 @@ class ApecWorker():
                 logger.info("[APEC] Auto-login successful")
                 self._plog("auto-login successful")
                 await self._save_auth_state(str(user_id))
+                await self._settle(state, "post-login")
                 return {}
 
             except Exception:
@@ -825,12 +1083,14 @@ class ApecWorker():
             logger.info("[APEC] Semi-automation: requesting user action")
             self._plog("semi-automation mode -> waiting for manual login (90s)")
             try:
-                await self.page.locator('a[aria-label="Mon espace"]').click()
+                await human_click(self.page.locator('a[aria-label="Mon espace"]'))
                 logger.info("[APEC] ACTION REQUIRED: Please log in manually within 60 seconds")
-                await asyncio.sleep(90)
+                # Heartbeat-safe: a bare sleep here beats nothing for 90s, which
+                # is over half the AGENT_HEARTBEAT_STALE_SECONDS budget.
+                await human_long_pause(90, 90, on_tick=lambda: self._beat(state), tick_every=30.0)
                 self._plog("manual login window elapsed -> verifying access")
-                await self.page.locator('[aria-label="menu"]').click()
-                await self.page.locator('[href="/candidat.html"]').click()
+                await human_click(self.page.locator('[aria-label="menu"]'))
+                await human_click(self.page.locator('[href="/candidat.html"]'))
                 await self._save_auth_state(user_id)
                 self._plog("manual login confirmed")
                 return {}
@@ -841,7 +1101,7 @@ class ApecWorker():
 
     # --- NODE 4: Search ---
     async def search_jobs(self, state: JobApplicationState):
-        await self._emit(state, "Searching for Jobs", stage_code=StageCode.SEARCHING)
+        await self._emit(state, "Searching for Jobs", stage_code=StageCode.SEARCHING, progress_percent=self._progress(state, "search"))
         await self._beat(state)
         search_entity = state["job_search"]
         job_title = search_entity.job_title
@@ -853,12 +1113,15 @@ class ApecWorker():
         try:
             await self._handle_cookies()
             await human_warmup(self.page, self.base_url)
-            await self._apply_filters(job_title, contract_types, min_salary)
+            await self._apply_filters(state, job_title, contract_types, min_salary)
 
             try:
                 await self.page.wait_for_selector(self.CARD_SELECTOR, timeout=5000)
                 logger.info("[APEC] Search results loaded")
                 self._plog("search results loaded")
+                # Skim the result list before opening anything — the last beat
+                # before the scrape loop takes over.
+                await self._arrival_browse(state, "results page")
             except Exception:
                 logger.info("[APEC] No results found after applying filters")
                 self._plog("no results found for this search")
@@ -877,7 +1140,7 @@ class ApecWorker():
 
     # --- NODE 5: Scrape Jobs ---
     async def get_matched_jobs(self, state: JobApplicationState):
-        await self._emit(state, "Extracting Job Data", stage_code=StageCode.EXTRACTING_DATA)
+        await self._emit(state, "Extracting Job Data", stage_code=StageCode.EXTRACTING_DATA, progress_percent=self._progress(state, "scrape"))
         await self._beat(state)
         logger.info("[APEC] Scraping jobs")
 
@@ -885,6 +1148,13 @@ class ApecWorker():
         self._uid = str(user_id)
         search_id = state["job_search"].id
         found_job_entities = []
+
+        # Every posting this run has already looked at, by identity hash rather
+        # than by position. Two things make position useless on its own: the
+        # visit order is shuffled, and nav_back rebuilds the DOM, so the same
+        # posting can surface at a different index on a later sweep. Spans
+        # pages — the same job often appears again a page or two later.
+        seen_jobs = []
 
         worker_job_limit = min(state.get("worker_job_limit", 10), 12)
 
@@ -929,11 +1199,24 @@ class ApecWorker():
                         return {"found_raw_offers": []}
                     break
 
+                # A real user scans the results before clicking the first one.
+                await human_scan_list(self.page, 3.0 * self._pace, 7.0 * self._pace, pace=self._pace)
+
                 count = await cards.count()
                 self._plog(f"found {count} cards on page {page_number}")
                 result_url = self.page.url
 
-                for i in range(count):
+                # Nobody works a results page top to bottom.
+                order, passed_over = plan_card_visit_order(count)
+                if passed_over:
+                    self._plog(
+                        f"visiting {count} cards out of order "
+                        f"({len(passed_over)} circled back to at the end)"
+                    )
+                else:
+                    self._plog(f"visiting {count} cards out of order")
+
+                for position, i in enumerate(order):
                     if len(found_job_entities) >= worker_job_limit:
                         break
 
@@ -946,16 +1229,24 @@ class ApecWorker():
 
                     cards = self.page.locator(self.CARD_SELECTOR)
                     card = cards.nth(i)
-                    await card.scroll_into_view_if_needed()
-                    await human_delay(400, 1000)
+                    await self._scroll_to(card)
+                    await human_delay(900, 2200)
 
                     raw_company, raw_title, raw_location = await self.get_raw_job_data(card)
 
                     if not raw_title:
-                        self._plog(f"card {i + 1}/{count}: no title extracted -> skipping")
+                        self._plog(f"card #{i + 1}: no title extracted -> skipping")
+                        # Free noise: this card is discarded either way, so a
+                        # lingering hover costs the user nothing.
+                        if should_hover_without_clicking(probability=0.25):
+                            try:
+                                await human_hover(card, duration_ms=random.randint(500, 1300))
+                            except Exception:
+                                pass
                         continue
 
-                    self._plog(f"card {i + 1}/{count}: '{raw_title}' @ {raw_company or 'No Name'}")
+                    self._plog(f"card #{i + 1} ({position + 1} of {count} visited): "
+                               f"'{raw_title}' @ {raw_company or 'No Name'}")
 
                     fast_hash = self._generate_fast_hash(
                         raw_company if raw_company else "No Name",
@@ -963,9 +1254,33 @@ class ApecWorker():
                         str(user_id),
                     )
 
-                    if fast_hash in ignored_hashes:
-                        self._plog(f"card {i + 1}/{count}: already seen in last 30 days -> skipping")
+                    if fast_hash in seen_jobs:
+                        self._plog(f"card #{i + 1}: already opened earlier this run -> skipping")
                         continue
+
+                    if fast_hash in ignored_hashes:
+                        self._plog(f"card #{i + 1}: already seen in last 30 days -> skipping")
+                        seen_jobs.append(fast_hash)
+                        if should_hover_without_clicking(probability=0.25):
+                            self._plog(f"card #{i + 1}: behavioral noise -> hovering before moving on")
+                            try:
+                                await human_hover(card, duration_ms=random.randint(500, 1300))
+                            except Exception:
+                                pass
+                        continue
+
+                    # Committed to this one. Recorded before the click so a card
+                    # that fails to open is not retried on the deferred sweep.
+                    seen_jobs.append(fast_hash)
+
+                    # Sometimes linger on a card before committing to it. Passing
+                    # over a card is now handled up front by the deferred sweep,
+                    # so this is purely the pause before opening one.
+                    if should_hover_without_clicking(probability=0.30):
+                        try:
+                            await human_hover(card, duration_ms=random.randint(400, 1100))
+                        except Exception:
+                            pass
 
                     # RETRY: card.click() + networkidle as one unit
                     click_success = False
@@ -974,13 +1289,14 @@ class ApecWorker():
                             cards = self.page.locator(self.CARD_SELECTOR)
                             card = cards.nth(i)
                             await human_click(card)
+                            await self.page.wait_for_selector('div[class="col-lg-8 border-L"]', state="visible", timeout=600000)                
                             await self.page.wait_for_load_state("networkidle")
                             click_success = True
                             break
                         except Exception:
                             if attempt == 2:
                                 logger.warning("[APEC] Card click failed after 3 attempts. Skipping.")
-                                self._plog(f"card {i + 1}/{count}: click failed 3 times -> skipping")
+                                self._plog(f"card #{i + 1}: click failed 3 times -> skipping")
                                 break
                             await asyncio.sleep(2 ** attempt)
 
@@ -994,7 +1310,8 @@ class ApecWorker():
                     except Exception:
                         pass
 
-                    await human_delay(1500, 3500)
+                    # Let the page settle, then pull the description...
+                    await human_delay(800, 1800)
 
                     try:
                         desc_element = self.page.locator('div[class="col-lg-8 border-L"]')
@@ -1005,11 +1322,24 @@ class ApecWorker():
                     except Exception:
                         job_desc = ""
 
+                    # ...and only then spend time "reading" it. A long offer
+                    # should hold attention longer than a short one — a fixed
+                    # dwell time on every page is itself a tell.
+                    desc_len = len(job_desc) if job_desc else 0
+                    read_min, read_max = self._read_bounds(desc_len)
+                    self._plog(f"reading offer page (~{desc_len} chars) for {read_min:.0f}-{read_max:.0f}s")
+                    await human_read_page(
+                        self.page,
+                        min_seconds=read_min,
+                        max_seconds=max(read_min, read_max),
+                        pace=self._pace,
+                    )
+
                     try:
                         await self.page.wait_for_selector('a[class="btn btn-primary ml-0"]', state="visible", timeout=10000)
                     except Exception:
                         self._plog("no apply button on this offer -> going back to results")
-                        await self.nav_back(result_url)
+                        await self.nav_back(has_back_button=True)
                         continue
 
                     apply_btn = self.page.locator('a[class="btn btn-primary ml-0"]')
@@ -1021,14 +1351,15 @@ class ApecWorker():
                             self._plog("internal APEC application detected -> opening offer URL")
                             full_offer_url = f"https://www.apec.fr{href}"
 
-                            await self.page.goto(full_offer_url, wait_until="networkidle")
-                            await human_delay(800, 2000)
+                            await self._pause(state, 1.5, 4.0, tier=Tier.CARD)                            
+                            await human_click(apply_btn)
+                            await human_delay(1500, 3500)
 
                             try:
-                                await self.page.wait_for_selector('button[title="Postuler"]', state="visible", timeout=15000)
+                                await self.page.wait_for_selector('button[title="Postuler"]', state="visible", timeout=60000)
                             except Exception:
                                 self._plog("'Postuler' button never appeared -> going back to results")
-                                await self.nav_back(result_url)
+                                await self.nav_back(at_redir_page=True, has_back_button=True)
                                 continue
 
                             postule_btn = self.page.locator('button[title="Postuler"]')
@@ -1053,11 +1384,33 @@ class ApecWorker():
                                 )
 
                                 found_job_entities.append(offer)
+                                # Progress advances on KEEPERS only. The loop is already
+                                # keeper-driven (while len(found) < worker_job_limit), so the
+                                # denominator is known before it starts.
+                                await self._emit(
+                                    state,
+                                    f"Found: {offer.job_title}",
+                                    stage_code=StageCode.EXTRACTING_DATA,
+                                    count_band="scrape",
+                                    count_done=len(found_job_entities),
+                                    count_total=state.get("max_jobs") or worker_job_limit,
+                                )
                                 self._plog(f"offer captured ({len(found_job_entities)}/{worker_job_limit}): '{raw_title}' @ {raw_company or 'No Name'}")
+                                await self.nav_back(at_redir_page=True, has_back_button=True)
                         else:
                             self._plog("external application -> not supported, skipping offer")
+                            await self.nav_back(has_back_button=True)
 
-                    await self.nav_back(result_url)
+                    # Breathe between cards — back-to-back offers is the single
+                    # most obvious pattern in the request timing, and this is the
+                    # one wait deliberately allowed to run long: up to the
+                    # two-minute pause ceiling, against the six seconds a machine
+                    # would take. Widened from (3, 8) when the rest of the run was
+                    # cut, because trimming everything uniformly would have taken
+                    # the most valuable wait down with the rest.
+                    await self._pause(state, 6.0, 30.0, tier=Tier.CARD)
+                    await self._distracted_stop(state)
+                    await self._maybe_break(state, f"after card {i + 1}")
 
                 if len(found_job_entities) >= worker_job_limit:
                     self._plog(f"job limit reached ({worker_job_limit}) -> stopping scrape")
@@ -1065,6 +1418,7 @@ class ApecWorker():
 
                 if not await self._handle_apec_pagination(page_number):
                     break
+                await self._maybe_break(state, f"between pages {page_number}")
                 page_number += 1
 
         except Exception:
@@ -1082,7 +1436,7 @@ class ApecWorker():
 
     # --- NODE 7: Submit Applications ---
     async def submit_applications(self, state: JobApplicationState):
-        await self._emit(state, "Submitting Applications", stage_code=StageCode.SUBMITTING)
+        await self._emit(state, "Submitting Applications", stage_code=StageCode.SUBMITTING, progress_percent=self._progress(state, "submit"))
         await self._beat(state)
         logger.info("[APEC] Submitting applications")
 
@@ -1145,12 +1499,13 @@ class ApecWorker():
                             break
                         
                         
-                    except Exception:
+                    except Exception as e:
+                        detail = f"{type(e).__name__}: {str(e).splitlines()[0][:200]}"
                         if attempt == 2:
-                            logger.warning("[APEC] Form failed to load after 3 attempts. Skipping.")
-                            self._plog("form failed to load after 3 attempts -> skipping offer")
+                            logger.warning("[APEC] Form failed to load after 3 attempts. Skipping.", exc_info=True)
+                            self._plog(f"form failed to load after 3 attempts -> skipping offer ({detail})")
                             break
-                        self._plog(f"form load attempt {attempt + 1} failed -> retrying")
+                        self._plog(f"form load attempt {attempt + 1} failed -> retrying ({detail})")
                         await asyncio.sleep(2 ** attempt)
 
                 if not form_loaded:
@@ -1175,11 +1530,11 @@ class ApecWorker():
                     self._plog("selecting 'Importer un CV' option")
                     label_clicked = False
                     try:
-                        await self.page.locator('label.choice-highlight.import-cv').click(timeout=10000)
+                        await human_click(self.page.locator('label.choice-highlight.import-cv'))
                         label_clicked = True
                     except Exception:
                         try:
-                            await import_radio.check(force=True, timeout=10000)
+                            await self._check(import_radio)
                             label_clicked = True
                         except Exception:
                             logger.warning("[APEC] Could not select 'Importer un CV'")
@@ -1207,13 +1562,18 @@ class ApecWorker():
                     # Now the file input is visible — set the file.
                     self._plog(f"uploading resume: {human_name}")
                     file_input = self.page.locator('#formUpload input[type="file"]').first
-                    await file_input.set_input_files({
-                        "name": human_name,
-                        "mimeType": "application/pdf",
-                        "buffer": resume_bytes,
-                    })
+                    await self._upload(
+                        file_input,
+                        {
+                            "name": human_name,
+                            "mimeType": "application/pdf",
+                            "buffer": resume_bytes,
+                        },
+                    )
+                    # Angular does not always pick the file up from the input's
+                    # own change; this nudge stays.
                     await file_input.dispatch_event("change")
-                    await human_delay(1000, 2000)
+                    await human_delay(1800, 4000)
 
                     # Verify the upload label updated to our file.
                     try:
@@ -1227,7 +1587,7 @@ class ApecWorker():
                         save_checkbox = self.page.locator('input[formcontrolname="isCvSave"]')
                         if await save_checkbox.count() > 0 and await save_checkbox.is_checked():
                             self._plog("unchecking 'save CV to profile' checkbox")
-                            await save_checkbox.uncheck()
+                            await self._uncheck(save_checkbox)
                     except Exception:
                         pass
 
@@ -1246,8 +1606,13 @@ class ApecWorker():
 
                         if offer.cover_letter:
                             textarea = self.page.locator('textarea[formcontrolname="lmTexteSaisie"]')
-                            await textarea.fill(offer.cover_letter)
+                            await human_click(textarea)
+                            await human_delay(700, 1600)
+                            await self._type(textarea, offer.cover_letter)
                             await textarea.dispatch_event('input')
+                            # Re-read what was just written.
+                            await human_delay(2000, 5000)
+                            await human_scroll(self.page, distance=random.randint(150, 300))
 
                     else:
                         self._plog("filling cover letter (collapse/comment version)")
@@ -1260,12 +1625,17 @@ class ApecWorker():
 
                         val = await anchor.get_attribute('aria-expanded')
                         if val != 'true':
-                            await anchor_label.click()
+                            await human_click(anchor_label)
                             await self.page.locator('#collapseThree').wait_for(state="visible", timeout=10000)
 
                         if offer.cover_letter:
-                            await self.page.locator('#comment').fill(offer.cover_letter)
-                            await self.page.locator('#comment').dispatch_event('input')
+                            comment = self.page.locator('#comment')
+                            await human_click(comment)
+                            await human_delay(700, 1600)
+                            await self._type(comment, offer.cover_letter)
+                            await comment.dispatch_event('input')
+                            await human_delay(2000, 5000)
+                            await human_scroll(self.page, distance=random.randint(150, 300))
 
                     self._plog("cover letter filled")
 
@@ -1285,27 +1655,27 @@ class ApecWorker():
                         await self.page.wait_for_selector('ng-select[formcontrolname="idNiveauFormation"]', state="visible", timeout=30000)
 
                     if hasattr(user, 'study_level') and user.study_level:
-                        await self.page.locator('ng-select[formcontrolname="idNiveauFormation"]').click()
+                        await human_click(self.page.locator('ng-select[formcontrolname="idNiveauFormation"]'))
                         await self.page.wait_for_selector('.ng-option', state="visible")
-                        await self.page.locator(f'.ng-option-label:has-text("{user.study_level}")').first.click()
-                        await human_delay(300, 700)
+                        await human_click(self.page.locator(f'.ng-option-label:has-text("{user.study_level}")').first)
+                        await human_delay(600, 1400)
 
                     if hasattr(user, 'major') and user.major:
-                        await self.page.locator('ng-select[formcontrolname="idDiscipline"]').click()
+                        await human_click(self.page.locator('ng-select[formcontrolname="idDiscipline"]'))
                         await self.page.wait_for_selector('.ng-option', state="visible")
-                        await self.page.locator(f'.ng-option-label:has-text("{user.major}")').first.click()
-                        await human_delay(300, 700)
+                        await human_click(self.page.locator(f'.ng-option-label:has-text("{user.major}")').first)
+                        await human_delay(600, 1400)
 
                     if hasattr(user, 'school_type') and user.school_type:
-                        await self.page.locator('ng-select[formcontrolname="idNatureFormation"]').click()
+                        await human_click(self.page.locator('ng-select[formcontrolname="idNatureFormation"]'))
                         await self.page.wait_for_selector('.ng-option', state="visible")
-                        await self.page.locator(f'.ng-option-label:has-text("{user.school_type}")').first.click()
-                        await human_delay(300, 700)
+                        await human_click(self.page.locator(f'.ng-option-label:has-text("{user.school_type}")').first)
+                        await human_delay(600, 1400)
 
                     if hasattr(user, 'graduation_year') and user.graduation_year:
-                        await self.page.locator('ng-select[formcontrolname="anneeObtention"]').click()
+                        await human_click(self.page.locator('ng-select[formcontrolname="anneeObtention"]'))
                         await self.page.wait_for_selector('.ng-option', state="visible")
-                        await self.page.locator(f'.ng-option-label:has-text("{user.graduation_year}")').first.click()
+                        await human_click(self.page.locator(f'.ng-option-label:has-text("{user.graduation_year}")').first)
 
                     self._plog("additional data filled")
 
@@ -1314,11 +1684,13 @@ class ApecWorker():
                     self._plog("could not fill additional data (optional) -> continuing")
 
                 # F. Submit — NO retry (duplicate submission risk)
-                await human_delay(1500, 3500)
+                # Read the application back before sending it.
                 submit_btn = self.page.locator('button[title="Envoyer ma candidature"]')
                 if await submit_btn.is_visible():
                     self._plog("clicking 'Envoyer ma candidature' (no retry: duplicate risk)")
-                    await submit_btn.click()
+                    # No stray-window retry: a repeated submit is an application
+                    # sent twice. The window is still closed, just not re-clicked.
+                    await human_click(submit_btn, retry_on_popup=False)
 
                     try:
                         await self.page.wait_for_selector('section[id="comp_cover"] h1:has-text("candidature a")', state="visible", timeout=45000)
@@ -1326,6 +1698,15 @@ class ApecWorker():
                         self._plog(f"application SUBMITTED: '{offer.job_title}' @ {offer.company_name} ({len(successful_submissions) + 1}/{assigned_submit_limit})")
                         offer.status = ApplicationStatus.SUBMITTED
                         successful_submissions.append(offer)
+                        await self._emit(
+                            state,
+                            f"Submitted: {offer.job_title}",
+                            stage_code=StageCode.SUBMITTING,
+                            count_band="submit",
+                                    count_done=len(successful_submissions),
+                                    count_total=len([j for j in jobs_to_submit
+                                                     if j.status == ApplicationStatus.APPROVED]),
+                        )
                     except Exception:
                         logger.warning("[APEC] Submission failed — confirmation not received")
                         self._plog("submission NOT confirmed -> no confirmation banner appeared")
@@ -1337,6 +1718,13 @@ class ApecWorker():
             except Exception:
                 logger.exception("[APEC] Submission failed for %s", offer.url)
                 self._plog(f"submission crashed for '{offer.job_title}' -> moving to next offer")
+
+            # Nobody fires off applications back to back. Shorter than it was,
+            # and now the ONLY thing pacing this loop: the review read that used
+            # to precede the send is gone, so without this the node is fill,
+            # submit, next form, at whatever speed the forms load.
+            await self._pause(state, 15.0, 25.0, tier=Tier.SUBMIT)
+            await self._maybe_break(state, "between submissions")
 
             i += 1
 
@@ -1350,7 +1738,7 @@ class ApecWorker():
 
     # --- NODE 9: Cleanup ---
     async def cleanup(self, state: JobApplicationState):
-        await self._emit(state, "Cleaning Up", stage_code=StageCode.CLEANING_UP)
+        await self._emit(state, "Cleaning Up", stage_code=StageCode.CLEANING_UP, progress_percent=self._progress(state, "cleanup"))
         logger.info("[APEC] Cleanup")
         self._plog("NODE cleanup -> closing browser session")
         await self.force_cleanup()

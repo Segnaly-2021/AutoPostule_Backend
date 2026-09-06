@@ -27,6 +27,7 @@ from auto_apply_app.application.dtos.auth_user_dtos import (
     ChangePasswordRequest,
     ForgotPasswordRequest,
     ResetPasswordRequest,
+    UnsubscribeRequest,
     RequestEmailChangeRequest,
     ConfirmEmailChangeRequest,
 )
@@ -969,4 +970,107 @@ class ConfirmEmailChangeUseCase:
             logger.exception("CRITICAL: Confirm email change failed unexpectedly")
             return Result.failure(Error.system_error(
                 message="Confirm email change: unexpected error",
+            ))
+
+
+# ----------------------------------------------------------------------
+# Marketing consent
+# ----------------------------------------------------------------------
+
+# Long-lived on purpose. A password-reset link expires in 15 minutes because a
+# stale one is a security hole; an unsubscribe link that expired would instead
+# leave someone unable to stop mail they no longer want -- the failure modes point
+# in opposite directions, so the lifetime does too. One year outlives any message
+# still sitting in an inbox.
+UNSUBSCRIBE_TOKEN_TTL = datetime.timedelta(days=365)
+UNSUBSCRIBE_TOKEN_PURPOSE = "unsubscribe"
+
+
+def make_unsubscribe_url(token_provider, user_id: UUID) -> str:
+    """Build the one-click unsubscribe URL that goes in the footer and the
+    List-Unsubscribe header.
+
+    Lives beside the use case that consumes the token so the purpose claim is
+    minted and checked in one place; a mismatch here would silently produce links
+    that always fail.
+    """
+    import os
+
+    token = token_provider.encode_token(
+        user_id=user_id,
+        claims={"purpose": UNSUBSCRIBE_TOKEN_PURPOSE},
+        expires_delta=UNSUBSCRIBE_TOKEN_TTL,
+    )
+    # `or`, not getenv's default: the deploy workflow always passes
+    # API_PUBLIC_URL, so an unset GitHub secret arrives as an EMPTY STRING rather
+    # than as a missing variable -- and getenv's default only fires on missing.
+    # Empty here would yield a RELATIVE link, which is dead in an email client.
+    base = (os.getenv("API_PUBLIC_URL") or "").rstrip("/")
+    if not base:
+        # Loud, because this is a scheduled job nobody watches and a broken
+        # unsubscribe link is the one defect in marketing mail that is not
+        # merely cosmetic.
+        logger.warning(
+            "API_PUBLIC_URL is not set; unsubscribe links will point at localhost."
+        )
+        base = "http://localhost:8000"
+    return f"{base}/api/v1/messaging/unsubscribe?token={token}"
+
+
+@dataclass
+class UnsubscribeUseCase:
+    """Opt a user out of marketing mail from a tokenised link.
+
+    Deliberately idempotent and never an error for the caller: a second click, a
+    mail client prefetching the link, and a real opt-out must all end in the same
+    place. The only failures are a bad token and a missing user.
+    """
+
+    uow_factory: UnitOfWorkFactory
+    token_provider: TokenProviderPort
+
+    async def execute(self, request: UnsubscribeRequest) -> Result:
+        try:
+            payload = self.token_provider.decode_token(request.token)
+
+            if payload.get("purpose") != UNSUBSCRIBE_TOKEN_PURPOSE:
+                logger.warning("Unsubscribe failed: wrong token purpose")
+                return Result.failure(Error.unauthorized(
+                    message="Unsubscribe: token purpose is not 'unsubscribe'",
+                    reason=ErrorReason.INVALID_TOKEN,
+                ))
+
+            user_id = payload.get("sub")
+            if not user_id:
+                logger.warning("Unsubscribe failed: token payload missing subject")
+                return Result.failure(Error.unauthorized(
+                    message="Unsubscribe: token payload missing 'sub'",
+                    reason=ErrorReason.INVALID_TOKEN,
+                ))
+
+            async with self.uow_factory() as uow:
+                auth_user = await uow.auth_repo.get_by_id(UUID(user_id))
+                if not auth_user:
+                    logger.warning("Unsubscribe failed: no user for valid token")
+                    return Result.failure(Error.unauthorized(
+                        message="Unsubscribe: no user matches token subject",
+                        reason=ErrorReason.INVALID_TOKEN,
+                    ))
+
+                auth_user.set_marketing_opt_out(True)
+                await uow.auth_repo.save(auth_user)
+
+            logger.info("Marketing opt-out recorded")
+            return Result.success({"unsubscribed": True})
+
+        except InvalidTokenException:
+            logger.info("Unsubscribe rejected: invalid or expired token")
+            return Result.failure(Error.unauthorized(
+                message="Unsubscribe: token expired or invalid",
+                reason=ErrorReason.INVALID_TOKEN,
+            ))
+        except Exception:
+            logger.exception("CRITICAL: Unsubscribe crashed")
+            return Result.failure(Error.system_error(
+                message="Unsubscribe: unexpected error",
             ))

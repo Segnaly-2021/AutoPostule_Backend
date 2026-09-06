@@ -41,6 +41,9 @@ class AuthRepoDB(AuthRepository):
             verification_attempts=auth_user.verification_attempts,
             # --- Pending email change ---
             pending_email=auth_user.pending_email,
+            # Same merge() hazard as is_admin above: omit this and the next password
+            # change re-subscribes someone who unsubscribed.
+            marketing_opt_out=auth_user.marketing_opt_out,
         )
         # merge() checks if the PK exists; updates if it does, inserts if it doesn't.
         await self.session.merge(db_auth)
@@ -60,6 +63,19 @@ class AuthRepoDB(AuthRepository):
         db_auth = result.scalar_one_or_none()
 
         return self._map_to_entity(db_auth) if db_auth else None
+
+    async def list_created_between(
+        self, start: datetime, end: datetime, exclude_opted_out: bool = False
+    ) -> list[AuthUser]:
+        stmt = (
+            select(AuthUserDB)
+            .where(AuthUserDB.created_at >= start)
+            .where(AuthUserDB.created_at < end)
+        )
+        if exclude_opted_out:
+            stmt = stmt.where(AuthUserDB.marketing_opt_out.is_(False))
+        result = await self.session.execute(stmt)
+        return [self._map_to_entity(row) for row in result.scalars().all()]
 
     async def count_created_between(self, start: datetime, end: datetime) -> int:
         stmt = (
@@ -91,6 +107,7 @@ class AuthRepoDB(AuthRepository):
             verification_attempts=db_auth.verification_attempts,
             # --- Pending email change ---
             pending_email=db_auth.pending_email,
+            marketing_opt_out=db_auth.marketing_opt_out,
         )
         # Map the real PK back onto the entity
         auth.id = db_auth.id

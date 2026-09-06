@@ -47,6 +47,14 @@ class ErrorReason(Enum):
     # Rate limiting
     RATE_LIMITED = "rate_limited"
 
+    # Plan allowances. Distinct on purpose: 'you are out of credits', 'you have
+    # used this month's applications' and 'come back tomorrow' are three
+    # different things to a paying user, and one opaque 'unauthorized' for all
+    # three is what made the old gate unexplainable.
+    OUT_OF_CREDITS = "out_of_credits"
+    VOLUME_EXHAUSTED = "volume_exhausted"
+    DAILY_LIMIT_REACHED = "daily_limit_reached"
+
     # Password reset
     INVALID_TOKEN = "invalid_token"
     EXPIRED_TOKEN = "expired_token"

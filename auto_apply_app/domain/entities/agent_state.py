@@ -29,8 +29,17 @@ class AgentState(Entity):
     last_heartbeat: Optional[datetime] = None
 
     def shutdown(self) -> None:
-        """Mark this specific search's agent as shut down."""
+        """Mark this search's agent as shut down, and stop it reading as alive.
+
+        Clearing the heartbeat matters for the UI. `is_alive` is only
+        'last_heartbeat is recent', so a run whose process has already died
+        kept reading alive until the beat went stale -- and the widget sat on
+        "Terminating..." for that whole window instead of finishing. Shutdown is
+        the one moment we know for certain the agent should not count as alive,
+        so we say so rather than waiting for a timeout to infer it.
+        """
         self.is_shutdown = True
+        self.last_heartbeat = None
 
     def beat(self) -> None:
         """Mark the agent as alive right now."""
