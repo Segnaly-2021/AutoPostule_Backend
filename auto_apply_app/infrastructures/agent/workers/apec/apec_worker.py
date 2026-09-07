@@ -262,7 +262,8 @@ class ApecWorker(HumanPacing):
             if await cookie_btn.count() > 0:
                 self._plog("cookie banner detected -> refusing all cookies")
                 await human_delay(300, 800)
-                await human_click(cookie_btn)
+                #await human_click(cookie_btn)
+                await cookie_btn.click()
         except Exception:
             logger.debug("[APEC] No cookies popup")
 
@@ -445,7 +446,8 @@ class ApecWorker(HumanPacing):
 
             for attempt in range(3):
                 try:
-                    await human_click(next_button)
+                    #await human_click(next_button)
+                    await next_button.click()
                     await self.page.wait_for_load_state("domcontentloaded")
                     await self.page.wait_for_selector(self.CARD_SELECTOR, state="visible", timeout=10000)
                     # Settle on the new page before scanning it.
@@ -485,7 +487,8 @@ class ApecWorker(HumanPacing):
                     else:
                         await asyncio.sleep(2 ** attempt)
 
-            await human_click(self.page.locator('a[id="advancedSearch"]'))
+            #await human_click(self.page.locator('a[id="advancedSearch"]'))
+            await self.page.locator('a[id="advancedSearch"]').click()
             await self.page.wait_for_load_state("networkidle", timeout=90000)
 
             await self.page.wait_for_selector('input[id="keywords"]', state="visible", timeout=15000)
@@ -565,7 +568,8 @@ class ApecWorker(HumanPacing):
             if not submitted:
                 for attempt in range(3):
                     try:
-                        await human_click(self.page.locator('button:has-text("RECHERCHER")'))
+                        # await human_click(self.page.locator('button:has-text("RECHERCHER")'))
+                        await self.page.locator('button:has-text("RECHERCHER")').click()
                         break
                     except Exception:
                         if attempt == 2:
@@ -627,7 +631,8 @@ class ApecWorker(HumanPacing):
             for attempt in range(3):
                 try:
                     await self.page.wait_for_selector('li[id="header-monespace"]', state="visible", timeout=30000)
-                    await human_click(self.page.locator('li[id="header-monespace"]'))
+                    # await human_click(self.page.locator('li[id="header-monespace"]'))
+                    await self.page.locator('li[id="header-monespace"]').click()
                     await self.page.wait_for_selector('input[id="emailid"]', state="visible", timeout=15000)
                     break
                 except Exception:
@@ -650,7 +655,8 @@ class ApecWorker(HumanPacing):
                     await human_type(self.page.locator('input[id="password"]'), pass_plain)
                     await human_delay(600, 1500)
                     await self.page.wait_for_selector('button[type="submit"][value="Login"]', state="visible", timeout=10000)
-                    await human_click(self.page.locator('button[type="submit"][value="Login"]').first)
+                    # await human_click(self.page.locator('button[type="submit"][value="Login"]').first)
+                    await self.page.locator('button[type="submit"][value="Login"]').first.click()
                     self._plog("re-login: credentials submitted")
                     break
                 except Exception:
@@ -887,7 +893,8 @@ class ApecWorker(HumanPacing):
             if await self._is_session_valid():
                 # Valid session: enter the candidate search area via the homepage card.
                 self._plog("session valid -> clicking 'Je suis candidat'")
-                await human_click(self.page.locator('div[class="card-title"] h2:has-text("Je suis candidat")'))
+                # await human_click(self.page.locator('div[class="card-title"] h2:has-text("Je suis candidat")'))
+                await self.page.locator('div[class="card-title"] h2:has-text("Je suis candidat")').click()
             else:
                 # Expired session: re-authenticate using request_login's full-auto logic.
                 self._plog("session expired -> re-authenticating via auto-login")
@@ -1288,7 +1295,8 @@ class ApecWorker(HumanPacing):
                         try:
                             cards = self.page.locator(self.CARD_SELECTOR)
                             card = cards.nth(i)
-                            await human_click(card)
+                            #await human_click(card)
+                            await card.click()
                             await self.page.wait_for_selector('div[class="col-lg-8 border-L"]', state="visible", timeout=600000)                
                             await self.page.wait_for_load_state("networkidle")
                             click_success = True
@@ -1352,7 +1360,8 @@ class ApecWorker(HumanPacing):
                             full_offer_url = f"https://www.apec.fr{href}"
 
                             await self._pause(state, 1.5, 4.0, tier=Tier.CARD)                            
-                            await human_click(apply_btn)
+                            #await human_click(apply_btn)
+                            await apply_btn.click()
                             await human_delay(1500, 3500)
 
                             try:
@@ -1365,7 +1374,8 @@ class ApecWorker(HumanPacing):
                             postule_btn = self.page.locator('button[title="Postuler"]')
 
                             if await postule_btn.count() > 0:
-                                await human_click(postule_btn)
+                                #await human_click(postule_btn)
+                                await postule_btn.click()
                                 await self.page.wait_for_load_state("networkidle")
                                 form_url = self.page.url
                                 await self.page.wait_for_selector('#formUpload, .form-check.uploadFile.profil-selection', state="attached", timeout=60000)
@@ -1492,7 +1502,8 @@ class ApecWorker(HumanPacing):
                         else:
                             self._plog("form not directly reachable -> clicking 'Postuler' first")
                             await self.page.wait_for_selector('button[title="Postuler"]', state="visible", timeout=60000)
-                            await human_click(self.page.locator('button[title="Postuler"]'))                        
+                            # await human_click(self.page.locator('button[title="Postuler"]')) 
+                            await self.page.locator('button[title="Postuler"]').click()                       
                             await self.page.wait_for_selector('#formUpload, .form-check.uploadFile.profil-selection', state="attached", timeout=90000)
                             form_loaded = True   # ← THE FIX
                             self._plog("form loaded after clicking 'Postuler'")
@@ -1530,7 +1541,8 @@ class ApecWorker(HumanPacing):
                     self._plog("selecting 'Importer un CV' option")
                     label_clicked = False
                     try:
-                        await human_click(self.page.locator('label.choice-highlight.import-cv'))
+                        # await human_click(self.page.locator('label.choice-highlight.import-cv'))
+                        await self.page.locator('label.choice-highlight.import-cv').click()
                         label_clicked = True
                     except Exception:
                         try:
@@ -1601,12 +1613,14 @@ class ApecWorker(HumanPacing):
                     if has_radio_version:
                         self._plog("filling cover letter (radio/textarea version)")
                         await self.page.wait_for_selector('label:has-text("Saisir directement ma lettre de motivation")', state="visible")
-                        await human_click(self.page.locator('input[formcontrolname="choixLm"]').last)
+                        # await human_click(self.page.locator('input[formcontrolname="choixLm"]').last)
+                        await self.page.locator('input[formcontrolname="choixLm"]').last.click()
                         await self.page.wait_for_selector('textarea[formcontrolname="lmTexteSaisie"]', state="visible", timeout=10000)
 
                         if offer.cover_letter:
                             textarea = self.page.locator('textarea[formcontrolname="lmTexteSaisie"]')
-                            await human_click(textarea)
+                            # await human_click(textarea)
+                            await textarea.click()
                             await human_delay(700, 1600)
                             await self._type(textarea, offer.cover_letter)
                             await textarea.dispatch_event('input')
@@ -1620,17 +1634,20 @@ class ApecWorker(HumanPacing):
                         anchor = self.page.locator('a[aria-controls="collapseThree"]').first
                         anchor_label = self.page.locator('div[id="headingThree"]').first
 
-                        await human_click(anchor_label)
+                        #await human_click(anchor_label)
+                        await anchor_label.click()
                         await self.page.locator('#collapseThree').wait_for(state="visible", timeout=10000)
 
                         val = await anchor.get_attribute('aria-expanded')
                         if val != 'true':
-                            await human_click(anchor_label)
+                            # await human_click(anchor_label)
+                            await anchor_label.click()
                             await self.page.locator('#collapseThree').wait_for(state="visible", timeout=10000)
 
                         if offer.cover_letter:
                             comment = self.page.locator('#comment')
-                            await human_click(comment)
+                            # await human_click(comment)
+                            await comment.click()
                             await human_delay(700, 1600)
                             await self._type(comment, offer.cover_letter)
                             await comment.dispatch_event('input')
@@ -1651,31 +1668,40 @@ class ApecWorker(HumanPacing):
                     anchor_sec_label = self.page.locator('div[id="heading_additionalData"]').first
 
                     if await anchor_sec.get_attribute('aria-expanded') != 'true':
-                        await human_click(anchor_sec_label)
+                        # await human_click(anchor_sec_label)
+                        await anchor_sec_label.click()
                         await self.page.wait_for_selector('ng-select[formcontrolname="idNiveauFormation"]', state="visible", timeout=30000)
 
                     if hasattr(user, 'study_level') and user.study_level:
-                        await human_click(self.page.locator('ng-select[formcontrolname="idNiveauFormation"]'))
+                        # await human_click(self.page.locator('ng-select[formcontrolname="idNiveauFormation"]'))
+                        await self.page.locator('ng-select[formcontrolname="idNiveauFormation"]').click()
                         await self.page.wait_for_selector('.ng-option', state="visible")
-                        await human_click(self.page.locator(f'.ng-option-label:has-text("{user.study_level}")').first)
+                        # await human_click(self.page.locator(f'.ng-option-label:has-text("{user.study_level}")').first)
+                        await self.page.locator(f'.ng-option-label:has-text("{user.study_level}")').first.click()
                         await human_delay(600, 1400)
 
                     if hasattr(user, 'major') and user.major:
-                        await human_click(self.page.locator('ng-select[formcontrolname="idDiscipline"]'))
+                        # await human_click(self.page.locator('ng-select[formcontrolname="idDiscipline"]'))
+                        await self.page.locator('ng-select[formcontrolname="idDiscipline"]').click()
                         await self.page.wait_for_selector('.ng-option', state="visible")
-                        await human_click(self.page.locator(f'.ng-option-label:has-text("{user.major}")').first)
+                        # await human_click(self.page.locator(f'.ng-option-label:has-text("{user.major}")').first)
+                        await self.page.locator(f'.ng-option-label:has-text("{user.major}")').first.click()
                         await human_delay(600, 1400)
 
                     if hasattr(user, 'school_type') and user.school_type:
-                        await human_click(self.page.locator('ng-select[formcontrolname="idNatureFormation"]'))
+                        # await human_click(self.page.locator('ng-select[formcontrolname="idNatureFormation"]'))
+                        await self.page.locator('ng-select[formcontrolname="idNatureFormation"]').click()
                         await self.page.wait_for_selector('.ng-option', state="visible")
-                        await human_click(self.page.locator(f'.ng-option-label:has-text("{user.school_type}")').first)
+                        # await human_click(self.page.locator(f'.ng-option-label:has-text("{user.school_type}")').first)
+                        await self.page.locator(f'.ng-option-label:has-text("{user.school_type}")').first.click()
                         await human_delay(600, 1400)
 
                     if hasattr(user, 'graduation_year') and user.graduation_year:
-                        await human_click(self.page.locator('ng-select[formcontrolname="anneeObtention"]'))
+                        # await human_click(self.page.locator('ng-select[formcontrolname="anneeObtention"]'))
+                        await self.page.locator('ng-select[formcontrolname="anneeObtention"]').click()
                         await self.page.wait_for_selector('.ng-option', state="visible")
-                        await human_click(self.page.locator(f'.ng-option-label:has-text("{user.graduation_year}")').first)
+                        # await human_click(self.page.locator(f'.ng-option-label:has-text("{user.graduation_year}")').first)
+                        await self.page.locator(f'.ng-option-label:has-text("{user.graduation_year}")').first.click()
 
                     self._plog("additional data filled")
 
@@ -1690,7 +1716,9 @@ class ApecWorker(HumanPacing):
                     self._plog("clicking 'Envoyer ma candidature' (no retry: duplicate risk)")
                     # No stray-window retry: a repeated submit is an application
                     # sent twice. The window is still closed, just not re-clicked.
-                    await human_click(submit_btn, retry_on_popup=False)
+                    #await human_click(submit_btn, retry_on_popup=False)
+                    await submit_btn.click()
+                
 
                     try:
                         await self.page.wait_for_selector('section[id="comp_cover"] h1:has-text("candidature a")', state="visible", timeout=45000)
@@ -1704,7 +1732,7 @@ class ApecWorker(HumanPacing):
                             stage_code=StageCode.SUBMITTING,
                             count_band="submit",
                                     count_done=len(successful_submissions),
-                                    count_total=len([j for j in jobs_to_submit
+                                    count_total=len([j for j in apec_jobs
                                                      if j.status == ApplicationStatus.APPROVED]),
                         )
                     except Exception:
