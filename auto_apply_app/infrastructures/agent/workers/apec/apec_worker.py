@@ -1297,7 +1297,7 @@ class ApecWorker(HumanPacing):
                             card = cards.nth(i)
                             #await human_click(card)
                             await card.click()
-                            await self.page.wait_for_selector('div[class="col-lg-8 border-L"]', state="visible", timeout=600000)                
+                            await self.page.wait_for_selector('div[class="col-lg-8 border-L"]', state="visible", timeout=60000)                
                             await self.page.wait_for_load_state("networkidle")
                             click_success = True
                             break

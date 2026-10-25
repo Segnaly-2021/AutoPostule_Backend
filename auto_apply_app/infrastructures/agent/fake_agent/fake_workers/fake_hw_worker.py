@@ -81,26 +81,27 @@ class FakeHWWorker:
         except Exception:
             pass
 
+    
     async def get_raw_job_data(self, card: Locator):
         """
-        Extraction mirrors the production worker:
-        the offer anchor carries two <p> tags (title, then company),
-        and location lives in div[data-cy="localisationCard"].
+        The offer anchor contains an <h3> with two <span> children
+        (title, then company); location lives in div[data-cy="localisationCard"].
         """
         try:
             anchor = card.locator('a[data-cy="offerTitle"]')
-            paragraphs = anchor.locator('p')
+            spans = anchor.locator('h3 > span')
 
-            raw_title = await paragraphs.nth(0).inner_text()
-            raw_company = await paragraphs.nth(1).inner_text()
-            raw_location = await card.locator('div[data-cy="localisationCard"]').inner_text()
+            raw_title = await spans.nth(0).inner_text(timeout=5000)
+            raw_company = await spans.nth(1).inner_text(timeout=5000)
+            raw_location = await card.locator('div[data-cy="localisationCard"]').inner_text(timeout=5000)
 
             return raw_company.strip(), raw_title.strip(), raw_location.strip()
 
-        except Exception:
-            print("    ⚠️ Offer details not found, skipping card.")
+        except Exception as e:
+            print(f"[Fake HW]   ⚠️   Offer details not found, skipping card:\n{e}")
             return None, None, None
 
+            
     async def _handle_hw_pagination(self, page_number: int) -> bool:
         """
         Attempts to navigate to the next page.

@@ -88,7 +88,7 @@ class FakeApecWorker:
             await self.page.wait_for_selector(
                 'button:has-text("Refuser tous les cookies")',
                 state='attached',
-                timeout=3000
+                timeout=10000
             )
             btn = self.page.locator('button:has-text("Refuser tous les cookies")')
             if await btn.count() > 0:
@@ -97,22 +97,22 @@ class FakeApecWorker:
             pass
 
     async def get_raw_job_data(self, card: Locator):
-        """
-        Extraction selectors mirror the production worker exactly:
-        title  -> h2.card-title
-        company -> p.card-offer__company
-        location -> the <li> containing the localisation icon
-        """
-        try:
-            raw_title = await card.locator('h2[class="card-title"]').inner_text()
-            raw_company = await card.locator('p[class="card-offer__company"]').first.inner_text()
-            raw_location = await card.locator('li:has(img[alt="localisation"])').inner_text()
+            """
+            Extraction selectors mirror the production worker exactly:
+            title  -> h2.card-title
+            company -> p.card-offer__company
+            location -> the <li> containing the localisation icon
+            """
+            try:
+                raw_title = await card.locator('h2[class="card-title"]').inner_text()
+                raw_company = await card.locator('p[class="card-offer__company"]').first.inner_text()
+                raw_location = await card.locator('li:has(img[alt="localisation"])').inner_text()
 
-            return raw_company.strip(), raw_title.strip(), raw_location.strip()
+                return raw_company.strip(), raw_title.strip(), raw_location.strip()
 
-        except Exception:
-            print("    ⚠️ Offer details not found, skipping card.")
-            return None, None, None
+            except Exception:
+                print("[Fake APEC]: Offer details not found, skipping card.")
+                return None, None, None
 
     async def search_jobs(self, query: str, max_results: int = 10) -> List[JobSnippet]:
         print(f"[Fake APEC] Searching for '{query}' (target: {max_results})...")
