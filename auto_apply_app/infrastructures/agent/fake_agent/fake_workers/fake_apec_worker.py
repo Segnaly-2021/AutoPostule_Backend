@@ -30,7 +30,7 @@ class FakeApecWorker:
     async def _init_browser(self):
         self.playwright = await async_playwright().start()
         self.browser = await self.playwright.chromium.launch(
-            headless=True,
+            headless=False,
             args=['--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage']
         )
         self.context = await self.browser.new_context()
@@ -136,7 +136,7 @@ class FakeApecWorker:
                     if i == 2:
                         print(f"[Fake APEC] Retry {i+1}/3: 'Candidats' link not found, refreshing...")
                         print(f"\nError message: {e}")
-                        await self.page.goto(self.base_url, wait_until="domcontentloaded")
+                        
            
             
             for i in range(3):
