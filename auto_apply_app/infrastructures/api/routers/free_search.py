@@ -33,7 +33,7 @@ FreeSearchControllerDep = Annotated[FreeSearchController, Depends(get_free_searc
     response_model=FreeSearchResponseSchema,
     summary="Free tier job search (authenticated)",
     description=(
-        "Searches multiple job boards in parallel and returns job snippets. "
+        "Searches the active job boards (currently HelloWork) and returns job snippets. "
         "Requires authentication. "
         "Limited to 10 searches per user per day (resets at midnight UTC) "
         "and 20 requests per IP per hour."
@@ -49,7 +49,7 @@ async def search_jobs_free(
     """
     Free tier job search.
     
-    Searches WTTJ, HelloWork, and APEC in parallel and returns job snippets.
+    Searches HelloWork (currently the only active board) and returns job snippets.
     Requires authentication. No AI processing, no saved history.
     
     Rate limits:
