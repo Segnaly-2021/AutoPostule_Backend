@@ -12,6 +12,11 @@ from playwright.async_api import async_playwright, Page, Browser, BrowserContext
 from auto_apply_app.domain.entities.job_snippet import JobSnippet
 from auto_apply_app.domain.value_objects import JobBoard
 from auto_apply_app.infrastructures.agent.input.display import XvfbDisplay
+from auto_apply_app.infrastructures.agent.pacing import (
+    ASSET_ALLOW_HOSTS,
+    BLOCKED_TYPES,
+    _TRANSPARENT_GIF,
+)
 
 # Framebuffer for the private Xvfb on display-less hosts (Cloud Run).
 _SCREEN_W, _SCREEN_H = 1920, 1080
@@ -38,13 +43,17 @@ class FakeApecWorker:
     # Single source of truth for the job card selector — mirrors the real worker.
     CARD_SELECTOR = 'div[class*="card card-offer mb-20 card--clickable"]'
 
-    def __init__(self):
+    def __init__(self, proxy_service=None):
         self.base_url = "https://www.apec.fr/"
         self.playwright: Optional[Playwright] = None
         self.browser: Optional[Browser] = None
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
         self._x_display: Optional[XvfbDisplay] = None
+
+        # ProxyServicePort (TwoCaptcha / NoProxy). None -> direct connection.
+        self._proxy_service = proxy_service
+        self._blocked_assets: Optional[dict] = None
 
         # Snapshot state, reset per search_jobs call.
         self._snap_bucket = None
@@ -150,13 +159,100 @@ class FakeApecWorker:
         print(f"[Fake APEC] Headful on Xvfb {self._x_display.display}")
         return kwargs
 
-    async def _init_browser(self):
+    def _resolve_proxy(self, user_id: str) -> Optional[dict]:
+        """
+        A fresh residential exit IP per free search: the session key is random,
+        so the sticky session never carries over between runs. Fails soft —
+        a proxy problem degrades to a direct connection, not a lost search.
+        """
+        if self._proxy_service is None:
+            return None
+        try:
+            proxy = self._proxy_service.get_proxy_for_run(
+                user_id, f"free-search-{uuid.uuid4().hex}"
+            )
+        except Exception as e:
+            print(f"[Fake APEC] Proxy resolution failed ({e}), going direct")
+            return None
+        if not proxy:
+            return None
+        # Never log the credentials — server only.
+        print(f"[Fake APEC] Routing through proxy {proxy['server']}")
+        return {
+            "server": proxy["server"],
+            "username": proxy["username"],
+            "password": proxy["password"],
+        }
+
+    async def _block_heavy_assets(self) -> None:
+        """
+        "Light" mode for proxied runs: images and video/audio never hit the
+        residential proxy. Mirrors PacingMixin._conserve_bandwidth, hard-wired to
+        BLOCKED_TYPES["on"] instead of reading AGENT_BLOCK_HEAVY_ASSETS.
+
+        Images are fulfilled with a local transparent GIF rather than aborted so
+        the page still sees a loaded image; captcha/challenge hosts are never
+        blocked. This worker registers no other route, so order is unconstrained.
+        """
+        blocked = BLOCKED_TYPES["on"]
+        saved = {kind: 0 for kind in blocked}
+
+        async def _handler(route):
+            request = route.request
+            url = request.url
+            try:
+                if request.resource_type in blocked and not any(
+                    host in url for host in ASSET_ALLOW_HOSTS
+                ):
+                    saved[request.resource_type] += 1
+                    if request.resource_type == "image":
+                        await route.fulfill(
+                            status=200,
+                            content_type="image/gif",
+                            body=_TRANSPARENT_GIF,
+                        )
+                    else:
+                        await route.abort()
+                    return
+                await route.fallback()
+            except Exception:
+                # A route that raises leaves the request hanging until timeout.
+                try:
+                    await route.fallback()
+                except Exception:
+                    pass
+
+        try:
+            await self.context.route("**/*", _handler)
+            self._blocked_assets = saved
+            print(f"[Fake APEC] Light mode: blocking {', '.join(sorted(blocked))}")
+        except Exception as e:
+            print(f"[Fake APEC] Could not install the asset blocker: {e}")
+
+    async def _init_browser(self, user_id: str = "unknown"):
         self.playwright = await async_playwright().start()
         self.browser = await self.playwright.chromium.launch(**self._launch_kwargs())
-        self.context = await self.browser.new_context()
+
+        context_kwargs = {}
+        proxy = self._resolve_proxy(user_id)
+        if proxy:
+            context_kwargs["proxy"] = proxy
+        self.context = await self.browser.new_context(**context_kwargs)
+
+        # Only worth it when the bytes are billed; the direct path stays as before.
+        if proxy:
+            await self._block_heavy_assets()
+
         self.page = await self.context.new_page()
 
     async def _cleanup_browser(self):
+        if self._blocked_assets and any(self._blocked_assets.values()):
+            print(
+                "[Fake APEC] Assets blocked: "
+                + ", ".join(f"{n} {k}" for k, n in self._blocked_assets.items() if n)
+            )
+        self._blocked_assets = None
+
         try:
             if self.page:
                 await self.page.close()
@@ -243,7 +339,9 @@ class FakeApecWorker:
                 print("[Fake APEC]: Offer details not found, skipping card.")
                 return None, None, None
 
-    async def search_jobs(self, query: str, max_results: int = 10) -> List[JobSnippet]:
+    async def search_jobs(
+        self, query: str, max_results: int = 10, user_id: str = "unknown"
+    ) -> List[JobSnippet]:
         print(f"[Fake APEC] Searching for '{query}' (target: {max_results})...")
         results: List[JobSnippet] = []
 
@@ -253,7 +351,7 @@ class FakeApecWorker:
 
         try:
             self._init_snapshots()
-            await self._init_browser()
+            await self._init_browser(user_id)
 
             await self.page.goto(self.base_url, wait_until="domcontentloaded")
             await self._debug_snapshot("after_goto")
