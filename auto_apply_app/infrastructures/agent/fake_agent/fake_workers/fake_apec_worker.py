@@ -1,11 +1,7 @@
 # auto_apply_app/infrastructures/agent/fake_workers/fake_apec_worker.py
 
-import asyncio
-import json
 import os
 import sys
-import uuid
-from datetime import datetime, timezone
 from typing import List, Optional
 from playwright.async_api import async_playwright, Page, Browser, BrowserContext, Playwright, Locator
 
@@ -15,14 +11,6 @@ from auto_apply_app.infrastructures.agent.input.display import XvfbDisplay
 
 # Framebuffer for the private Xvfb on display-less hosts (Cloud Run).
 _SCREEN_W, _SCREEN_H = 1920, 1080
-
-# Debug snapshots (opt-in). Cloud Run's filesystem dies with the instance, so
-# screenshots are pushed to GCS mid-run and pulled down afterwards with gcloud.
-_SNAPSHOT_PREFIX = "debug/free-search/apec"
-
-
-def _snapshots_enabled() -> bool:
-    return os.getenv("FREE_SEARCH_DEBUG_SNAPSHOTS", "").strip().lower() in ("1", "true", "yes", "on")
 
 
 class FakeApecWorker:
@@ -45,75 +33,6 @@ class FakeApecWorker:
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
         self._x_display: Optional[XvfbDisplay] = None
-
-        # Snapshot state, reset per search_jobs call.
-        self._snap_bucket = None
-        self._snap_run_id: Optional[str] = None
-        self._snap_seq = 0
-
-    def _init_snapshots(self) -> None:
-        """Set up the GCS bucket for this run's snapshots, or leave it off.
-
-        Bucket: DEBUG_SNAPSHOT_BUCKET, else GCP_RESUME_BUCKET (already set and
-        writable on the free-search Service). Credential handling mirrors
-        BrowserSessionStore. Any failure just disables snapshots.
-        """
-        self._snap_bucket = None
-        self._snap_seq = 0
-        if not _snapshots_enabled():
-            return
-
-        bucket_name = os.getenv("DEBUG_SNAPSHOT_BUCKET") or os.getenv("GCP_RESUME_BUCKET")
-        if not bucket_name:
-            print("[Fake APEC] Snapshots enabled but no bucket configured, skipping")
-            return
-
-        try:
-            from google.cloud import storage
-
-            creds_json = os.getenv("GCP_CREDENTIALS")
-            if creds_json:
-                client = storage.Client.from_service_account_info(json.loads(creds_json))
-            else:
-                client = storage.Client()
-            self._snap_bucket = client.bucket(bucket_name)
-            self._snap_run_id = (
-                datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "_" + uuid.uuid4().hex[:6]
-            )
-            print(f"[Fake APEC] Snapshots -> gs://{bucket_name}/{_SNAPSHOT_PREFIX}/{self._snap_run_id}/")
-        except Exception as e:
-            print(f"[Fake APEC] Snapshot setup failed ({e}), continuing without")
-            self._snap_bucket = None
-
-    async def _debug_snapshot(self, step: str) -> None:
-        """Screenshot + HTML + meta of the current page to GCS. Never raises."""
-        if self._snap_bucket is None or self.page is None:
-            return
-
-        self._snap_seq += 1
-        base = f"{_SNAPSHOT_PREFIX}/{self._snap_run_id}/{self._snap_seq:02d}_{step}"
-
-        def _upload(name: str, data, content_type: str) -> None:
-            self._snap_bucket.blob(name).upload_from_string(data, content_type=content_type)
-
-        try:
-            png = await self.page.screenshot(full_page=True, timeout=10000)
-            await asyncio.to_thread(_upload, f"{base}.png", png, "image/png")
-
-            html = await self.page.content()
-            await asyncio.to_thread(_upload, f"{base}.html", html, "text/html; charset=utf-8")
-
-            meta = {
-                "step": step,
-                "url": self.page.url,
-                "title": await self.page.title(),
-                "at": datetime.now(timezone.utc).isoformat(),
-            }
-            await asyncio.to_thread(_upload, f"{base}.json", json.dumps(meta, ensure_ascii=False), "application/json")
-
-            print(f"[Fake APEC] snapshot -> gs://{self._snap_bucket.name}/{base}.png ({meta['title']!r} @ {meta['url']})")
-        except Exception as e:
-            print(f"[Fake APEC] snapshot '{step}' failed: {e}")
 
     def _launch_kwargs(self) -> dict:
         """
@@ -252,19 +171,16 @@ class FakeApecWorker:
             return results
 
         try:
-            self._init_snapshots()
             await self._init_browser()
 
             await self.page.goto(self.base_url, wait_until="domcontentloaded")
-            await self._debug_snapshot("after_goto")
-
+            
             for i in range(3):
                 try:
                     await self._handle_cookies()
                     await self.page.wait_for_selector('a[title="Candidats"]', timeout=15000)
                     break
                 except Exception as e:
-                    await self._debug_snapshot(f"candidats_not_found_try{i+1}")
                     if i == 2:
                         print(f"[Fake APEC] Retry {i+1}/3: 'Candidats' link not found, refreshing...")
                         print(f"\nError message: {e}")
@@ -278,14 +194,12 @@ class FakeApecWorker:
                     await self.page.wait_for_selector('input[id="keywords"]', timeout=15000)
                     break
                 except Exception as e:
-                    await self._debug_snapshot(f"candidats_click_failed_try{i+1}")
                     if i == 2:
                         print(f"""[Fake APEC] Retry {i+1}/3: 'Candidats' link click failed, 
                                 refreshing...\nError message: {e}""")     
                         
 
             # Search
-            await self._debug_snapshot("before_keywords_fill")
             await self.page.locator('input[id="keywords"]').fill(query)
             await self.page.keyboard.press("Enter")
             await self.page.wait_for_timeout(3000)
@@ -298,7 +212,6 @@ class FakeApecWorker:
                 except Exception as e:
                     if i == 2:
                         print(f"[Fake APEC] Retry {i+1}/3: No results found\nError message: {e}")
-                        await self._debug_snapshot("results_timeout")
                         return results
 
             await self._handle_cookies()
@@ -375,7 +288,6 @@ class FakeApecWorker:
 
         except Exception as e:
             print(f"[Fake APEC] Fatal error: {e}")
-            await self._debug_snapshot("fatal")
 
         finally:
             await self._cleanup_browser()
