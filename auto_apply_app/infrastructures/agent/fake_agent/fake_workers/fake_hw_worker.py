@@ -145,7 +145,16 @@ class FakeHWWorker:
             await self._init_browser()
 
             await self.page.goto(self.base_url, wait_until="domcontentloaded")
-            await self._handle_cookies()
+
+            for attempt in range(3):
+                try:
+                    await self._handle_cookies()
+                    await self.page.wait_for_selector('input[id="k"]', timeout=5000)
+                    break
+                except Exception as e:
+                    print(f"[Fake HW] Search input not found, retrying ({attempt + 1}/3)...")
+                    print(f"\nError message: {e}")
+                    await self.page.goto(self.base_url, wait_until="domcontentloaded")
 
             # Search
             await self.page.locator('input[id="k"]').fill(query)
@@ -153,11 +162,17 @@ class FakeHWWorker:
             await self.page.wait_for_timeout(3000)
 
             # Wait for results
-            try:
-                await self.page.wait_for_selector(self.CARD_SELECTOR, timeout=5000)
-            except Exception:
-                print("[Fake HW] No results found")
-                return results
+            for attempt in range(3):
+                try:
+                    await self.page.wait_for_selector(self.CARD_SELECTOR, timeout=15000)
+                    break
+                except Exception as e:
+                    if attempt == 2:
+                        print("[Fake HW] No results found")
+                        print(f"\nError message: {e}")
+                        return results                   
+                
+                
 
             await self._neutralize_pagination_input()
 

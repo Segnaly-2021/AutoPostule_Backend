@@ -126,9 +126,30 @@ class FakeApecWorker:
             await self._init_browser()
 
             await self.page.goto(self.base_url, wait_until="domcontentloaded")
-            await self._handle_cookies()
-            await self.page.locator('a[title="Candidats"]').click()
-            await self.page.wait_for_timeout(2000)
+            
+            for i in range(3):
+                try:
+                    await self._handle_cookies()
+                    await self.page.wait_for_selector('a[title="Candidats"]', timeout=5000)
+                    break
+                except Exception as e:
+                    if i == 2:
+                        print(f"[Fake APEC] Retry {i+1}/3: 'Candidats' link not found, refreshing...")
+                        print(f"\nError message: {e}")
+                        await self.page.goto(self.base_url, wait_until="domcontentloaded")
+           
+            
+            for i in range(3):
+                try:
+                    await self.page.locator('a[title="Candidats"]').click()
+                    await self.page.wait_for_load_state("domcontentloaded")
+                    await self.page.wait_for_selector('input[id="keywords"]', timeout=15000)
+                    break
+                except Exception as e:
+                    if i == 2:
+                        print(f"""[Fake APEC] Retry {i+1}/3: 'Candidats' link click failed, 
+                                refreshing...\nError message: {e}""")     
+                        
 
             # Search
             await self.page.locator('input[id="keywords"]').fill(query)
@@ -136,11 +157,14 @@ class FakeApecWorker:
             await self.page.wait_for_timeout(3000)
 
             # Wait for results
-            try:
-                await self.page.wait_for_selector(self.CARD_SELECTOR, timeout=5000)
-            except Exception:
-                print("[Fake APEC] No results found")
-                return results
+            for i in range(3):
+                try:
+                    await self.page.wait_for_selector(self.CARD_SELECTOR, timeout=20000)
+                    break
+                except Exception as e:
+                    if i == 2:
+                        print(f"[Fake APEC] Retry {i+1}/3: No results found\nError message: {e}")
+                        return results
 
             await self._handle_cookies()
 
