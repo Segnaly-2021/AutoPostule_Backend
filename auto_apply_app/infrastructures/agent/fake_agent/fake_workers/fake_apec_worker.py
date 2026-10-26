@@ -1,16 +1,10 @@
 # auto_apply_app/infrastructures/agent/fake_workers/fake_apec_worker.py
 
-import os
-import sys
 from typing import List, Optional
 from playwright.async_api import async_playwright, Page, Browser, BrowserContext, Playwright, Locator
 
 from auto_apply_app.domain.entities.job_snippet import JobSnippet
 from auto_apply_app.domain.value_objects import JobBoard
-from auto_apply_app.infrastructures.agent.input.display import XvfbDisplay
-
-# Framebuffer for the private Xvfb on display-less hosts (Cloud Run).
-_SCREEN_W, _SCREEN_H = 1920, 1080
 
 
 class FakeApecWorker:
@@ -32,46 +26,13 @@ class FakeApecWorker:
         self.browser: Optional[Browser] = None
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
-        self._x_display: Optional[XvfbDisplay] = None
-
-    def _launch_kwargs(self) -> dict:
-        """
-        APEC needs a headful browser. Where a screen already exists (Windows,
-        macOS, a Linux desktop / WSLg with $DISPLAY) we just launch headful on it.
-        On a display-less Linux host (the free-search Cloud Run Service) we start
-        a private Xvfb for this browser — the image already ships xvfb for the
-        paid agent's x11 backend.
-
-        XvfbDisplay is used directly rather than open_display(): the latter
-        mutates module globals that guard python-xlib for the real agent, which
-        shares this process in local dev.
-
-        Fails soft: no Xvfb -> headless, so APEC degrades instead of returning nothing.
-        """
-        kwargs = {
-            "headless": False,
-            "args": ['--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage'],
-        }
-
-        if not sys.platform.startswith("linux") or os.environ.get("DISPLAY"):
-            return kwargs
-
-        try:
-            self._x_display = XvfbDisplay(_SCREEN_W, _SCREEN_H).start()
-        except Exception as e:
-            print(f"[Fake APEC] No X display available ({e}), falling back to headless")
-            self._x_display = None
-            kwargs["headless"] = True
-            return kwargs
-
-        kwargs["env"] = {**os.environ, "DISPLAY": self._x_display.display}
-        kwargs["args"].append(f"--window-size={_SCREEN_W},{_SCREEN_H}")
-        print(f"[Fake APEC] Headful on Xvfb {self._x_display.display}")
-        return kwargs
 
     async def _init_browser(self):
         self.playwright = await async_playwright().start()
-        self.browser = await self.playwright.chromium.launch(**self._launch_kwargs())
+        self.browser = await self.playwright.chromium.launch(
+            headless=False,
+            args=['--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage']
+        )
         self.context = await self.browser.new_context()
         self.page = await self.context.new_page()
 
@@ -87,15 +48,6 @@ class FakeApecWorker:
                 await self.playwright.stop()
         except Exception as e:
             print(f"[Fake APEC] Cleanup warning: {e}")
-
-        # After the browser is gone, and in its own try: a leaked Xvfb per
-        # request would pile up on a long-lived Service instance.
-        if self._x_display is not None:
-            try:
-                self._x_display.stop()
-            except Exception as e:
-                print(f"[Fake APEC] Xvfb stop warning: {e}")
-            self._x_display = None
 
     async def _handle_apec_pagination(self, page_number: int) -> bool:
         """
