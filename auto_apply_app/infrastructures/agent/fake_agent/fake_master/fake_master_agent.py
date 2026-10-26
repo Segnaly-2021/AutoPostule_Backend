@@ -21,11 +21,10 @@ class FakeMasterAgent:
     a non-zero quota and add its coroutine back into the gather() call.
     """
 
-    def __init__(self, proxy_service=None):
+    def __init__(self):
         self.wttj_worker = FakeWTTJWorker()   # kept, but not fed any workload
         self.hw_worker = FakeHWWorker()
-        # Only APEC goes through the residential proxy (+ light mode).
-        self.apec_worker = FakeApecWorker(proxy_service=proxy_service)
+        self.apec_worker = FakeApecWorker()
 
     def _split_quota(self, target_count: int) -> dict:
         """
@@ -76,7 +75,7 @@ class FakeMasterAgent:
         try:
             # Only APEC + HW are launched. WTTJ is deliberately excluded from gather().
             results = await asyncio.gather(
-                self.apec_worker.search_jobs(query, quotas["apec"], user_id=user_id),
+                self.apec_worker.search_jobs(query, quotas["apec"]),
                 self.hw_worker.search_jobs(query, quotas["hw"]),
                 return_exceptions=True  # one worker crashing must not sink the other
             )
