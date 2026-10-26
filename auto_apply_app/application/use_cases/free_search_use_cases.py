@@ -43,15 +43,15 @@ class FreeSearchUseCase:
             async with self.uow_factory() as uow:
                 usage = await uow.free_search_usage_repo.get_or_create_for_today(user_id)
                 allowed, reason = usage.can_run()
-                if not allowed:
-                    # `reason` (English string) goes to the dev-facing message;
-                    # ErrorReason.RATE_LIMITED is the stable i18n key the frontend maps.
-                    return Result.failure(
-                        Error.too_many_requests(
-                            message=reason,
-                            reason=ErrorReason.RATE_LIMITED,
-                        )
-                    )
+                # if not allowed:
+                #     # `reason` (English string) goes to the dev-facing message;
+                #     # ErrorReason.RATE_LIMITED is the stable i18n key the frontend maps.
+                #     return Result.failure(
+                #         Error.too_many_requests(
+                #             message=reason,
+                #             reason=ErrorReason.RATE_LIMITED,
+                #         )
+                #     )
                 # Debug attribution only — a failed lookup must never sink the search
                 try:
                     user = await uow.user_repo.get(user_id)
