@@ -550,7 +550,7 @@ class Application:
         return FreeSearchController(
             free_search_use_case=FreeSearchUseCase(
                 uow_factory=self.uow_factory,
-                fake_agent=create_fake_agent(),
+                fake_agent=create_fake_agent(proxy_service=_resolve_proxy_service()),
             ),
             presenter=self.free_search_presenter,
         )
