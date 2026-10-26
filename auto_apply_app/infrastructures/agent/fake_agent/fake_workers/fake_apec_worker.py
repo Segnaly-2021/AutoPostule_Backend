@@ -130,7 +130,7 @@ class FakeApecWorker:
             for i in range(3):
                 try:
                     await self._handle_cookies()
-                    await self.page.wait_for_selector('a[title="Candidats"]', timeout=5000)
+                    await self.page.wait_for_selector('a[title="Candidats"]', timeout=15000)
                     break
                 except Exception as e:
                     if i == 2:
