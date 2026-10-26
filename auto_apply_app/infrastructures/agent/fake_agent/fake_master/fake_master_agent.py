@@ -15,30 +15,25 @@ class FakeMasterAgent:
     Orchestrates fake workers in parallel to search job boards.
     No authentication, no persistence - just demo scraping.
 
-    Workload routing: the entire target is split between APEC and HelloWork.
-    WTTJ is intentionally kept wired (the worker still exists and is import-safe)
-    but receives a quota of 0 and is NOT launched. To re-enable it later, restore
-    a non-zero quota and add its coroutine back into the gather() call.
+    Workload routing: the entire target goes to HelloWork, the only board that
+    currently works. APEC (serves a bot-detection page to this worker) and WTTJ
+    are intentionally kept wired (the workers still exist and are import-safe)
+    but receive a quota of 0 and are NOT launched. To re-enable one later, give
+    it a non-zero quota and add its coroutine back into the gather() call.
     """
 
     def __init__(self):
         self.wttj_worker = FakeWTTJWorker()   # kept, but not fed any workload
         self.hw_worker = FakeHWWorker()
-        self.apec_worker = FakeApecWorker()
+        self.apec_worker = FakeApecWorker()   # kept, but not fed any workload
 
     def _split_quota(self, target_count: int) -> dict:
         """
-        Split the whole target between APEC and HelloWork only.
-
-        APEC takes the remainder when target_count is odd (10/20/50 are all even,
-        so in practice the split is exactly even, but this stays correct for any input).
-        WTTJ is fixed at 0.
+        Route the whole target to HelloWork. APEC and WTTJ are fixed at 0.
         """
-        half = target_count // 2
-        remainder = target_count % 2
         return {
-            "apec": half + remainder,
-            "hw": half,
+            "apec": 0,
+            "hw": target_count,
             "wttj": 0,
         }
 
@@ -50,7 +45,7 @@ class FakeMasterAgent:
         user_name: str = "unknown",
     ) -> dict:
         """
-        Run the active workers (APEC + HelloWork) in parallel and aggregate results.
+        Run the active workers (currently HelloWork only) and aggregate results.
 
         user_id / user_name are debug attribution only — they identify who
         triggered the run in logs and never affect the search itself.
@@ -59,7 +54,7 @@ class FakeMasterAgent:
             {
                 "jobs": [JobSnippet.to_dict(), ...],
                 "total_found": int,
-                "boards_searched": ["APEC", "HELLOWORK"],
+                "boards_searched": ["HELLOWORK"],
                 "status": "success" | "error"
             }
         """
@@ -70,14 +65,13 @@ class FakeMasterAgent:
         )
 
         quotas = self._split_quota(target_count)
-        print(f"📊 Quotas: APEC={quotas['apec']}, HW={quotas['hw']}, WTTJ={quotas['wttj']} (WTTJ disabled)")
+        print(f"📊 Quotas: HW={quotas['hw']}, APEC={quotas['apec']}, WTTJ={quotas['wttj']} (APEC + WTTJ disabled)")
 
         try:
-            # Only APEC + HW are launched. WTTJ is deliberately excluded from gather().
+            # Only HW is launched. APEC and WTTJ are deliberately excluded from gather().
             results = await asyncio.gather(
-                self.apec_worker.search_jobs(query, quotas["apec"]),
                 self.hw_worker.search_jobs(query, quotas["hw"]),
-                return_exceptions=True  # one worker crashing must not sink the other
+                return_exceptions=True  # one worker crashing must not sink the others
             )
 
             all_jobs = []
@@ -99,7 +93,7 @@ class FakeMasterAgent:
             return {
                 "jobs": jobs_dict,
                 "total_found": len(jobs_dict),
-                "boards_searched": ["APEC", "HELLOWORK"],
+                "boards_searched": ["HELLOWORK"],
                 "status": "success"
             }
 
