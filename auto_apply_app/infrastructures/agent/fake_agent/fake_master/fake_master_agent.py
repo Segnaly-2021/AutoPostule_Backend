@@ -121,4 +121,4 @@ class FakeMasterAgent:
                 "boards_searched": [],
                 "status": "error",
                 "error_message": str(e)
-            }
+            }
