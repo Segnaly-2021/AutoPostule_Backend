@@ -16,16 +16,19 @@ class FakeMasterAgent:
     Orchestrates fake workers in parallel to search job boards.
     No authentication, no persistence - just demo scraping.
 
-    Workload routing: the target is split between Indeed and HelloWork.
-    Indeed's share is capped at INDEED_MAX because anonymous users only get
-    page 1 (page 2 redirects to sign-in); HelloWork takes the rest.
+    Workload routing: the entire target goes to HelloWork.
+
+    Indeed is DISABLED (quota 0): it blocks Cloud Run's IPs, so every search
+    waited ~65s for it to fail and came back half-empty. To re-enable it, set
+    INDEED_MAX back to 15, restore the split in _split_quota and add its
+    coroutine back into gather().
 
     APEC and WTTJ are kept wired (workers exist and are import-safe) but get a
     quota of 0 and are NOT launched. To re-enable one, give it a non-zero quota
     and add its coroutine back into the gather() call.
     """
 
-    INDEED_MAX = 15  # anonymous Indeed stops at page 1 (~15 cards)
+    INDEED_MAX = 0  # disabled; was 15 (anonymous Indeed stops at page 1)
 
     def __init__(self):
         self.wttj_worker = FakeWTTJWorker()   # kept, but not fed any workload
@@ -38,7 +41,7 @@ class FakeMasterAgent:
         Indeed takes half (plus the remainder if odd), capped at INDEED_MAX.
         HelloWork takes everything else. APEC and WTTJ are fixed at 0.
 
-        10 -> Indeed 5 / HW 5;  20 -> 10 / 10;  50 -> 15 / 35.
+        With INDEED_MAX = 0, HelloWork takes the whole target.
         """
         indeed = min(target_count // 2 + target_count % 2, self.INDEED_MAX)
         return {
@@ -56,7 +59,7 @@ class FakeMasterAgent:
         user_name: str = "unknown",
     ) -> dict:
         """
-        Run the active workers (Indeed + HelloWork) in parallel and aggregate results.
+        Run the active workers (currently HelloWork only) and aggregate results.
 
         user_id / user_name are debug attribution only — they identify who
         triggered the run in logs and never affect the search itself.
@@ -65,7 +68,7 @@ class FakeMasterAgent:
             {
                 "jobs": [JobSnippet.to_dict(), ...],
                 "total_found": int,
-                "boards_searched": ["INDEED", "HELLOWORK"],
+                "boards_searched": ["HELLOWORK"],
                 "status": "success" | "error"
             }
         """
@@ -76,12 +79,11 @@ class FakeMasterAgent:
         )
 
         quotas = self._split_quota(target_count)
-        print(f"📊 Quotas: Indeed={quotas['indeed']}, HW={quotas['hw']} (APEC, WTTJ disabled)")
+        print(f"📊 Quotas: HW={quotas['hw']}, Indeed={quotas['indeed']} (Indeed, APEC, WTTJ disabled)")
 
         try:
-            # Only Indeed + HW are launched. APEC and WTTJ are deliberately excluded.
+            # Only HW is launched. Indeed, APEC and WTTJ are deliberately excluded.
             results = await asyncio.gather(
-                self.indeed_worker.search_jobs(query, quotas["indeed"]),
                 self.hw_worker.search_jobs(query, quotas["hw"]),
                 return_exceptions=True  # one worker crashing must not sink the other
             )
@@ -105,7 +107,7 @@ class FakeMasterAgent:
             return {
                 "jobs": jobs_dict,
                 "total_found": len(jobs_dict),
-                "boards_searched": ["INDEED", "HELLOWORK"],
+                "boards_searched": ["HELLOWORK"],
                 "status": "success"
             }
 
