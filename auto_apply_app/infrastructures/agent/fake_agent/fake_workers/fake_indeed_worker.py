@@ -145,26 +145,28 @@ class FakeIndeedWorker:
 
     # --------------------------------------------------------------- extraction
 
-    async def _is_decoy(self, card: Locator) -> bool:
-        """Hidden honeypot cards: aria-hidden outline, unfocusable/nofollow anchor, or not visible."""
+    async def _decoy_reason(self, card: Locator) -> Optional[str]:
+        """
+        Return why a card looks like a hidden honeypot, or None for a real card.
+        Strong signals only: an aria-hidden card, or an anchor that is BOTH
+        unfocusable (tabindex=-1) and nofollow, like the decoy seen in the wild.
+        """
         try:
-            flagged = await card.evaluate(
+            return await card.evaluate(
                 """(li, anchor) => {
                     const outline = li.querySelector('.cardOutline');
-                    if (outline && outline.getAttribute('aria-hidden') === 'true') return true;
+                    if (outline && outline.getAttribute('aria-hidden') === 'true') return 'aria-hidden card';
                     const a = li.querySelector(anchor);
-                    if (!a) return true;
-                    if (a.getAttribute('tabindex') === '-1') return true;
-                    if ((a.getAttribute('rel') || '').includes('nofollow')) return true;
-                    return false;
+                    if (!a) return 'no job anchor';
+                    const unfocusable = a.getAttribute('tabindex') === '-1';
+                    const nofollow = (a.getAttribute('rel') || '').includes('nofollow');
+                    if (unfocusable && nofollow) return 'anchor tabindex=-1 + rel=nofollow';
+                    return null;
                 }""",
                 self.JOB_ANCHOR,
             )
-            if flagged:
-                return True
-            return not await card.is_visible()
-        except Exception:
-            return True
+        except Exception as e:
+            return f"evaluate failed: {e}"
 
     async def get_raw_job_data(self, card: Locator) -> Optional[dict]:
         """Read jk, title, company, location and snippet from one card in a single call."""
@@ -323,8 +325,9 @@ class FakeIndeedWorker:
                     try:
                         card = cards.nth(i)
 
-                        if await self._is_decoy(card):
-                            print(f"[Fake Indeed] Skipping hidden/decoy card {i}")
+                        reason = await self._decoy_reason(card)
+                        if reason:
+                            print(f"[Fake Indeed] Skipping decoy card {i}: {reason}")
                             continue
 
                         data = await self.get_raw_job_data(card)
