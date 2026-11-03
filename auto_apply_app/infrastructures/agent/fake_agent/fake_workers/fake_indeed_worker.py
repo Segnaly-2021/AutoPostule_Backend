@@ -1,5 +1,6 @@
 # auto_apply_app/infrastructures/agent/fake_agent/fake_workers/fake_indeed_worker.py
 
+import os
 from typing import List, Optional
 from urllib.parse import quote_plus
 
@@ -14,6 +15,7 @@ from playwright.async_api import (
 
 from auto_apply_app.domain.entities.job_snippet import JobSnippet
 from auto_apply_app.domain.value_objects import JobBoard
+from auto_apply_app.infrastructures.agent.input.display import open_display
 
 
 class FakeIndeedWorker:
@@ -29,7 +31,14 @@ class FakeIndeedWorker:
 
     Indeed plants hidden decoy cards (aria-hidden, tabindex=-1, rel=nofollow);
     those are skipped.
+
+    Indeed blocks headless Chromium ("Blocked - Indeed.com"), so the browser runs
+    headful on an X display from `open_display()`: a private Xvfb on Cloud Run
+    (Dockerfile.worker installs it), the real screen on a dev box. If no display
+    can be had, it falls back to headless and will most likely return nothing.
     """
+
+    SCREEN_W, SCREEN_H = 1920, 1080
 
     RESULTS_ROOT = "#mosaic-provider-jobcards"
     JOB_ANCHOR = "h3.jobTitle a[data-jk]"
@@ -41,6 +50,7 @@ class FakeIndeedWorker:
         self.browser: Optional[Browser] = None
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
+        self._x_display = None
 
         # Resolved at runtime (hashed class names change between deploys).
         self.card_wrapper: Optional[str] = None
@@ -49,12 +59,24 @@ class FakeIndeedWorker:
     # ------------------------------------------------------------------ browser
 
     async def _init_browser(self):
+        launch_kwargs = {
+            "headless": True,
+            "args": ['--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage'],
+        }
+        try:
+            self._x_display = open_display(self.SCREEN_W, self.SCREEN_H)
+            launch_kwargs["headless"] = False
+            launch_kwargs["env"] = {**os.environ, "DISPLAY": self._x_display.display}
+            print(f"[Fake Indeed] Headful on display {self._x_display.display}")
+        except Exception as e:
+            self._x_display = None
+            print(f"[Fake Indeed] No X display ({e}) -> headless (Indeed will likely block)")
+
         self.playwright = await async_playwright().start()
-        self.browser = await self.playwright.chromium.launch(
-            headless=True,
-            args=['--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage']
+        self.browser = await self.playwright.chromium.launch(**launch_kwargs)
+        self.context = await self.browser.new_context(
+            viewport={"width": 1366, "height": 768}
         )
-        self.context = await self.browser.new_context()
         self.page = await self.context.new_page()
 
     async def _cleanup_browser(self):
@@ -69,6 +91,13 @@ class FakeIndeedWorker:
                 await self.playwright.stop()
         except Exception as e:
             print(f"[Fake Indeed] Cleanup warning: {e}")
+        finally:
+            if self._x_display is not None:
+                try:
+                    self._x_display.stop()
+                except Exception as e:
+                    print(f"[Fake Indeed] Display stop warning: {e}")
+                self._x_display = None
 
     async def _handle_cookies(self):
         """Indeed uses OneTrust. Prefer reject, fall back to accept. Fail-soft."""
