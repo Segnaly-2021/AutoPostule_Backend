@@ -86,6 +86,16 @@ SUBMIT_BANDS = {
 }
 
 
+def track_for(action_intent: str, is_premium: bool) -> str:
+    """Which band table a frame belongs to.
+
+    Only PREMIUM has a separate submit execution. A BASIC run also dispatches its
+    workers with action_intent="SUBMIT", but it is still inside the launch run, so
+    its submissions belong to the launch table's 65-95 band.
+    """
+    return "submit" if action_intent == "SUBMIT" and is_premium else "launch"
+
+
 def bands_for(track: str, is_premium: bool) -> dict:
     """The band table for this run. `track` is "launch" or "submit"."""
     if track == "submit":

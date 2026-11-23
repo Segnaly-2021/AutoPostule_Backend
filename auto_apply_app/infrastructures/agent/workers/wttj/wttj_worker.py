@@ -158,11 +158,8 @@ class WelcomeToTheJungleWorker(HumanPacing):
                 "count_band": count_band,
                 "count_done": count_done,
                 "count_total": count_total,
-                "progress_track": ("submit" if state.get("action_intent") == "SUBMIT"
-                                   else "launch"),
-                "is_premium": getattr(
-                    getattr(state.get("subscription"), "account_type", None),
-                    "name", "") == "PREMIUM",
+                "progress_track": self._progress_track(state),
+                "is_premium": self._is_premium(state),
             })
         except Exception:
             logger.exception("[WTTJ] Progress emit failed")
@@ -2009,8 +2006,7 @@ class WelcomeToTheJungleWorker(HumanPacing):
                             stage_code=StageCode.SUBMITTING,
                             count_band="submit",
                                     count_done=len(successful_submissions),
-                                    count_total=len([j for j in jobs_to_submit
-                                                     if j.status == ApplicationStatus.APPROVED]),
+                                    count_total=state.get("submit_total") or assigned_submit_limit,
                         )
                     except Exception:
                         logger.warning("[WTTJ] Submission of %s failed — confirmation not received", offer.url)

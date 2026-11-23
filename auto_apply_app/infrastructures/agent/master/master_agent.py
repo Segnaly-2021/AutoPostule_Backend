@@ -552,12 +552,12 @@ class MasterAgent(AgentServicePort):
         band on its own -- a board that died at 3/12 keepers cannot leave the bar
         parked mid-band.
         """
-        from auto_apply_app.infrastructures.agent.stage_codes import progress_for
+        from auto_apply_app.infrastructures.agent.stage_codes import progress_for, track_for
 
-        track = "submit" if state.get("action_intent") == "SUBMIT" else "launch"
         subscription = state.get("subscription")
         account_type = getattr(subscription, "account_type", None)
         is_premium = getattr(account_type, "name", "") == "PREMIUM"
+        track = track_for(state.get("action_intent"), is_premium)
         return progress_for(node, track, is_premium, done=done, total=total)
 
     async def _emit(self, state: JobApplicationState, stage: str, status: str = "in_progress", error: str = None, error_code: str = None, stage_code: str = None, count: int = None, progress_percent: int = None):
@@ -865,6 +865,15 @@ class MasterAgent(AgentServicePort):
             count=remaining_quota,
         )
 
+        # Fixed before the fan-out: what each board will actually attempt, summed.
+        submit_total = sum(
+            min(
+                sum(1 for job in approved_jobs if job.job_board == board),
+                base_quota + (remainder if i == 0 else 0),
+            )
+            for i, board in enumerate(boards_needed)
+        )
+
         sends = []
         for i, board in enumerate(boards_needed):
             assigned_limit = base_quota + (remainder if i == 0 else 0)
@@ -872,7 +881,8 @@ class MasterAgent(AgentServicePort):
             worker_state = {
                 **state, 
                 "action_intent": "SUBMIT", 
-                "worker_job_limit": assigned_limit
+                "worker_job_limit": assigned_limit,
+                "submit_total": submit_total,
             }
 
             if board == JobBoard.APEC:
