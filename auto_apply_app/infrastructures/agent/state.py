@@ -55,6 +55,9 @@ class JobApplicationState(TypedDict):
     run_token: Annotated[Optional[str], keep_first]
     max_jobs: Annotated[int, take_latest]
     worker_job_limit: Annotated[int, take_latest]
+    # Run-wide number of submissions to attempt, fixed by the master before
+    # the fan-out. The denominator of the submit progress band.
+    submit_total: Annotated[Optional[int], take_latest]
 
     # --- MUTABLE STATUS FIELDS ---
     # Last worker to update wins — fine for status/url tracking

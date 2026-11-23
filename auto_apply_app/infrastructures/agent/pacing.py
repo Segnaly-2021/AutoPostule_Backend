@@ -467,13 +467,22 @@ class HumanPacing:
     # Progress
     # -----------------------------------------------------------------------
 
+    def _is_premium(self, state) -> bool:
+        subscription = state.get("subscription")
+        account_type = getattr(subscription, "account_type", None)
+        return getattr(account_type, "name", "") == "PREMIUM"
+
+    def _progress_track(self, state) -> str:
+        from auto_apply_app.infrastructures.agent.stage_codes import track_for
+
+        return track_for(state.get("action_intent"), self._is_premium(state))
+
     def _progress(self, state, node: str, done: int = None, total: int = None) -> int:
         """This worker's percentage at `node`, for the frame about to be emitted.
 
-        Both inputs come off the state the master already sends: `action_intent`
-        picks the track, and the subscription picks the band table, because a
-        BASIC run does scrape AND submit in one execution while a PREMIUM run
-        stops at human_review and submits in a second one.
+        Both inputs come off the state the master already sends. A BASIC run does
+        scrape AND submit in one execution, so it stays on the launch track; only
+        a PREMIUM run submits in a second execution with its own track.
 
         Three boards emit these concurrently and the frontend takes Math.max, so
         a slow board can never drag the bar back — the fastest defines it and the
@@ -481,11 +490,8 @@ class HumanPacing:
         """
         from auto_apply_app.infrastructures.agent.stage_codes import progress_for
 
-        track = "submit" if state.get("action_intent") == "SUBMIT" else "launch"
-        subscription = state.get("subscription")
-        account_type = getattr(subscription, "account_type", None)
-        is_premium = getattr(account_type, "name", "") == "PREMIUM"
-        return progress_for(node, track, is_premium, done=done, total=total)
+        return progress_for(node, self._progress_track(state), self._is_premium(state),
+                            done=done, total=total)
 
     async def _click(self, locator, hesitation: bool = True,
                      retry_on_popup: bool = True) -> None:
