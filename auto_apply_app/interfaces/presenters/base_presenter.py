@@ -1,3 +1,28 @@
+# ==============================================================================
+# FILE: auto_apply_app/interfaces/presenters/base_presenter.py
+#
+# WHAT IT DOES:
+#   Defines the presenter interfaces controllers depend on. A presenter turns
+#   application DTOs and errors into view models for a delivery channel, so
+#   controllers stay independent of the web format. web.py has the implementations.
+#   NOTE: JobPresenter omits present_job_for_review and present_daily_stats, which
+#   controllers call; they exist only on WebJobPresenter.
+#
+# USED BY:
+#   - auto_apply_app/interfaces/presenters/web.py: implements these interfaces
+#   - auto_apply_app/infrastructures/configuration/container.py: wires presenters
+#   - auto_apply_app/interfaces/controllers/agent_controllers.py: agent, job, search
+#   - auto_apply_app/interfaces/controllers/auth_controllers.py: UserPresenter
+#   - auto_apply_app/interfaces/controllers/user_controllers.py: UserPresenter
+#   - auto_apply_app/interfaces/controllers/job_offer_controllers.py: JobPresenter
+#   - auto_apply_app/interfaces/controllers/subscription_controllers.py: SubPresenter
+#   - auto_apply_app/interfaces/controllers/admin_controllers.py: AdminPresenter
+#   - ... and 6 more
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
+
 from abc import ABC, abstractmethod
 from typing import Optional, Dict, List
 

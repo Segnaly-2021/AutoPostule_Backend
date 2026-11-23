@@ -1,3 +1,27 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/agent/human_behavior.py
+#
+# WHAT IT DOES:
+#   The motion library for browser workers. It decides the SHAPE of each action:
+#   curved mouse paths, click timing, key rhythm, wheel scrolling, reading and idle
+#   behavior. The actual events are sent by an InputBackend (CDP or X11). It also
+#   guards OS-level input against lost keyboard focus and stray popup windows.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/agent/pacing.py: wraps these helpers for the workers
+#   - auto_apply_app/infrastructures/agent/workers/apec/apec_worker.py: direct helpers
+#   - auto_apply_app/infrastructures/agent/workers/hellowork/hw_worker.py: direct helpers
+#   - auto_apply_app/infrastructures/agent/workers/wttj/wttj_worker.py: direct helpers
+#   - auto_apply_app/infrastructures/agent/workers/teaser/teaser_worker.py: direct helpers
+#   - scripts/input_probe.py: measures real input behavior
+#   - tests/test_typing.py: typing rhythm tests
+#   - tests/test_pacing.py: pacing tests
+#   - ... and 2 more
+#
+# EXTERNAL DEPENDENCIES:
+#   - playwright / Chromium: Page and Locator objects, in-page JavaScript
+#   - X11 / XTEST, xdotool: indirectly, when the x11 input backend is mounted
+# ==============================================================================
 # auto_apply_app/infrastructures/agent/human_behavior.py
 import asyncio
 import logging
@@ -413,6 +437,9 @@ SUPPRESS_POPUPS_JS = """(() => {
 # "improve" this into overlay detection; it would close that modal mid-apply.
 # ---------------------------------------------------------------------------
 
+# NOTE: possible issue: these two are never cleaned up. Python can reuse an id()
+# after a context is freed, so in a long-lived process a new context may look
+# "already watched", get no listener, and lose stray-window detection.
 # Keyed by id(context), the convention _backends and _last_mouse_pos already use.
 _strays: dict[int, list] = {}
 _watched: set = set()
@@ -705,6 +732,9 @@ async def human_click(locator: Locator, hesitation: bool = True,
             pre_hesitation_max=800 if hesitation else 1,
             retry_on_popup=retry_on_popup,
         )
+    # NOTE: possible issue: this also catches failures AFTER the mouse was pressed
+    # (for example in button_up), so the fallback can click twice, even when the
+    # caller passed retry_on_popup=False for a submit button.
     except Exception:
         # If trajectory fails for any reason, fall back to a vanilla click.
         # Better to keep the scraper running than to crash on a detection-feature.

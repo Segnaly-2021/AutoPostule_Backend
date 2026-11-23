@@ -1,3 +1,20 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/resume_storage/gcs_storage_adapter.py
+#
+# WHAT IT DOES:
+#   Stores, downloads and deletes users' resume files in a Google Cloud Storage
+#   bucket (GCP_RESUME_BUCKET). Credentials come from GCP_CREDENTIALS JSON locally,
+#   or from the Cloud Run service account in production.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/app.py: injected as file_storage_port
+#   - auto_apply_app/infrastructures/configuration/container.py: built for worker jobs
+#
+# EXTERNAL DEPENDENCIES:
+#   - google-cloud-storage: GCS client library
+#   - Google Cloud Storage: holds the resume files
+#   - Cloud Run: supplies the default service account in production
+# ==============================================================================
 import json
 import os
 import asyncio
@@ -28,6 +45,8 @@ class GCSFileStorageAdapter(FileStoragePort):
 
         self.bucket = self.client.bucket(bucket_name)
 
+    # The GCS client is synchronous. These _sync helpers run through asyncio.to_thread
+    # below so a slow upload or download does not block the event loop.
     def _upload_sync(self, blob_name: str, file_bytes: bytes, content_type: str) -> str:
         blob = self.bucket.blob(blob_name)
         blob.upload_from_string(file_bytes, content_type=content_type)

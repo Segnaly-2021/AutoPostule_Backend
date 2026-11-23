@@ -1,3 +1,21 @@
+# ==============================================================================
+# FILE: auto_apply_app/domain/entities/agent_state.py
+#
+# WHAT IT DOES:
+#   One agent run's control row: the kill-switch flag (is_shutdown) and the
+#   heartbeat timestamp the UI uses to decide whether the agent is still alive.
+#
+# USED BY:
+#   - auto_apply_app/application/repositories/agent_state_repo.py: repository interface
+#   - auto_apply_app/application/use_cases/agent_state_use_cases.py: kill and liveness logic
+#   - auto_apply_app/application/use_cases/agent_use_cases.py: creates the row at start
+#   - auto_apply_app/infrastructures/persistence/database/repositories/agent_state_repo_db.py: persistence
+#   - auto_apply_app/interfaces/presenters/base_presenter.py: presenter type hints
+#   - auto_apply_app/interfaces/presenters/web.py: presents agent state
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 # auto_apply_app/domain/entities/agent_state.py
 from dataclasses import dataclass
 from datetime import datetime, timezone

@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/persistence/database/repositories/agent_state_repo_db.py
+#
+# WHAT IT DOES:
+#   Stores each run's control record: its kill flag (is_shutdown) and last heartbeat.
+#   This database row is how the API and a worker in another container coordinate:
+#   the API sets the flag, and the worker writes heartbeats and checks for a kill.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/persistence/database/repositories/unit_of_work_repo_db.py: uow.agent_state_repo
+#
+# EXTERNAL DEPENDENCIES:
+#   - SQLAlchemy: async queries and ORM
+#   - PostgreSQL (Supabase): the agent_states table
+# ==============================================================================
 # auto_apply_app/infrastructures/persistence/database/repositories/agent_state_repo_db.py
 from datetime import datetime, timezone
 from uuid import UUID
@@ -32,6 +47,8 @@ class AgentStateRepoDB(AgentStateRepository):
             is_shutdown=agent_state.is_shutdown,
             last_heartbeat=agent_state.last_heartbeat,
         )
+        # merge() = load by primary key, then update it, or insert if it does not exist.
+        # It writes every field, so use the targeted UPDATEs below on a live run.
         await self.session.merge(agent_state_db)
 
     async def touch_heartbeat(self, search_id: UUID) -> None:

@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/api/routers/messaging.py
+#
+# WHAT IT DOES:
+#   Public unsubscribe endpoints for marketing email, mounted at /api/v1/messaging.
+#   A signed token from the email link identifies the user, so no login is needed.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/app.py: mounts this router in the "api" role
+#
+# EXTERNAL DEPENDENCIES:
+#   - fastapi: routing and HTML responses
+#   - slowapi: per-IP rate limit
+#   - Mail providers (Gmail, Outlook): call the one-click POST route
+# ==============================================================================
 # auto_apply_app/infrastructures/api/routers/messaging.py
 #
 # Unsubscribe. Two endpoints on one path, because a mail client can arrive by

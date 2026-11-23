@@ -1,3 +1,17 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/dtos/free_search_dtos.py
+#
+# WHAT IT DOES:
+#   Input DTO for the free job search. Requires a non-empty query and restricts
+#   the requested result count to 10, 20 or 50.
+#
+# USED BY:
+#   - auto_apply_app/application/use_cases/free_search_use_cases.py: search input
+#   - auto_apply_app/interfaces/controllers/free_search_controller.py: builds the request
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 # auto_apply_app/application/dtos/free_search_dtos.py
 from dataclasses import dataclass
 from uuid import UUID

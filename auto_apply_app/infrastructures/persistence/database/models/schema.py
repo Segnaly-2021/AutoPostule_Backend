@@ -1,3 +1,27 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/persistence/database/models/schema.py
+#
+# WHAT IT DOES:
+#   Defines every PostgreSQL table as a SQLAlchemy ORM class. These *DB classes are
+#   separate from the domain entities; repositories translate between the two.
+#   Alembic compares these classes to the live database to generate migrations, so
+#   a change here normally needs a new migration.
+#
+# USED BY:
+#   - alembic/env.py: target metadata for migrations
+#   - auto_apply_app/infrastructures/persistence/database/session.py: Base for init_db
+#   - auto_apply_app/infrastructures/persistence/database/repositories/user_repo_db.py: UserDB
+#   - auto_apply_app/infrastructures/persistence/database/repositories/auth_repo_db.py: AuthUserDB
+#   - auto_apply_app/infrastructures/persistence/database/repositories/job_offer_repo_db.py: JobOfferDB
+#   - auto_apply_app/infrastructures/persistence/database/repositories/job_search_repo_db.py: JobSearchDB
+#   - auto_apply_app/infrastructures/persistence/database/repositories/subscription_repo_db.py: UserSubscriptionDB
+#   - auto_apply_app/infrastructures/persistence/database/repositories/agent_state_repo_db.py: AgentStateDB
+#   - ... and 9 more
+#
+# EXTERNAL DEPENDENCIES:
+#   - SQLAlchemy: ORM mapping and PostgreSQL column types (ARRAY, JSONB)
+#   - Alembic: schema migrations based on these models
+# ==============================================================================
 from uuid import uuid4, UUID
 from typing import List, Optional
 from datetime import datetime, timezone, UTC
@@ -18,6 +42,9 @@ from auto_apply_app.domain.value_objects import (
 )
 
 
+# All models inherit from Base, which collects them in Base.metadata for Alembic.
+# Mapped[...] declares the Python type; `default=` runs in Python on ORM inserts, while
+# `server_default=` lives in the database and also covers raw SQL inserts.
 class Base(DeclarativeBase):
     pass
 
@@ -44,6 +71,9 @@ class UserDB(Base):
    
 
     # Relationships
+    # passive_deletes=True: when a user is deleted, let PostgreSQL's ON DELETE CASCADE
+    # remove child rows instead of SQLAlchemy loading each one first. In async code
+    # this also avoids implicit lazy-loading, which would raise an error.
     subscription: Mapped["UserSubscriptionDB"] = relationship(
         "UserSubscriptionDB", back_populates="user", uselist=False,
         cascade="all, delete-orphan", passive_deletes=True,
@@ -196,6 +226,7 @@ class BoardCredentialDB(Base):
         index=True
     )
     job_board: Mapped[str] = mapped_column(String(50), index=True)
+    # Fernet ciphertext produced by board_credentials_encryption/encryption.py.
     login_encrypted: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     password_encrypted: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -225,6 +256,8 @@ class JobSearchDB(Base):
     )
     
     job_title: Mapped[str] = mapped_column(String(200))
+    # native_enum=False stores the enum member's NAME as VARCHAR rather than creating a
+    # PostgreSQL ENUM type, so adding a member does not need ALTER TYPE.
     job_boards: Mapped[List[JobBoard]] = mapped_column(
         ARRAY(SQLEnum(JobBoard, native_enum=False)), 
         default=list

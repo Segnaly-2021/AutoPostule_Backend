@@ -1,3 +1,21 @@
+# ==============================================================================
+# FILE: auto_apply_app/domain/entities/auth_user.py
+#
+# WHAT IT DOES:
+#   The login account, separate from the User profile. Holds the password hash,
+#   verification state, pending email change, admin flag and marketing opt-out,
+#   plus the rules for code expiry and attempt limits.
+#
+# USED BY:
+#   - auto_apply_app/application/repositories/auth_repo.py: repository interface
+#   - auto_apply_app/application/use_cases/user_use_cases.py: all auth flows
+#   - auto_apply_app/infrastructures/persistence/database/repositories/auth_repo_db.py: persistence
+#   - auto_apply_app/infrastructures/persistence/in_memory/memory.py: in-memory store
+#   - tests/test_messaging.py: test fixtures
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from uuid import UUID

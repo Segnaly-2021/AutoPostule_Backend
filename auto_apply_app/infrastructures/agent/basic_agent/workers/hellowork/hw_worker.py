@@ -1,3 +1,21 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/agent/basic_agent/workers/hellowork/hw_worker.py
+#
+# WHAT IT DOES:
+#   STATUS: LEGACY, dead code. Nothing imports this file.
+#   Early HelloWork worker. Do not confuse it with the live worker at
+#   auto_apply_app/infrastructures/agent/workers/hellowork/hw_worker.py.
+#
+# USED BY:
+#   - no importers found (likely dead code)
+#
+# EXTERNAL DEPENDENCIES:
+#   - langgraph: worker subgraph
+#   - langchain_core: LLM message and model types
+#   - playwright / Chromium: browser automation
+#   - pdfplumber: resume PDF text extraction
+#   - HelloWork (hellowork.com): the job board it drives
+# ==============================================================================
 import json
 import asyncio
 from langgraph.graph import StateGraph, END, START

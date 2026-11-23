@@ -1,3 +1,19 @@
+# ==============================================================================
+# FILE: tests/test_session_binding.py
+#
+# WHAT IT DOES:
+#   Protects identity consistency: cookie jars, sticky proxy sessions and browser
+#   fingerprints must all be keyed on the same device persona. Mixes unit checks
+#   with checks of the worker and master source text.
+#
+# USED BY:
+#   - pytest: test entry point; nothing imports it
+#
+# EXTERNAL DEPENDENCIES:
+#   - pytest: test runner and fixtures
+#   - 2Captcha proxy: its adapter's session-key logic is tested, with no network
+# ==============================================================================
+
 """Cookie jars, exit IPs and fingerprints must all key on the same device.
 
 Before this change they keyed on three different things — fingerprint on

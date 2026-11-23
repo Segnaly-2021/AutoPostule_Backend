@@ -1,3 +1,19 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/agent/fake_agent/fake_workers/fake_indeed_worker.py
+#
+# WHAT IT DOES:
+#   STATUS: WIRED BUT DISABLED. FakeMasterAgent builds it, INDEED_MAX is 0, and
+#   it is not launched. Anonymous, search-only Indeed scraper for free search.
+#   Runs headful on an X display because Indeed blocks headless Chromium.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/agent/fake_agent/fake_master/fake_master_agent.py: constructed, not launched
+#
+# EXTERNAL DEPENDENCIES:
+#   - playwright / Chromium: browser automation
+#   - Xvfb: virtual display, through input/display.py's open_display
+#   - Indeed (fr.indeed.com): the job board it would search
+# ==============================================================================
 # auto_apply_app/infrastructures/agent/fake_agent/fake_workers/fake_indeed_worker.py
 
 import os

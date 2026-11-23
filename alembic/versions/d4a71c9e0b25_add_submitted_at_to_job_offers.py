@@ -1,3 +1,19 @@
+# ==============================================================================
+# FILE: alembic/versions/d4a71c9e0b25_add_submitted_at_to_job_offers.py
+#
+# WHAT IT DOES:
+#   Active migration. Adds job_offers.submitted_at for per-cycle billing, backfills
+#   SUBMITTED rows from application_date, and adds a partial index on
+#   (user_id, submitted_at).
+#
+# USED BY:
+#   - Alembic (alembic/env.py, scripts/migrate.sh): applied by `alembic upgrade`
+#
+# EXTERNAL DEPENDENCIES:
+#   - Alembic: migration framework
+#   - SQLAlchemy: column and type definitions
+# ==============================================================================
+
 """add job_offers.submitted_at for per-cycle volume billing
 
 Pricing v2 bills a volume of applications per billing cycle (180 BASIC /

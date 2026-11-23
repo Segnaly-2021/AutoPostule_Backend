@@ -1,3 +1,19 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/agent/dispatch/cloud_run_jobs_dispatcher.py
+#
+# WHAT IT DOES:
+#   Production way to start an agent run. The API process asks Cloud Run to launch
+#   the agent Job, passing the action and ids as env vars, then returns at once.
+#   worker_main.py reads those env vars inside the Job and calls AgentRunner.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/configuration/container.py: chosen as the DispatchPort in production
+#
+# EXTERNAL DEPENDENCIES:
+#   - google-cloud-run (google.cloud.run_v2): client that triggers the Job
+#   - Google Cloud Run Jobs: runs the browser agent
+#   - Redis: not called here, but carries the Job's progress back to the API
+# ==============================================================================
 import logging
 import asyncio
 from uuid import UUID

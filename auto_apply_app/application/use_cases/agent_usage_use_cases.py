@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/use_cases/agent_usage_use_cases.py
+#
+# WHAT IT DOES:
+#   Finishes a successful agent run: marks the search COMPLETED and adds one to
+#   the user's daily run counter, in the same transaction.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/agent/create_agent.py: injects it into the agent
+#   - auto_apply_app/infrastructures/agent/master/master_agent.py: calls it at run end
+#   - auto_apply_app/infrastructures/configuration/container.py: builds the use case
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 # auto_apply_app/application/use_cases/agent_usage_use_cases.py
 import logging
 from dataclasses import dataclass
@@ -34,6 +49,8 @@ class CompleteAgentRunUseCase:
                     )
 
                 # Defensive: only transition if it makes sense.
+                # NOTE: possible issue: complete_search() only rejects COMPLETED and
+                # PENDING, so a CANCELLED (user-killed) search can become COMPLETED here.
                 # complete_search() will raise if status isn't SEARCHING.
                 try:
                     search.complete_search()

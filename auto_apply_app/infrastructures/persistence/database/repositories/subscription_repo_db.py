@@ -1,3 +1,19 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/persistence/database/repositories/subscription_repo_db.py
+#
+# WHAT IT DOES:
+#   Stores each user's plan, billing state, Stripe ids and AI credit balance. Its key
+#   feature is try_consume_credits: one atomic SQL statement that checks the balance,
+#   deducts credits and writes the ledger row, safe across concurrent workers.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/persistence/database/repositories/unit_of_work_repo_db.py: uow.subscription_repo
+#
+# EXTERNAL DEPENDENCIES:
+#   - SQLAlchemy: async queries and raw SQL text()
+#   - PostgreSQL (Supabase): user_subscriptions and credit_transactions tables
+#   - Stripe: source of the customer and subscription ids stored here
+# ==============================================================================
 # =============================================================================
 # subscription_repo_db.py
 # =============================================================================
@@ -67,6 +83,9 @@ class SubscriptionRepoDB(SubscriptionRepository):
         sub_db = result.scalar_one_or_none()
         return self._map_to_entity(sub_db) if sub_db else None
 
+    # NOTE: possible issue: save() writes ai_credits_balance from the in-memory entity. If
+    # a worker consumes credits between that entity's read and this save (for example
+    # during a webhook), the older balance overwrites the deduction.
     async def save(self, subscription: UserSubscription) -> None:
         sub_db = UserSubscriptionDB(
             id=subscription.id, # 🚨 FIX 1: Crucial for merge() to UPDATE instead of INSERT!

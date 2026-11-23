@@ -1,3 +1,25 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/agent/workers/hellowork/hw_worker_v1.py
+#
+# WHAT IT DOES:
+#   STATUS: LEGACY, never instantiated by the live agent. Edit hw_worker.py instead.
+#   Old HelloWork scrape-and-apply worker. It still LOADS in production because
+#   master/master_agent.py imports its class, but only for a type annotation.
+#   create_agent.py builds the real worker from workers/hellowork/hw_worker.py.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/agent/master/master_agent.py: type hint only
+#   - auto_apply_app/infrastructures/agent/basic_agent/create_agent.py: dead legacy factory
+#   - auto_apply_app/infrastructures/agent/basic_agent/master/master_agent.py: dead legacy master
+#
+# EXTERNAL DEPENDENCIES:
+#   - langgraph: worker subgraph
+#   - langchain_core: LLM message and model types
+#   - langchain_google_genai: Gemini chat model client
+#   - playwright / Chromium: browser automation
+#   - pdfplumber: resume PDF text extraction
+#   - HelloWork (hellowork.com): the job board it drives
+# ==============================================================================
 import json
 import asyncio
 from typing import Optional

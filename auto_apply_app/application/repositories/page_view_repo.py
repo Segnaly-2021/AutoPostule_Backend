@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/repositories/page_view_repo.py
+#
+# WHAT IT DOES:
+#   Interface for anonymous page-view storage, the visitor, session and view
+#   counts on the admin dashboard, and deletion of old rows.
+#
+# USED BY:
+#   - auto_apply_app/application/repositories/unit_of_work.py: exposes it as page_view_repo
+#   - auto_apply_app/infrastructures/persistence/database/repositories/page_view_repo_db.py: implementation
+#   - auto_apply_app/infrastructures/persistence/in_memory/memory.py: in-memory implementation
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 """
 This module defines the repository interface for PageView entity persistence.
 """

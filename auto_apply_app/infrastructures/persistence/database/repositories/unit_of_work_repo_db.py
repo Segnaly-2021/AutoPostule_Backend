@@ -1,3 +1,19 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/persistence/database/repositories/unit_of_work_repo_db.py
+#
+# WHAT IT DOES:
+#   The SQLAlchemy Unit of Work (UoW): one database transaction shared by all
+#   repositories. A use case writes `async with uow_factory() as uow:`, works through
+#   uow.user_repo, uow.job_repo and so on, and everything commits together on a clean
+#   exit or rolls back together on an exception.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/repository_factory.py: creates one per uow_factory() call
+#
+# EXTERNAL DEPENDENCIES:
+#   - SQLAlchemy: async sessions and transactions
+#   - PostgreSQL (Supabase): the transaction target
+# ==============================================================================
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from auto_apply_app.application.repositories.unit_of_work import UnitOfWork
@@ -25,6 +41,9 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
     async def __aenter__(self):
         self.session = self.session_factory()
         await self.session.begin()
+
+        # All repositories share this one session, which is what makes their writes
+        # part of the same transaction.
         
         self.user_repo = UserRepoDB(self.session)
         self.auth_repo = AuthRepoDB(self.session)
@@ -49,6 +68,8 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         return self
 
     async def __aexit__(self, exc_type, exc_value, traceback):
+        # NOTE: possible issue: close() is not in a `finally`. If commit() or rollback()
+        # raises (for example on a dropped connection), the session is not closed here.
         if exc_type is not None:
             await self.rollback()
         else:

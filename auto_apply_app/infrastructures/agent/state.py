@@ -1,3 +1,26 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/agent/state.py
+#
+# WHAT IT DOES:
+#   Defines JobApplicationState, the shared memory of the LangGraph run. The master
+#   and all board workers read it, and each node returns a partial update to it.
+#   Each field declares a "reducer" that decides how updates merge, which is what
+#   makes it safe for parallel workers to write the same field.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/agent/master/master_agent.py: master graph state
+#   - auto_apply_app/infrastructures/agent/workers/apec/apec_worker.py: worker subgraph state
+#   - auto_apply_app/infrastructures/agent/workers/hellowork/hw_worker.py: worker subgraph state
+#   - auto_apply_app/infrastructures/agent/workers/wttj/wttj_worker.py: worker subgraph state
+#   - auto_apply_app/infrastructures/agent/workers/teaser/teaser_worker.py: worker subgraph state
+#   - auto_apply_app/infrastructures/agent/workers/hellowork/hw_worker_v1.py: legacy worker
+#   - auto_apply_app/infrastructures/agent/basic_agent/master/master_agent.py: dead legacy master
+#   - auto_apply_app/infrastructures/agent/basic_agent/workers/apec/apec_worker.py: dead legacy worker
+#   - ... and 2 more
+#
+# EXTERNAL DEPENDENCIES:
+#   - langgraph: not imported here, but it reads the Annotated reducers below
+# ==============================================================================
 import operator
 from typing import TypedDict, List, Optional, Annotated, Dict
 
@@ -31,6 +54,15 @@ def take_latest(old, new):
     return new
 
 
+# HOW REDUCERS WORK: `Annotated[Type, fn]` tells LangGraph to compute
+# `new_value = fn(current_value, update)` for that field. Without a reducer, two
+# parallel branches writing the same field in one step raise InvalidUpdateError.
+#   keep_first   -> the first value stays forever
+#   take_latest  -> the last non-None write wins (order between parallel workers is not fixed)
+#   operator.add -> lists are concatenated, so each worker's results accumulate
+#
+# Reducers also apply to `aupdate_state`, which matters on a human-review resume:
+# see the note in MasterAgent.resume_job_search.
 class JobApplicationState(TypedDict):
     # --- IMMUTABLE MASTER DATA ---
     # Workers echo these back unchanged. keep_first ensures

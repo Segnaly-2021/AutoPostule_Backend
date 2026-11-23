@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/api/exception_handlers.py
+#
+# WHAT IT DOES:
+#   Defines the app-wide error responses: intentional HTTP errors, request
+#   validation errors (422) and a catch-all 500. The catch-all logs full details
+#   on the server and returns only a generic message plus a short error_id.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/app.py: calls register_exception_handlers()
+#
+# EXTERNAL DEPENDENCIES:
+#   - fastapi: app, request, response and validation error types
+#   - starlette: base HTTPException, so framework 404/405 errors are handled too
+# ==============================================================================
 """
 Global exception handlers for the FastAPI application.
 
@@ -31,6 +46,8 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException) 
     These are already user-safe (you wrote the message yourself), so we
     pass them through with a consistent structure.
     """
+    # The body key is "error", not FastAPI's default "detail". When the error came from
+    # handle_result(), exc.detail is the structured dict with reason/code/message.
     return JSONResponse(
         status_code=exc.status_code,
         content={
@@ -106,6 +123,9 @@ def register_exception_handlers(app: FastAPI) -> None:
     Call this from your app factory AFTER creating the FastAPI instance
     but BEFORE including routers.
     """
+    # Registered on Starlette's base class so it also covers errors the framework
+    # raises itself, such as 404 for an unknown URL. The `Exception` handler below is
+    # run by Starlette's outermost error middleware, outside the CORS middleware.
     app.add_exception_handler(StarletteHTTPException, http_exception_handler)
     app.add_exception_handler(RequestValidationError, validation_exception_handler)
     app.add_exception_handler(Exception, global_exception_handler)

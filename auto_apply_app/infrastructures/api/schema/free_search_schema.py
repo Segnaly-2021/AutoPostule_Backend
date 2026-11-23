@@ -1,3 +1,16 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/api/schema/free_search_schema.py
+#
+# WHAT IT DOES:
+#   Pydantic request and response shapes for free search. Field names are camelCase
+#   because they are the JSON contract with the frontend.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/routers/free_search.py: validates body and response
+#
+# EXTERNAL DEPENDENCIES:
+#   - pydantic: data validation and serialization
+# ==============================================================================
 # auto_apply_app/infrastructures/api/schema/free_search_schema.py
 
 from pydantic import BaseModel, Field, field_validator

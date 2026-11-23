@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: auto_apply_app/interfaces/viewmodels/preferences_vm.py
+#
+# WHAT IT DOES:
+#   Response shapes for the Settings page. Credentials expose only whether they are
+#   configured; login and password stay empty so secrets never reach the browser.
+#
+# USED BY:
+#   - auto_apply_app/interfaces/presenters/base_presenter.py: PreferencesPresenter types
+#   - auto_apply_app/interfaces/presenters/web.py: builds these view models
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
+
 # auto_apply_app/interfaces/viewmodels/preferences_vm.py
 from dataclasses import dataclass, field
 from typing import Dict

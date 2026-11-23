@@ -1,3 +1,20 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/api/routers/free_search.py
+#
+# WHAT IT DOES:
+#   The free-tier job search route, mounted at /api/v1/free-search. It runs only in
+#   the separate APP_ROLE=free_search service, whose image includes a browser. It
+#   requires login and has two limits: a per-user daily quota and a per-IP hourly limit.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/app.py: mounts this router in the "free_search" role
+#
+# EXTERNAL DEPENDENCIES:
+#   - fastapi: routing and dependency injection
+#   - slowapi: per-IP rate limit
+#   - Playwright / Chromium and job boards: used by the fake agent behind the controller
+#   - Cloud Run: hosts the dedicated autopostule-free-search service
+# ==============================================================================
 # auto_apply_app/infrastructures/api/routes/free_search.py
 
 from fastapi import APIRouter, Depends, Request

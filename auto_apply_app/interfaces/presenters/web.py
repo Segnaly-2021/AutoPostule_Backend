@@ -1,3 +1,19 @@
+# ==============================================================================
+# FILE: auto_apply_app/interfaces/presenters/web.py
+#
+# WHAT IT DOES:
+#   Web implementations of every presenter. Converts application DTOs and entities
+#   into the view models FastAPI serializes for the React frontend.
+#   NOTE: only WebUserPresenter.present_error accepts `reason`; the other web
+#   presenters take two arguments even though their interfaces declare three.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/app.py: creates the web presenters
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
+
 """
 Web-specific presenters for formatting User and Auth data for the web UI.
 """
@@ -169,6 +185,8 @@ class WebSubPresenter(SubPresenter):
             )
         
         # Case 2: Simple message response (dict)
+        # Checkout and portal also land here: their use cases put the URL payload
+        # (an object or dict, not a string) under the "message" key.
         if isinstance(subs, dict):
             return SubViewModel(
                 account=None,
@@ -208,6 +226,8 @@ class WebJobPresenter(JobPresenter):
         Converts a JobOffer domain entity into a ViewModel.
         """
         # Helper to format dates (handles both str and datetime)
+        # NOTE: possible issue: the DTO dates are Optional, and None falls through to
+        # str(None), so the API would send the literal text "None".
         def format_date(date_value):
             if isinstance(date_value, str):
                 # Already a string, extract just the date part
@@ -252,6 +272,8 @@ class WebJobPresenter(JobPresenter):
         "_CL"). This keeps the wire format stable and lets the frontend match
         on plain tokens for status-based color-coding.
         """
+        # NOTE: possible issue: `ranking` is Optional, so int(None) below raises
+        # TypeError; a real ranking of 0 is also displayed as the fallback 50.
         return JobReviewViewModel(
             id=str(job.id),
             company_name=job.company_name,
@@ -335,6 +357,9 @@ class WebJobSearchPresenter(JobSearchPresenter):
             search: JobSearch entity
             include_jobs: If True, includes all job offers in the response
         """
+        # NOTE: possible issue: JobSearch defines job_boards (plural) and no created_at,
+        # so the view model below raises AttributeError. Only the unused
+        # JobSearchController calls this method, which is why it goes unnoticed.
         jobs_list = None
         if include_jobs and search.all_matched_jobs:
             # Use WebJobPresenter to format jobs

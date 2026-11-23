@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/agent/fake_agent/fake_workers/fake_apec_worker.py
+#
+# WHAT IT DOES:
+#   STATUS: WIRED BUT INACTIVE. FakeMasterAgent builds it but never launches it.
+#   Anonymous, search-only APEC scraper for the free-search feature: no login,
+#   no LLM, no applications. Returns JobSnippet objects.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/agent/fake_agent/fake_master/fake_master_agent.py: constructed, quota fixed at 0
+#
+# EXTERNAL DEPENDENCIES:
+#   - playwright / Chromium: headless browser
+#   - APEC (apec.fr): the job board it would search
+# ==============================================================================
 # auto_apply_app/infrastructures/agent/fake_workers/fake_apec_worker.py
 
 from typing import List, Optional

@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: auto_apply_app/interfaces/controllers/user_controllers.py
+#
+# WHAT IT DOES:
+#   Adapter for user profiles: read, update, delete, and resume upload. Maps route
+#   parameters to the application's DTO field names and returns an OperationResult.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/routers/user.py: profile and resume routes
+#   - auto_apply_app/infrastructures/configuration/container.py: builds this controller
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
+
 from dataclasses import dataclass
 from typing import Optional
 
@@ -129,6 +144,8 @@ class UserController:
             return self._present_error(result)
 
         except Exception as e: # Catching raw exceptions since binary handling can throw varied system errors
+             # NOTE: possible issue: handle_result returns this message to the client,
+             # so raw exception text from storage or parsing can leak internal details.
              error_vm = self.presenter.present_error(f"Upload failed: {str(e)}", "SYSTEM_ERROR")
              return OperationResult.fail(error_vm.message, error_vm.code)
 

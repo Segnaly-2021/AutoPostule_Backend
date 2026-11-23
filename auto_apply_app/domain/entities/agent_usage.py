@@ -1,3 +1,19 @@
+# ==============================================================================
+# FILE: auto_apply_app/domain/entities/agent_usage.py
+#
+# WHAT IT DOES:
+#   Counts a user's completed agent runs per UTC day and defines the daily-run and
+#   cooldown rules. Runs are still recorded, but can_start_run is currently not
+#   enforced: its call in StartJobSearchAgentUseCase.prepare is commented out.
+#
+# USED BY:
+#   - auto_apply_app/application/repositories/agent_usage_repo.py: repository interface
+#   - auto_apply_app/domain/entities/free_search_usage.py: reuses _today_utc
+#   - auto_apply_app/infrastructures/persistence/database/repositories/agent_usage_repo_db.py: persistence
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 # auto_apply_app/domain/entities/agent_usage.py
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone

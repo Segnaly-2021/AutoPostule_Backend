@@ -1,3 +1,17 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/repositories/agent_state_repo.py
+#
+# WHAT IT DOES:
+#   Interface for the per-search kill switch and heartbeat row. Its field-scoped
+#   writes let the API and running workers update the row concurrently safely.
+#
+# USED BY:
+#   - auto_apply_app/application/repositories/unit_of_work.py: exposes it as agent_state_repo
+#   - auto_apply_app/infrastructures/persistence/database/repositories/agent_state_repo_db.py: implementation
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 # auto_apply_app/application/repositories/agent_state_repo.py
 from abc import ABC, abstractmethod
 from uuid import UUID

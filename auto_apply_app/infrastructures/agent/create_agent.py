@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/agent/create_agent.py
+#
+# WHAT IT DOES:
+#   The live factory for the real agent. Reads the LLM API keys, optionally builds
+#   the GCS browser session store, creates the APEC, HelloWork and WTTJ workers,
+#   and injects them with their use cases into a MasterAgent.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/configuration/container.py: builds the agent service
+#
+# EXTERNAL DEPENDENCIES:
+#   - Google Gemini, OpenAI, Anthropic: LLM providers (GEMINI_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY)
+#   - Google Cloud Storage: session cache, only when GCP_SESSION_BUCKET is set
+# ==============================================================================
 # auto_apply_app/infrastructures/agent/create_agent.py
 import logging
 import os

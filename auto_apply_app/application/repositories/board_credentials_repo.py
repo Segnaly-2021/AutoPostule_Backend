@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/repositories/board_credentials_repo.py
+#
+# WHAT IT DOES:
+#   Interface for each user's encrypted job board logins, one per board.
+#   It stores ciphertext only; encryption happens through EncryptionServicePort.
+#
+# USED BY:
+#   - auto_apply_app/application/repositories/unit_of_work.py: exposes it as board_cred_repo
+#   - auto_apply_app/infrastructures/persistence/database/repositories/board_credentials_repo_db.py: implementation
+#   - auto_apply_app/infrastructures/persistence/in_memory/memory.py: in-memory implementation
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 # AutoApply\auto_apply_app\application\repositories\board_credentials_repo.py
 from abc import ABC, abstractmethod
 from uuid import UUID

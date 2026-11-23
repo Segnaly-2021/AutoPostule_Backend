@@ -1,3 +1,16 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/api/schema/job_offer_schema.py
+#
+# WHAT IT DOES:
+#   Pydantic shapes for the application tracker: list filters, pagination (max 100
+#   per page), status toggles and the analytics response.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/routers/application.py: query, body and response models
+#
+# EXTERNAL DEPENDENCIES:
+#   - pydantic: data validation and serialization
+# ==============================================================================
 # In auto_apply_app/infrastructures/api/schema/job_offer_schema.py
 from pydantic import BaseModel, Field
 from typing import Optional

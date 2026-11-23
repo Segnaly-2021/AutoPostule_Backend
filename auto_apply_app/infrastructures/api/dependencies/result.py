@@ -1,3 +1,25 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/api/dependencies/result.py
+#
+# WHAT IT DOES:
+#   Converts a controller's OperationResult into an HTTP outcome: it returns the
+#   success value, or raises an HTTPException whose status comes from the error code.
+#   Routers call it as their last step.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/routers/admin.py: result-to-HTTP conversion
+#   - auto_apply_app/infrastructures/api/routers/agent.py: result-to-HTTP conversion
+#   - auto_apply_app/infrastructures/api/routers/agent_state.py: result-to-HTTP conversion
+#   - auto_apply_app/infrastructures/api/routers/announcement.py: result-to-HTTP conversion
+#   - auto_apply_app/infrastructures/api/routers/application.py: result-to-HTTP conversion
+#   - auto_apply_app/infrastructures/api/routers/free_search.py: result-to-HTTP conversion
+#   - auto_apply_app/infrastructures/api/routers/preferences.py: result-to-HTTP conversion
+#   - auto_apply_app/infrastructures/api/routers/subscription.py: result-to-HTTP conversion
+#   - ... and 1 more
+#
+# EXTERNAL DEPENDENCIES:
+#   - fastapi: HTTPException and status codes
+# ==============================================================================
 # auto_apply_app/infrastructures/api/dependencies/result.py
 from fastapi import HTTPException, status
 
@@ -18,6 +40,7 @@ def handle_result(result: OperationResult):
     }
 
     err = result.error
+    # Any error code not listed above becomes a 500.
     http_status = status_mapping.get(err.code, status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     # Structured body — `reason` is the stable key the frontend maps to EN/FR.

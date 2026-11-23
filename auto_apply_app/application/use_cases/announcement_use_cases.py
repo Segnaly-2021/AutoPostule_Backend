@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/use_cases/announcement_use_cases.py
+#
+# WHAT IT DOES:
+#   Announcement flows: users fetch and dismiss active notices; admins list,
+#   create, edit and delete them.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/configuration/container.py: builds the use cases
+#   - auto_apply_app/interfaces/controllers/announcement_controllers.py: calls them
+#   - tests/test_announcements.py: test coverage
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 """
 Use cases for in-app announcements.
 

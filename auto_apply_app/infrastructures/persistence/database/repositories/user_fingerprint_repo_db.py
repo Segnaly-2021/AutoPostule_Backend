@@ -1,3 +1,19 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/persistence/database/repositories/user_fingerprint_repo_db.py
+#
+# WHAT IT DOES:
+#   Stores each user's pool of browser "device personas" (screen, WebGL, locale and so
+#   on). Workers reuse them so a job board sees a consistent device. Handles assignment
+#   by board, usage tracking, retirement and cleanup of old personas.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/persistence/database/repositories/unit_of_work_repo_db.py: uow.user_fingerprint_repo
+#
+# EXTERNAL DEPENDENCIES:
+#   - SQLAlchemy: async queries and PostgreSQL upsert
+#   - PostgreSQL (Supabase): the user_fingerprints table
+#   - Playwright / Chromium: the workers apply these values to the browser
+# ==============================================================================
 # =============================================================================
 # user_fingerprint_repo_db.py
 # =============================================================================
@@ -77,6 +93,7 @@ class UserFingerprintRepoDB(UserFingerprintRepository):
         # On conflict keep the EXISTING row's id and created_at: the persona's id
         # is what the cookie jar and the sticky proxy session are keyed on, so a
         # concurrent insert must never renumber a device out from under them.
+        # `excluded` is PostgreSQL's name for the row that this INSERT tried to add.
         update_cols = {
             k: getattr(stmt.excluded, k)
             for k in values

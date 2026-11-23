@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/agent/basic_agent/create_agent.py
+#
+# WHAT IT DOES:
+#   STATUS: LEGACY, dead code. Nothing imports this file.
+#   Old factory that wired workers into a MasterAgent with one Gemini client.
+#   The live factory is auto_apply_app/infrastructures/agent/create_agent.py.
+#
+# USED BY:
+#   - no importers found (likely dead code)
+#
+# EXTERNAL DEPENDENCIES:
+#   - langchain_google_genai: Gemini chat model client
+#   - Google Gemini API: LLM provider, key read from GEMINI_API_KEY
+# ==============================================================================
 import os
 from langchain_google_genai import ChatGoogleGenerativeAI
 

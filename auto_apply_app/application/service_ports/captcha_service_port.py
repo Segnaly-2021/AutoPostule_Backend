@@ -1,3 +1,16 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/service_ports/captcha_service_port.py
+#
+# WHAT IT DOES:
+#   Interface for checking a human-verification token from the frontend.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/captcha/turnstile_adapter.py: implementation
+#   - auto_apply_app/infrastructures/configuration/container.py: wires the adapter
+#
+# EXTERNAL DEPENDENCIES:
+#   - Cloudflare Turnstile: captcha service behind the adapter (no import here)
+# ==============================================================================
 from abc import ABC, abstractmethod
 
 

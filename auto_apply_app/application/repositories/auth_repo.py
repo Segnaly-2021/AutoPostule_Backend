@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/repositories/auth_repo.py
+#
+# WHAT IT DOES:
+#   Interface for login accounts (AuthUser): lookup by email or id, saving, and
+#   the signup cohort and count queries used by messaging and the admin dashboard.
+#
+# USED BY:
+#   - auto_apply_app/application/repositories/unit_of_work.py: exposes it as auth_repo
+#   - auto_apply_app/infrastructures/persistence/database/repositories/auth_repo_db.py: implementation
+#   - auto_apply_app/infrastructures/persistence/in_memory/memory.py: in-memory implementation
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 # auto_apply_app/application/ports/auth_repository.py
 from abc import ABC, abstractmethod
 from datetime import datetime

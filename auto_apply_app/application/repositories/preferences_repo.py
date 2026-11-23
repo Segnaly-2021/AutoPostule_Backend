@@ -1,3 +1,17 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/repositories/preferences_repo.py
+#
+# WHAT IT DOES:
+#   Interface for loading, saving and deleting each user's agent preferences.
+#
+# USED BY:
+#   - auto_apply_app/application/repositories/unit_of_work.py: exposes it as user_pref_repo
+#   - auto_apply_app/infrastructures/persistence/database/repositories/user_preferences_repo_db.py: implementation
+#   - auto_apply_app/infrastructures/persistence/in_memory/memory.py: in-memory implementation
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 from abc import ABC, abstractmethod
 from uuid import UUID
 from typing import Optional

@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/repository_factory.py
+#
+# WHAT IT DOES:
+#   Chooses the storage backend from REPOSITORY_TYPE. MEMORY returns in-process fakes;
+#   DATABASE returns SQLAlchemy Units of Work plus a Redis client. Its result is the
+#   data-access foundation that the dependency-injection container is built on.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/configuration/container.py: create_repositories()
+#
+# EXTERNAL DEPENDENCIES:
+#   - redis: async client for the token blacklist, rate limiter and progress broker
+#   - PostgreSQL (Supabase) through SQLAlchemy: via SqlAlchemyUnitOfWork
+# ==============================================================================
 import os
 from typing import Tuple, Callable, Optional
 from redis.asyncio import Redis
@@ -14,6 +29,8 @@ from auto_apply_app.infrastructures.persistence.in_memory.memory import (
 
 # Database/Production Implementations
 from auto_apply_app.infrastructures.persistence.database.repositories.unit_of_work_repo_db import SqlAlchemyUnitOfWork
+# NOTE: possible issue: session.py raises at import when DATABASE_URL is unset, and this
+# import is unconditional, so even MEMORY mode needs DATABASE_URL to be defined.
 from auto_apply_app.infrastructures.persistence.database.session import async_session
 from auto_apply_app.infrastructures.persistence.database.repositories.token_blacklist_repo_db import RedisTokenBlacklistRepository
 
@@ -40,11 +57,15 @@ def create_repositories() -> Tuple[TokenBlacklistRepository, Callable[[], UnitOf
 
     elif repo_type == RepositoryType.DATABASE:
         redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+        # from_url does not connect yet; the first command does. decode_responses=True
+        # makes Redis return str instead of bytes, which the broker relies on.
         redis_client = Redis.from_url(redis_url, decode_responses=True)
         token_repo = RedisTokenBlacklistRepository(redis_client)
 
         return (
             token_repo,
+            # A factory, so each `async with uow_factory()` gets its own session and
+            # transaction. Sessions must never be shared between concurrent tasks.
             lambda: SqlAlchemyUnitOfWork(session_factory=async_session),
             redis_client,
         )

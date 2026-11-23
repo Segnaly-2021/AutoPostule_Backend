@@ -1,3 +1,17 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/api/dependencies/admin_deps.py
+#
+# WHAT IT DOES:
+#   FastAPI dependency that guards admin routes. It first requires a valid user
+#   token, then checks the is_admin flag in the database on every request, and
+#   answers a bare 403 for any kind of denial.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/routers/admin.py: CurrentAdminId on every admin route
+#
+# EXTERNAL DEPENDENCIES:
+#   - fastapi: dependency injection and HTTP errors
+# ==============================================================================
 # auto_apply_app/infrastructures/api/dependencies/admin_deps.py
 import logging
 from typing import Annotated
@@ -31,6 +45,8 @@ async def get_current_admin_id(
     """
     result = await container.check_admin_use_case.execute(current_user_id)
 
+    # Deny by default: only an explicit success with the exact value True passes.
+    # A database error or an unexpected value therefore results in a 403.
     if not (result.is_success and result.value is True):
         logger.warning(
             "admin_access_denied user_id=%s path=%s ip=%s",

@@ -1,3 +1,24 @@
+# ==============================================================================
+# FILE: auto_apply_app/domain/exceptions.py
+#
+# WHAT IT DOES:
+#   Business-level exceptions (not found, validation, rule violation, bad token).
+#   Repositories and entities raise them; use cases usually convert them to Result.
+#
+# USED BY:
+#   - auto_apply_app/application/use_cases/user_use_cases.py: handles auth and user errors
+#   - auto_apply_app/application/use_cases/job_offer_use_cases.py: handles job errors
+#   - auto_apply_app/application/use_cases/announcement_use_cases.py: handles validation
+#   - auto_apply_app/domain/entities/auth_user.py: raises rule violations
+#   - auto_apply_app/domain/entities/job_offer.py: raises missing posting id
+#   - auto_apply_app/infrastructures/api/dependencies/auth_deps.py: maps token errors to 401
+#   - auto_apply_app/infrastructures/authentication/token_provider.py: raises token errors
+#   - auto_apply_app/infrastructures/persistence/database/repositories/user_repo_db.py: raises not found
+#   - ... and 6 more
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 from uuid import UUID
 
 

@@ -1,3 +1,20 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/service_ports/proxy_service_port.py
+#
+# WHAT IT DOES:
+#   Interface for choosing the network proxy for a run. Returns settings in the
+#   format Playwright expects, or None when no proxy is used.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/agent/create_agent.py: passes it to the agent
+#   - auto_apply_app/infrastructures/agent/master/master_agent.py: resolves run proxies
+#   - auto_apply_app/infrastructures/proxy/no_proxy_adapter.py: no-proxy implementation
+#   - auto_apply_app/infrastructures/proxy/twocaptcha_proxy_adapter.py: 2Captcha implementation
+#
+# EXTERNAL DEPENDENCIES:
+#   - 2Captcha proxy service: used by the adapter (no import here)
+#   - Playwright: consumes the returned proxy config (no import here)
+# ==============================================================================
 # auto_apply_app/application/service_ports/proxy_service_port.py
 from abc import ABC, abstractmethod
 from typing import Optional, TypedDict

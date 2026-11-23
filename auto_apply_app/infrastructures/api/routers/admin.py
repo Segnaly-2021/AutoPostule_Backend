@@ -1,3 +1,17 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/api/routers/admin.py
+#
+# WHAT IT DOES:
+#   Admin-only routes: platform metrics and announcement management. They are mounted
+#   under the secret ADMIN_ROUTE_PREFIX, and every route requires CurrentAdminId.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/app.py: mounts it when ADMIN_ROUTE_PREFIX is set
+#
+# EXTERNAL DEPENDENCIES:
+#   - fastapi: routing and dependency injection
+#   - slowapi: per-IP rate limits
+# ==============================================================================
 # auto_apply_app/infrastructures/api/routers/admin.py
 #
 # Admin surface. Everything about USERS is read-only: no route here can mutate a

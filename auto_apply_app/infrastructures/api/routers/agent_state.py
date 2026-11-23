@@ -1,3 +1,16 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/api/routers/agent_state.py
+#
+# WHAT IT DOES:
+#   HTTP routes for agent state, mounted at /api/v1/agent-state: read the current
+#   state and request shutdown of one specific running search.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/app.py: mounts this router in the "api" role
+#
+# EXTERNAL DEPENDENCIES:
+#   - fastapi: routing and dependency injection
+# ==============================================================================
 # auto_apply_app/infrastructures/api/routers/agent_state.py
 from fastapi import APIRouter, status, Depends
 from typing import Annotated

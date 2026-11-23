@@ -1,3 +1,27 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/agent/pacing.py
+#
+# WHAT IT DOES:
+#   HumanPacing is a mixin inherited by the browser workers. It controls how long
+#   they wait (with heartbeats and a time budget), is their single door for clicks,
+#   typing and scrolling, sets up the X display and input backend around the browser
+#   launch, and can block heavy assets to save residential proxy bandwidth.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/agent/workers/apec/apec_worker.py: worker mixin
+#   - auto_apply_app/infrastructures/agent/workers/hellowork/hw_worker.py: worker mixin
+#   - auto_apply_app/infrastructures/agent/workers/wttj/wttj_worker.py: worker mixin
+#   - scripts/preflight.py: environment checks
+#   - tests/test_asset_blocking.py: asset blocking tests
+#   - tests/test_pacing.py: pacing tests
+#   - tests/test_stray_pages.py: stray window tests
+#
+# EXTERNAL DEPENDENCIES:
+#   - Playwright / Chromium: locators, routes, and browser launch options
+#   - Xvfb, xdotool, python-xlib: through the input package for OS-level input
+#   - Residential proxy (2Captcha credentials template): why bandwidth and sticky-session time matter
+#   - Google Cloud Run Jobs: its task timeout is why the pacing budget exists
+# ==============================================================================
 # auto_apply_app/infrastructures/agent/pacing.py
 """Human pacing, shared by every browser worker.
 
@@ -335,6 +359,8 @@ class HumanPacing:
         if self._over_budget():
             return
 
+        # Final delay = requested seconds x tier x global pace, then capped twice:
+        # by the single-pause ceiling here, and by the remaining run budget below.
         low = min(self._scaled(min_s, tier), PAUSE_CEILING_S)
         high = min(self._scaled(max_s, tier), PAUSE_CEILING_S)
 
@@ -630,6 +656,8 @@ class HumanPacing:
         Fails soft: if no display can be had, the run continues headless on CDP.
         A worker that cannot reach an X server should still apply for jobs.
         """
+        # Launch order across the worker: this method (display) -> launch browser ->
+        # create page -> _mount_input (attach XTEST). The backend needs a real window.
         kwargs = dict(base)
         self._x_display = None
 
@@ -727,6 +755,8 @@ class HumanPacing:
             request = route.request
             url = request.url
             try:
+                # Allow-list entries are plain substrings of the full URL, so any URL
+                # merely containing "captcha" or "turnstile" is also let through.
                 if request.resource_type in blocked and not any(
                     host in url for host in ASSET_ALLOW_HOSTS
                 ):
@@ -792,6 +822,8 @@ class HumanPacing:
             logger.warning("x11 backend unavailable: %s", exc)
             return "cdp"
 
+        # If verify() fails below, this is detached again and get_backend then falls
+        # back to CDP for this page.
         attach_backend(page, backend)
         # One listener per context, here because this already runs exactly once
         # per page in every worker. See watch_for_stray_pages for why it is not

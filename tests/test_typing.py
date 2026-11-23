@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: tests/test_typing.py
+#
+# WHAT IT DOES:
+#   Protects human-like typing: each key is typed separately with its own timing,
+#   intervals vary, and keys are held. Uses a fake locator, and inspects the APEC
+#   worker source with `ast` for how it submits the search.
+#
+# USED BY:
+#   - pytest: test entry point; nothing imports it
+#
+# EXTERNAL DEPENDENCIES:
+#   - pytest: test runner and fixtures
+# ==============================================================================
+
 """Keystroke rhythm.
 
 The bug this guards against is subtle and was live: human_type drew ONE random

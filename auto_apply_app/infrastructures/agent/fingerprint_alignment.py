@@ -1,3 +1,22 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/agent/fingerprint_alignment.py
+#
+# WHAT IT DOES:
+#   Makes a browser persona match the real launch conditions, without changing the
+#   stored persona. It sets the claimed Chrome version to the running browser's
+#   version, and shrinks the viewport when a borrowed screen is too small.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/agent/pacing.py: fits the viewport to the display
+#   - auto_apply_app/infrastructures/agent/workers/apec/apec_worker.py: aligns after launch
+#   - auto_apply_app/infrastructures/agent/workers/hellowork/hw_worker.py: aligns after launch
+#   - auto_apply_app/infrastructures/agent/workers/wttj/wttj_worker.py: aligns after launch
+#   - tests/test_fingerprint.py: fingerprint tests
+#   - tests/test_viewport_fit.py: viewport tests
+#
+# EXTERNAL DEPENDENCIES:
+#   - Chromium / Chrome: its reported version is the input (passed in by the workers)
+# ==============================================================================
 """Align a persona's claimed Chrome version with the browser that actually launched.
 
 A persona's `chrome_major` is chosen when the device is born (CHROME_MAJOR_MIN..MAX

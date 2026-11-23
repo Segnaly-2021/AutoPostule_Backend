@@ -1,3 +1,20 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/api/routers/user.py
+#
+# WHAT IT DOES:
+#   Account routes, mounted at /api/v1/user: register, login, email verification,
+#   password reset and change, email change, logout, profile, resume upload and
+#   account deletion. Public routes rely on rate limits and, for most, Turnstile.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/app.py: mounts this router in the "api" role
+#
+# EXTERNAL DEPENDENCIES:
+#   - fastapi: routing, file uploads and dependency injection
+#   - slowapi: per-IP rate limits (these need the `request: Request` parameter)
+#   - Cloudflare Turnstile: captcha on public forms
+#   - Google Cloud Storage and Resend: reached through the controllers
+# ==============================================================================
 from fastapi import APIRouter, UploadFile, File, Depends, status, HTTPException, Request
 from typing import Annotated
 
@@ -247,6 +264,8 @@ async def verify_email(
     token: str,
     auth_controller: AuthControllerDep,
 ):
+    # NOTE: possible issue: AuthController has no handle_verify_email (only
+    # handle_verify_code), so this legacy route raises AttributeError and returns 500.
     result = await auth_controller.handle_verify_email(token=token)
     return handle_result(result)
 
@@ -275,6 +294,7 @@ async def resend_verification(
     description="Invalidate the current JWT token by adding it to blacklist"
 )
 async def logout(
+    # CurrentToken only extracts the header; it does not validate the token.
     token: CurrentToken,  
     auth_controller: AuthControllerDep
 ):

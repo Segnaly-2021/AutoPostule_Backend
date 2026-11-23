@@ -1,3 +1,19 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/dtos/user_dtos.py
+#
+# WHAT IT DOES:
+#   Request and response shapes for the user profile. The update DTO sends only
+#   the fields provided, and deliberately excludes email (see its comment below).
+#
+# USED BY:
+#   - auto_apply_app/application/use_cases/user_use_cases.py: profile inputs and outputs
+#   - auto_apply_app/interfaces/controllers/user_controllers.py: builds requests
+#   - auto_apply_app/interfaces/presenters/base_presenter.py: presenter type hints
+#   - auto_apply_app/interfaces/presenters/web.py: presents users
+#
+# EXTERNAL DEPENDENCIES:
+#   - pydantic: EmailStr type annotation (dataclasses do not enforce it at runtime)
+# ==============================================================================
 from dataclasses import dataclass
 from typing import Optional, Dict, Self
 from pydantic import EmailStr

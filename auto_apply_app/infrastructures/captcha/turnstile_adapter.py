@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/captcha/turnstile_adapter.py
+#
+# WHAT IT DOES:
+#   Verifies Cloudflare Turnstile tokens. The browser widget gets a token, the frontend
+#   sends it to this API, and this adapter asks Cloudflare whether it is valid. Any
+#   failure counts as "not valid" (fail closed). Startup fails without TURNSTILE_SECRET_KEY.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/app.py: injected as captcha_port
+#
+# EXTERNAL DEPENDENCIES:
+#   - httpx: async HTTP client
+#   - Cloudflare Turnstile: the siteverify API
+# ==============================================================================
 import os
 import logging
 import httpx

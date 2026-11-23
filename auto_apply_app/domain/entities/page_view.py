@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: auto_apply_app/domain/entities/page_view.py
+#
+# WHAT IT DOES:
+#   One anonymous page view, the raw data behind the admin visitor metrics.
+#
+# USED BY:
+#   - auto_apply_app/application/repositories/page_view_repo.py: repository interface
+#   - auto_apply_app/application/use_cases/analytics_use_cases.py: records views
+#   - auto_apply_app/infrastructures/persistence/database/repositories/page_view_repo_db.py: persistence
+#   - auto_apply_app/infrastructures/persistence/in_memory/memory.py: in-memory store
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional

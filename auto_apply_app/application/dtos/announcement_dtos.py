@@ -1,3 +1,20 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/dtos/announcement_dtos.py
+#
+# WHAT IT DOES:
+#   Data shapes for in-app announcements: the public response, the admin response
+#   (adds publishing state and schedule), and the admin save request with its
+#   trimming and length caps.
+#
+# USED BY:
+#   - auto_apply_app/application/use_cases/announcement_use_cases.py: inputs and outputs
+#   - auto_apply_app/infrastructures/api/schema/announcement_schema.py: API schemas
+#   - auto_apply_app/interfaces/controllers/announcement_controllers.py: builds requests
+#   - tests/test_announcements.py: test coverage
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 """
 DTOs for in-app announcements.
 

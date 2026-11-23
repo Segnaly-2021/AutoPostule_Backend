@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/repositories/announcement_repo.py
+#
+# WHAT IT DOES:
+#   Interface for storing announcements and tracking which users dismissed them.
+#   Serves both the per-page-load user query and the admin management screens.
+#
+# USED BY:
+#   - auto_apply_app/application/repositories/unit_of_work.py: exposes it as announcement_repo
+#   - auto_apply_app/infrastructures/persistence/database/repositories/announcement_repo_db.py: implementation
+#   - auto_apply_app/infrastructures/persistence/in_memory/memory.py: in-memory implementation
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 # auto_apply_app/application/repositories/announcement_repo.py
 from abc import ABC, abstractmethod
 from datetime import datetime

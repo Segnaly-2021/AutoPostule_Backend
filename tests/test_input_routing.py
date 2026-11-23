@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: tests/test_input_routing.py
+#
+# WHAT IT DOES:
+#   Protects the rule that live workers send all input through the HumanPacing
+#   helpers. Inspects worker source with `ast`, so a direct page or locator call
+#   fails the suite as soon as it is written.
+#
+# USED BY:
+#   - pytest: test entry point; nothing imports it
+#
+# EXTERNAL DEPENDENCIES:
+#   - pytest: test runner and fixtures
+# ==============================================================================
+
 """Every input a live worker sends must go through the pacing mixin.
 
 `human_behavior` is a bag of free functions, so nothing ever stopped a worker

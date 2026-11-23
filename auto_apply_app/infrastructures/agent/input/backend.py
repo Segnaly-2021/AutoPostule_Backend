@@ -1,3 +1,25 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/agent/input/backend.py
+#
+# WHAT IT DOES:
+#   Defines the InputBackend interface every input method must implement, detects
+#   whether this machine can use X11 input, and keeps the page-to-backend registry.
+#   human_behavior.py calls get_backend(page) and does not care which one it gets.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/agent/human_behavior.py: gets each page's backend
+#   - auto_apply_app/infrastructures/agent/pacing.py: selects, attaches, detaches backends
+#   - auto_apply_app/infrastructures/agent/input/__init__.py: re-exports the API
+#   - auto_apply_app/infrastructures/agent/input/cdp_backend.py: backend name constant
+#   - auto_apply_app/infrastructures/agent/input/x11_backend.py: backend name constant
+#   - scripts/input_probe.py: input measurement tool
+#   - scripts/preflight.py: environment checks
+#   - tests/test_input_backends.py: backend tests
+#
+# EXTERNAL DEPENDENCIES:
+#   - python-xlib (Xlib): presence check only
+#   - Xvfb, xdotool: system tools whose presence enables the x11 backend
+# ==============================================================================
 """The seam: one interface, one registry, one env knob.
 
 Coordinates crossing this boundary are always **CSS pixels in the page's
@@ -103,6 +125,8 @@ def resolve_backend_name() -> str:
 _backends: dict[int, InputBackend] = {}
 
 
+# Entries leave this dict only through detach_backend, so teardown must call it
+# (HumanPacing._close_display does). A leftover entry could match a reused id().
 def attach_backend(page, backend: InputBackend) -> None:
     _backends[id(page)] = backend
     logger.info("input backend %r attached to page %s", backend.name, id(page))

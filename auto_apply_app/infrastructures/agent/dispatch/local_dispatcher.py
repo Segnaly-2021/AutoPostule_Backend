@@ -1,3 +1,17 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/agent/dispatch/local_dispatcher.py
+#
+# WHAT IT DOES:
+#   Development way to start an agent run: an asyncio background task inside the
+#   API process, using the same AgentRunner as production. Browser work therefore
+#   shares the API's event loop and memory.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/configuration/container.py: chosen as the DispatchPort for local runs
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 import asyncio
 import logging
 from typing import Set
@@ -30,6 +44,8 @@ class LocalDispatcher(DispatchPort):
         self._tasks: Set[asyncio.Task] = set()
 
     def _spawn(self, coro) -> None:
+        # asyncio keeps only a weak reference to tasks, so the set below is what
+        # stops a running task from being garbage-collected.
         task = asyncio.create_task(coro)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)

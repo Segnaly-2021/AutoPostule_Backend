@@ -1,3 +1,16 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/api/schema/agent_schema.py
+#
+# WHAT IT DOES:
+#   Pydantic request and response shapes for the agent routes: start, resume, basic
+#   responses, and the documented form of an SSE progress event.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/routers/agent.py: validates bodies and responses
+#
+# EXTERNAL DEPENDENCIES:
+#   - pydantic: data validation and serialization
+# ==============================================================================
 # auto_apply_app/infrastructures/api/schema/agent_schema.py
 from pydantic import BaseModel, Field
 from typing import List, Optional
@@ -15,6 +28,7 @@ class StartAgentRequest(BaseModel):
     # 🚨 V2 UPDATE: Renamed to plural `job_boards` to match the Controller/DTO
     job_boards: List[str] = Field(..., description="List of job boards to search on (e.g., ['WTTJ', 'APEC', 'HELLOWORK'])")   
     
+    # Pydantic does not validate defaults, so this field can be None despite its List type.
     contract_types: List[ContractType] = Field(default=None, description="Acceptable contract types")
     resume_path: Optional[str] = Field(default=None, description="Path to the user's resume (if not using default)")
     min_salary: Optional[int] = Field(default=0, description="Minimum salary expectation")

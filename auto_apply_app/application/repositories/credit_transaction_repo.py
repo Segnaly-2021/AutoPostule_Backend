@@ -1,3 +1,19 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/repositories/credit_transaction_repo.py
+#
+# WHAT IT DOES:
+#   Interface for the append-only AI credit ledger. Records credit grants and
+#   answers reporting queries; credit consumption is written elsewhere, by
+#   SubscriptionRepository.try_consume_credits (see the class docstring).
+#
+# USED BY:
+#   - auto_apply_app/application/repositories/unit_of_work.py: exposes it as credit_tx_repo
+#   - auto_apply_app/infrastructures/persistence/database/repositories/credit_transaction_repo_db.py: implementation
+#   - auto_apply_app/infrastructures/persistence/in_memory/memory.py: in-memory implementation
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 """
 This module defines the repository interface for CreditTransaction persistence.
 """

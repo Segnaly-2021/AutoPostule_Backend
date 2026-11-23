@@ -1,3 +1,17 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/use_cases/admin_use_cases.py
+#
+# WHAT IT DOES:
+#   Admin access check (read from the database on every request) and the
+#   platform-wide metrics for the dashboard: users, visitors, applications, credits.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/configuration/container.py: builds the use cases
+#   - auto_apply_app/interfaces/controllers/admin_controllers.py: calls them
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone

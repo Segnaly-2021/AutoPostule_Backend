@@ -1,3 +1,17 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/agent/basic_agent/master/master_agent.py
+#
+# WHAT IT DOES:
+#   STATUS: LEGACY, dead code. Nothing imports this file.
+#   Early, simpler version of the LangGraph master agent.
+#   The live one is auto_apply_app/infrastructures/agent/master/master_agent.py.
+#
+# USED BY:
+#   - no importers found (likely dead code)
+#
+# EXTERNAL DEPENDENCIES:
+#   - langgraph: builds the orchestration graph
+# ==============================================================================
 #import asyncio
 from langgraph.graph import StateGraph, END
 

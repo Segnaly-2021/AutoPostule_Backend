@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: tests/test_fingerprint_rotation.py
+#
+# WHAT IT DOES:
+#   Protects the persona pool lifecycle: one device per board, bounded pool size,
+#   retirement of worn-out devices, stable resumes, and pool vs per_run modes.
+#   Uses the real use case with the in-memory repository.
+#
+# USED BY:
+#   - pytest: test entry point; nothing imports it
+#
+# EXTERNAL DEPENDENCIES:
+#   - pytest: test runner and fixtures
+# ==============================================================================
+
 """Persona pool lifecycle, driven through the real use case and in-memory repo."""
 from datetime import datetime, timezone, timedelta
 from uuid import uuid4

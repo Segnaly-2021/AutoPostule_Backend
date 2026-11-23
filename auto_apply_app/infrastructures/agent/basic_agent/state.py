@@ -1,3 +1,17 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/agent/basic_agent/state.py
+#
+# WHAT IT DOES:
+#   STATUS: LEGACY, dead code. Nothing imports this file.
+#   Early graph state with no reducers, so it could not support parallel workers.
+#   The live state is auto_apply_app/infrastructures/agent/state.py.
+#
+# USED BY:
+#   - no importers found (likely dead code)
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 from typing import TypedDict, List
 
 # Domain Entities

@@ -1,3 +1,19 @@
+# ==============================================================================
+# FILE: tests/test_display_selection.py
+#
+# WHAT IT DOES:
+#   Protects the choice of X display: borrow a visible screen on a dev machine,
+#   start a private Xvfb in a container, one browser per borrowed display, and the
+#   optional VNC live view. X server checks are mocked.
+#
+# USED BY:
+#   - pytest: test entry point; nothing imports it
+#
+# EXTERNAL DEPENDENCIES:
+#   - pytest: test runner and fixtures
+#   - Xvfb / x11vnc: the system tools whose selection logic is tested (mocked)
+# ==============================================================================
+
 """Which X display a browser lands on.
 
 Not a detail. The same code has to produce a window a person can WATCH on a dev

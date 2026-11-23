@@ -1,3 +1,21 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/dtos/auth_user_dtos.py
+#
+# WHAT IT DOES:
+#   Request and response shapes for authentication: register, login, logout,
+#   password change and reset, email verification, email change, unsubscribe.
+#   Does basic presence and format checks before the use cases run.
+#
+# USED BY:
+#   - auto_apply_app/application/use_cases/user_use_cases.py: auth use case inputs
+#   - auto_apply_app/interfaces/controllers/auth_controllers.py: builds requests
+#   - auto_apply_app/interfaces/presenters/base_presenter.py: presenter type hints
+#   - auto_apply_app/interfaces/presenters/web.py: presents LoginResponse
+#   - tests/test_messaging.py: unsubscribe tests
+#
+# EXTERNAL DEPENDENCIES:
+#   - pydantic: EmailStr type annotation (dataclasses do not enforce it at runtime)
+# ==============================================================================
 from dataclasses import dataclass
 from typing import Dict
 from uuid import UUID

@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: tests/test_viewport_fit.py
+#
+# WHAT IT DOES:
+#   Protects fitting a persona's browser window onto the real screen: oversized
+#   viewports shrink, fitting ones stay unchanged, and the persona keeps reporting
+#   its own screen size.
+#
+# USED BY:
+#   - pytest: test entry point; nothing imports it
+#
+# EXTERNAL DEPENDENCIES:
+#   - pytest: test runner and fixtures
+# ==============================================================================
+
 """Fitting a persona's window onto whatever screen is actually there.
 
 Playwright sizes the WINDOW to the requested viewport, so a 2560-wide persona

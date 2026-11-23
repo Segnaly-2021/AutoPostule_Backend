@@ -1,3 +1,17 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/use_cases/preferences_use_cases.py
+#
+# WHAT IT DOES:
+#   Reads and updates user settings and job board credentials. Credentials are
+#   encrypted before storage; blank fields keep the stored value.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/configuration/container.py: builds the use cases
+#   - auto_apply_app/interfaces/controllers/preference_controllers.py: calls them
+#
+# EXTERNAL DEPENDENCIES:
+#   - cryptography (Fernet): encrypts credentials through EncryptionServicePort (no import here)
+# ==============================================================================
 import logging
 from dataclasses import dataclass
 

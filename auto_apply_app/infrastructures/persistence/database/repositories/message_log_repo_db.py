@@ -1,3 +1,17 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/persistence/database/repositories/message_log_repo_db.py
+#
+# WHAT IT DOES:
+#   Records which lifecycle email each user has received. Its unique (user, kind)
+#   constraint guarantees the scheduled messaging job never logs the same email twice.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/persistence/database/repositories/unit_of_work_repo_db.py: uow.message_log_repo
+#
+# EXTERNAL DEPENDENCIES:
+#   - SQLAlchemy: async queries and PostgreSQL ON CONFLICT
+#   - PostgreSQL (Supabase): the message_log table
+# ==============================================================================
 # auto_apply_app/infrastructures/persistence/database/repositories/message_log_repo_db.py
 from uuid import UUID
 

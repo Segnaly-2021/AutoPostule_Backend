@@ -1,3 +1,25 @@
+# ==============================================================================
+# FILE: auto_apply_app/domain/entities/user_preferences.py
+#
+# WHAT IT DOES:
+#   A user's agent settings: full automation or review mode, active job boards,
+#   creativity (mapped to LLM temperature) and AI model. Also decides whether
+#   worker browsers launch headless.
+#
+# USED BY:
+#   - auto_apply_app/application/use_cases/agent_use_cases.py: validates a run
+#   - auto_apply_app/application/use_cases/preferences_use_cases.py: reads and updates
+#   - auto_apply_app/application/use_cases/run_context_use_cases.py: loads for a run
+#   - auto_apply_app/application/use_cases/user_use_cases.py: creates defaults at signup
+#   - auto_apply_app/application/repositories/preferences_repo.py: repository interface
+#   - auto_apply_app/infrastructures/agent/master/master_agent.py: routing
+#   - auto_apply_app/infrastructures/agent/state.py: agent state type
+#   - auto_apply_app/infrastructures/agent/workers/hellowork/hw_worker.py: browser launch
+#   - ... and 7 more
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 # auto_apply_app/domain/entities/user_preferences.py
 from dataclasses import dataclass, field
 from uuid import UUID
@@ -48,6 +70,9 @@ class UserPreferences(Entity):
         """
         return self.is_full_automation
 
+    # NOTE: possible issue: is_full_automation defaults to True, so default
+    # preferences return False here (headful). That contradicts the "defaults SAFE"
+    # docstring and can fail on Cloud Run, which has no display unless one is added.
     @property
     def run_browser_headless(self) -> bool:
         """Whether this run's browser should be headless.

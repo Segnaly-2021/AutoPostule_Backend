@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/repositories/message_log_repo.py
+#
+# WHAT IT DOES:
+#   Interface for the log of lifecycle emails already sent, so the scheduled
+#   messaging job can safely run again without emailing anyone twice.
+#
+# USED BY:
+#   - auto_apply_app/application/repositories/unit_of_work.py: exposes it as message_log_repo
+#   - auto_apply_app/infrastructures/persistence/database/repositories/message_log_repo_db.py: implementation
+#   - auto_apply_app/infrastructures/persistence/in_memory/memory.py: in-memory implementation
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 # auto_apply_app/application/repositories/message_log_repo.py
 from abc import ABC, abstractmethod
 from uuid import UUID

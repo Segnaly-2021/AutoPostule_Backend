@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/api/dependencies/captcha_dep.py
+#
+# WHAT IT DOES:
+#   FastAPI dependency that blocks a request unless it carries a valid Cloudflare
+#   Turnstile token in the `cf-turnstile-response` header. It protects public
+#   account routes such as register, login and forgot-password from bots.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/routers/user.py: register, login, forgot-password, resend-verification
+#
+# EXTERNAL DEPENDENCIES:
+#   - fastapi: dependency injection, header parsing and HTTP errors
+#   - Cloudflare Turnstile: verifies the token (through container.captcha_port)
+# ==============================================================================
 from typing import Annotated
 from fastapi import Depends, HTTPException, Header, Request, status
 

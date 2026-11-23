@@ -1,3 +1,21 @@
+# ==============================================================================
+# FILE: auto_apply_app/domain/entities/announcement.py
+#
+# WHAT IT DOES:
+#   A bilingual (FR/EN) in-app notice shown once per user. Holds its publishing
+#   state, schedule and optional call-to-action, and validates them.
+#
+# USED BY:
+#   - auto_apply_app/application/dtos/announcement_dtos.py: maps to responses
+#   - auto_apply_app/application/repositories/announcement_repo.py: repository interface
+#   - auto_apply_app/application/use_cases/announcement_use_cases.py: create and edit
+#   - auto_apply_app/infrastructures/persistence/database/repositories/announcement_repo_db.py: persistence
+#   - auto_apply_app/infrastructures/persistence/in_memory/memory.py: in-memory store
+#   - tests/test_announcements.py: test coverage
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional

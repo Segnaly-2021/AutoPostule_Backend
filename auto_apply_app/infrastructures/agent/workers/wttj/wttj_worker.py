@@ -1,3 +1,34 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/agent/workers/wttj/wttj_worker.py
+#
+# WHAT IT DOES:
+#   The active browser worker for Welcome to the Jungle (WTTJ). It is a small
+#   LangGraph graph run by the master agent, with two tracks:
+#   SCRAPE: open browser -> homepage -> log in -> set filters -> collect offers.
+#   SUBMIT: open browser with saved cookies -> fill and send approved forms.
+#   Both end in cleanup. It is the only worker that calls an LLM directly, to
+#   answer the custom questions some application forms contain.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/agent/create_agent.py: builds the worker for MasterAgent
+#   - auto_apply_app/infrastructures/agent/master/master_agent.py: runs its graph as a node
+#   - auto_apply_app/infrastructures/agent/basic_agent/create_agent.py: legacy agent wiring
+#   - auto_apply_app/infrastructures/agent/basic_agent/master/master_agent.py: legacy master
+#   - tests/test_pacing.py: tests the pacing behavior of the workers
+#
+# EXTERNAL DEPENDENCIES:
+#   - langgraph: the state graph that defines the worker's steps
+#   - playwright / Chromium: drives the browser
+#   - playwright_stealth: hides common browser-automation signals
+#   - langchain_core, langchain_google_genai, langchain_openai, langchain_anthropic:
+#     LLM calls to Google Gemini, OpenAI or Anthropic for form questions
+#   - pdfplumber: extracts CV text to give the LLM context
+#   - Welcome to the Jungle (welcometothejungle.com): the job board being automated
+#   - Axeptio: the third-party cookie-consent widget on that site
+#   - Google Cloud Storage: durable cookie storage, through the optional session_store
+#   - Residential proxy: optional, per-board, from state["proxy_configs"]
+#   - Xvfb / OS-level input: optional virtual display and input, managed by HumanPacing
+# ==============================================================================
 # auto_apply_app/infrastructures/agent/workers/wttj/wttj_worker.py
 import hashlib
 import logging
@@ -64,6 +95,9 @@ class WelcomeToTheJungleWorker(HumanPacing):
 
     NEW_MATCHES_LIST = 'div[data-testid="job-list"]'
 
+    # Direct children of the list whose test id STARTS with "job-card-" (^=).
+    # The ">" avoids matching nested elements that reuse the prefix, such as
+    # job-card-tag-location.
     CARD_SELECTOR = 'div[data-testid="job-list"] > div[data-testid^="job-card-"]'
 
     CARD_LINK = 'a[href*="/fr/companies/"][href*="/jobs/"]'
@@ -164,6 +198,8 @@ class WelcomeToTheJungleWorker(HumanPacing):
         except Exception:
             logger.exception("[WTTJ] Progress emit failed")
 
+    # Deduplication key for "has this user already seen this job on this board?".
+    # MD5 is fine here: it is an identity key, not a security feature.
     def _generate_fast_hash(self, company_name: str, job_title: str, user_id: str) -> str:
         c = str(company_name).replace(" ", "").lower().strip()
         t = str(job_title).replace(" ", "").lower().strip()
@@ -298,6 +334,8 @@ class WelcomeToTheJungleWorker(HumanPacing):
                 logger.info("[WTTJ] Dismissed application modal")
                 self._plog("application modal dismissed via 'Peut-être plus tard'")
             else:
+                # NOTE: possible issue: ":rcm:" looks like an auto-generated React id,
+                # which can change between builds, making this removal a silent no-op.
                 await self.page.evaluate("""
                     const portal = document.getElementById('portal/:rcm:');
                     if (portal) portal.remove();
@@ -367,6 +405,8 @@ class WelcomeToTheJungleWorker(HumanPacing):
         raw_location = None
 
         # Desktop block holds the visible title/company at lg+ width.
+        # The backslash escapes the ":" in the Tailwind class "lg:flex"; unescaped,
+        # CSS would read it as a pseudo-class.
         desktop_block = card.locator('div.hidden.lg\\:flex')
 
         try:
@@ -463,6 +503,8 @@ class WelcomeToTheJungleWorker(HumanPacing):
             logger.warning("[WTTJ] Could not expand section '%s'", section_title)
             self._plog(f"could not expand filter section '{section_title}'")
 
+    # Turns years since graduation into two adjacent WTTJ experience buckets.
+    # A missing or invalid year is treated as a recent graduate.
     def _map_experience_levels(self, graduation_year: Optional[str]) -> list[str]:
         if not graduation_year:
             return ["zero_to_one", "one_to_three"]
@@ -494,6 +536,9 @@ class WelcomeToTheJungleWorker(HumanPacing):
             logger.warning("[WTTJ] Could not toggle '%s'", name)
             self._plog(f"could not toggle checkbox '{name}'")
 
+    # Fills WTTJ's saved preferences form. Every checkbox group is set explicitly
+    # (on or off) because the account may hold values from an earlier run.
+    # Fixed policy here: remote "partial/punctual/no", and visa "europe" only.
     async def _apply_filters(
         self,
         user,
@@ -595,6 +640,8 @@ class WelcomeToTheJungleWorker(HumanPacing):
             # ============ 3. CONTRAT ET SALAIRE SECTION ============
             await self._expand_section("Contrat et salaire")
 
+            # NOTE: possible issue: JobSearch.contract_types defaults to None, and
+            # iterating None raises here, failing the whole filter step.
             wttj_values = []
             for ct in contract_types:
                 mapped = WTTJ_CONTRACT_MAP.get(str(ct.name).upper())
@@ -669,6 +716,8 @@ class WelcomeToTheJungleWorker(HumanPacing):
 
 
 
+    # WTTJ sometimes answers suspicious clicks by sending the browser home instead
+    # of showing an error. The scrape loop uses this to back off before retrying.
     async def _is_home_bounce(self) -> bool:
         """
         Detects whether WTTJ has redirected us to the homepage as a soft bot
@@ -708,6 +757,8 @@ class WelcomeToTheJungleWorker(HumanPacing):
             self._plog("nav back click failed -> results page not restored")
             return False
 
+    # Conditional edge run after every node. "error" jumps to cleanup; "continue"
+    # moves on. It catches both a node's error and the user's kill switch.
     async def route_node_exit(self, state: JobApplicationState) -> str:
         if state.get("error"):
             logger.warning("[WTTJ] Circuit breaker tripped: %s", state["error"])
@@ -868,6 +919,8 @@ class WelcomeToTheJungleWorker(HumanPacing):
     # NODES
     # =========================================================================
 
+    # NODE "start" (SCRAPE step 1): launch Chromium and build a context with this
+    # board's fingerprint and proxy. A "context" is an isolated browser profile.
     async def start_session(self, state: JobApplicationState):
         await self._emit(state, "Initializing Browser", stage_code=StageCode.INITIALIZING_BROWSER, progress_percent=self._progress(state, "start"))
         await self._beat(state)
@@ -945,6 +998,9 @@ class WelcomeToTheJungleWorker(HumanPacing):
             return {"error": "Failed to start the secure browsing session.", "error_code": "BROWSER_START_FAILED"}
 
     
+    # NODE "start_with_session" (SUBMIT step 1): restore cookies from GCS or the
+    # local file, confirm the login (re-login if expired), then repeat the search
+    # as a "dummy search" so the session looks like normal browsing before applying.
     async def start_session_with_auth(self, state: JobApplicationState):
         await self._emit(state, "Initializing Secure Browser", stage_code=StageCode.INITIALIZING_BROWSER, progress_percent=self._progress(state, "start_with_session"))
         await self._beat(state)
@@ -1122,6 +1178,7 @@ class WelcomeToTheJungleWorker(HumanPacing):
 
     
 
+    # NODE "nav" (SCRAPE step 2): open the homepage, clear cookies, browse briefly.
     async def go_to_job_board(self, state: JobApplicationState):
         await self._emit(state, "Navigating to Job Board", stage_code=StageCode.NAVIGATING, progress_percent=self._progress(state, "nav"))
         await self._beat(state)
@@ -1160,6 +1217,8 @@ class WelcomeToTheJungleWorker(HumanPacing):
             await self._emit(state, stage="Failed", status="error", error="Could not reach Welcome to the Jungle.", error_code="JOB_BOARD_UNAVAILABLE")
             return {"error": "Navigation failed.", "error_code": "JOB_BOARD_UNAVAILABLE"}
 
+    # NODE "login" (SCRAPE step 3). Full automation types the stored credentials;
+    # otherwise the user has 90s to log in. "Mon espace" is the proof of login.
     async def request_login(self, state: JobApplicationState):
         await self._emit(state, "Authenticating", stage_code=StageCode.AUTHENTICATING, progress_percent=self._progress(state, "login"))
         await self._beat(state)
@@ -1173,6 +1232,8 @@ class WelcomeToTheJungleWorker(HumanPacing):
 
         await self._handle_cookies()
 
+        # NOTE: possible issue: creds["wttj"] sits outside any try and raises if
+        # credentials are None or the key is missing, crashing the node.
         if prefs.is_full_automation and creds["wttj"]:
             self._plog("full automation mode -> attempting auto-login")
             login_plain = None
@@ -1291,6 +1352,8 @@ class WelcomeToTheJungleWorker(HumanPacing):
                 await self._emit(state, stage="Failed", status="error", error="Manual login timed out.", error_code="LOGIN_TIMEOUT")
                 return {"error": "Manual login timed out.", "error_code": "LOGIN_TIMEOUT"}
 
+    # NODE "search" (SCRAPE step 4): open "Trouver un job" and apply the filters.
+    # If the user set none, it silently uses 20000 minimum salary and "France".
     async def search_jobs(self, state: JobApplicationState):
         await self._emit(state, "Searching for Jobs", stage_code=StageCode.SEARCHING, progress_percent=self._progress(state, "search"))
         await self._beat(state)
@@ -1361,6 +1424,10 @@ class WelcomeToTheJungleWorker(HumanPacing):
             return {"error": f"Failed to execute search for '{job_title}' on Welcome to the Jungle.", "error_code": "SEARCH_FILTERS_FAILED"}
 
 
+    # NODE "scrape" (SCRAPE step 5). Unlike the other boards, this loop cannot use
+    # card positions: opening a job removes it from the "new matches" list. So it
+    # repeatedly takes the first unhandled card and tracks cards by href.
+    # A "poisoned" card is one marked as handled so it is never picked again.
     async def get_matched_jobs(self, state: JobApplicationState):
         await self._emit(state, "Extracting Job Data", stage_code=StageCode.EXTRACTING_DATA, progress_percent=self._progress(state, "scrape"))
         await self._beat(state)
@@ -1543,6 +1610,9 @@ class WelcomeToTheJungleWorker(HumanPacing):
                         # random point and presses whatever pixel is there. This is
                         # here to isolate which of the two opens the stray window.
                         # Revert to self._click once that is answered.
+                        # NOTE: possible issue: only attempt 0 clicks. Attempts 1 and 2
+                        # just wait again, so after a home bounce and nav_back the card
+                        # is never re-clicked and the retry cannot succeed.
                         click_success = False
                         for attempt in range(3):
                             try:
@@ -1616,6 +1686,11 @@ class WelcomeToTheJungleWorker(HumanPacing):
 
                         apply_btn = self.page.locator('[data-testid="job_header-button-apply"]')
 
+                        # Exception-as-branch: if the "ExternalLink" icon appears, skip the
+                        # job. If waiting for it times out, the re-raise reaches the outer
+                        # except, which treats the offer as internal and keeps it.
+                        # NOTE: possible issue: ANY error in the inner block, not just the
+                        # timeout, is also treated as "internal" and records the offer.
                         if await apply_btn.count() > 0:
                             try:
                                 try:
@@ -1699,6 +1774,8 @@ class WelcomeToTheJungleWorker(HumanPacing):
                 page_number += 1
 
         except Exception:
+            # NOTE: possible issue: this return omits found_raw_offers, so offers
+            # already collected in this run are lost (the kill path keeps them).
             logger.exception("[WTTJ] Fatal scraping error")
             self._plog("critical scraping error -> halting process")
             await self._emit(state, stage="Failed", status="error", error="A critical error occurred while scanning the job listings.", error_code="SCRAPING_FAILED")
@@ -1714,6 +1791,10 @@ class WelcomeToTheJungleWorker(HumanPacing):
 
 
     # Helper for dynamic questions
+    # Finds the form's custom-questions fieldset and sends its HTML, the CV text
+    # and the candidate's contact details to the user's chosen LLM provider.
+    # Returns {base_test_id: {type, value, required, skip}}, or {} on any failure.
+    # The form HTML is untrusted page content, hence the prompt's security rule.
     async def _handle_dynamic_questions(self, user, preferences, resume_bytes: bytes) -> dict:
         import io
         from langchain_openai import ChatOpenAI
@@ -1837,6 +1918,9 @@ class WelcomeToTheJungleWorker(HumanPacing):
             self._plog("LLM question parsing failed -> continuing without dynamic answers")
             return {}
 
+    # NODE "submit" (SUBMIT step 2): for each approved offer, open the form, fill
+    # identity and CV, answer LLM-parsed questions, add the letter, tick consent,
+    # and submit once. The "Paperplane" icon is the only proof of success.
     async def submit_applications(self, state: JobApplicationState):
         await self._emit(state, "Submitting Applications", stage_code=StageCode.SUBMITTING, progress_percent=self._progress(state, "submit"))
         await self._beat(state)
@@ -1945,6 +2029,8 @@ class WelcomeToTheJungleWorker(HumanPacing):
                     if questions:
                         self._plog(f"filling {len(questions)} dynamic question(s)")
                         for testid, field in questions.items():
+                            # NOTE: possible issue: this line is outside the per-question
+                            # try, so a non-dict LLM value abandons the whole application.
                             if field.get("skip"):
                                 self._plog(f"question {testid}: marked skip by LLM -> leaving blank")
                                 continue
@@ -1962,6 +2048,8 @@ class WelcomeToTheJungleWorker(HumanPacing):
                                         await self._click(self.page.locator(f'[data-testid="{testid}-DROPDOWN"]'))
                                         await self.page.wait_for_selector('[role="listbox"]', state="visible", timeout=5000)
                                         await self._click(self.page.locator('[role="listbox"] li').filter(has_text=field["value"]))
+                                    # NOTE: possible issue: this ticks the box whatever
+                                    # field["value"] says, even if the LLM answered false.
                                     case "checkbox":
                                         await self._check(self.page.locator(f'[data-testid="{testid}-input"]'))
                                 await human_delay(300, 700)
@@ -2011,6 +2099,8 @@ class WelcomeToTheJungleWorker(HumanPacing):
                     except Exception:
                         logger.warning("[WTTJ] Submission of %s failed — confirmation not received", offer.url)
                         self._plog("submission NOT confirmed -> Paperplane confirmation never appeared")
+                        # NOTE: possible issue: this `continue` skips the pause below
+                        # and the i counter, so the next form starts with no pacing.
                         continue
                 else:
                     logger.warning("[WTTJ] Submit button not visible for %s", offer.job_title)
@@ -2040,6 +2130,7 @@ class WelcomeToTheJungleWorker(HumanPacing):
         self._plog(f"submission node done -> {len(successful_submissions)} applications submitted")
         return {"submitted_offers": successful_submissions}
 
+    # NODE "cleanup": the shared last step of both tracks, on success, error or kill.
     async def cleanup(self, state: JobApplicationState):
         await self._emit(state, "Cleaning Up", stage_code=StageCode.CLEANING_UP, progress_percent=self._progress(state, "cleanup"))
         self._plog("NODE cleanup -> closing browser session")
@@ -2066,6 +2157,10 @@ class WelcomeToTheJungleWorker(HumanPacing):
     # GRAPH
     # =========================================================================
 
+    # Graph shape:
+    #   SCRAPE: start -> nav -> login -> search -> scrape -> cleanup -> END
+    #   SUBMIT: start_with_session -> submit -> cleanup -> END
+    # After every node, route_node_exit can divert straight to cleanup.
     def get_graph(self):
         workflow = StateGraph(JobApplicationState)
 

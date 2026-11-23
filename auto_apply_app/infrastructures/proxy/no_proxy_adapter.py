@@ -1,3 +1,17 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/proxy/no_proxy_adapter.py
+#
+# WHAT IT DOES:
+#   The "no proxy" implementation of ProxyServicePort. It returns None so browser
+#   workers connect directly. This is the default when PROXY_PROVIDER is not set.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/configuration/container.py: _resolve_proxy_service()
+#   - scripts/preflight.py: runs checks without a proxy
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 # auto_apply_app/infrastructures/proxy/no_proxy_adapter.py
 import logging
 from typing import Optional

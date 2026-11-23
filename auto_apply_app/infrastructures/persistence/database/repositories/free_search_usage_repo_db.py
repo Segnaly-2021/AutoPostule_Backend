@@ -1,3 +1,16 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/persistence/database/repositories/free_search_usage_repo_db.py
+#
+# WHAT IT DOES:
+#   Tracks free searches per user per UTC day, which backs the daily free-tier quota.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/persistence/database/repositories/unit_of_work_repo_db.py: uow.free_search_usage_repo
+#
+# EXTERNAL DEPENDENCIES:
+#   - SQLAlchemy: async queries and PostgreSQL upsert
+#   - PostgreSQL (Supabase): the free_search_usages table
+# ==============================================================================
 # auto_apply_app/infrastructures/persistence/database/repositories/free_search_usage_repo_db.py
 from datetime import datetime, timezone
 from uuid import UUID
@@ -18,6 +31,7 @@ class FreeSearchUsageRepoDB(FreeSearchUsageRepository):
     async def get_or_create_for_today(self, user_id: UUID) -> FreeSearchUsage:
         today = datetime.now(timezone.utc).date()
 
+        # Insert-if-missing, then read: safe when two requests create today's row at once.
         stmt = (
             pg_insert(FreeSearchUsageDB)
             .values(user_id=user_id, usage_date=today, searches_count=0)

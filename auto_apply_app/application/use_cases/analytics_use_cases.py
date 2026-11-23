@@ -1,3 +1,17 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/use_cases/analytics_use_cases.py
+#
+# WHAT IT DOES:
+#   Records anonymous page views (best effort) and provides a retention use case
+#   that deletes old rows.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/configuration/container.py: builds the use cases
+#   - auto_apply_app/interfaces/controllers/analytics_controllers.py: records page views
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone

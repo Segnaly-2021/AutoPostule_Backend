@@ -1,3 +1,17 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/api/routers/analytics.py
+#
+# WHAT IT DOES:
+#   Public page-view tracker, mounted at /api/v1/site/ping. It filters bots and foreign
+#   origins, records anonymous visits, and always answers 204.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/app.py: mounts this router in the "api" role
+#
+# EXTERNAL DEPENDENCIES:
+#   - fastapi: routing and responses
+#   - slowapi: per-IP rate limit
+# ==============================================================================
 # auto_apply_app/infrastructures/api/routers/analytics.py
 #
 # Visitor tracking. This is the only unauthenticated write endpoint in the app — it has

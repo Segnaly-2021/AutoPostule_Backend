@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/service_ports/rate_limiter_port.py
+#
+# WHAT IT DOES:
+#   Interface for a simple cooldown: one action per key per time window. Used to
+#   limit verification-code resends and email-change requests.
+#
+# USED BY:
+#   - auto_apply_app/application/use_cases/user_use_cases.py: resend and email-change cooldowns
+#   - auto_apply_app/infrastructures/configuration/container.py: wires the limiter
+#   - auto_apply_app/infrastructures/redis_rate_limit/redis_rate_limiter.py: implementation
+#
+# EXTERNAL DEPENDENCIES:
+#   - Redis: stores the cooldown keys in the implementation (no import here)
+# ==============================================================================
 from abc import ABC, abstractmethod
 
 

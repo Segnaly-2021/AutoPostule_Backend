@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/repositories/user_fingerprint_repo.py
+#
+# WHAT IT DOES:
+#   Interface for each user's pool of stored browser device profiles (personas):
+#   listing, per-board lookup, upsert by slot, usage tracking, retirement, cleanup.
+#
+# USED BY:
+#   - auto_apply_app/application/repositories/unit_of_work.py: exposes it as user_fingerprint_repo
+#   - auto_apply_app/infrastructures/persistence/database/repositories/user_fingerprint_repo_db.py: implementation
+#   - auto_apply_app/infrastructures/persistence/in_memory/memory.py: in-memory implementation
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 # auto_apply_app/application/repositories/user_fingerprint_repo.py
 from abc import ABC, abstractmethod
 from uuid import UUID

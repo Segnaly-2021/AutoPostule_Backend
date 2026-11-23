@@ -1,3 +1,27 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/api/dependencies/auth_deps.py
+#
+# WHAT IT DOES:
+#   The authentication gate for the API. It reads the "Authorization: Bearer <JWT>"
+#   header, validates the token, checks the logout blacklist in Redis and returns
+#   the user id. Routes declare `current_user_id: CurrentUserId` to require a login.
+#   Also provides the raw-token and optional-user variants.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/dependencies/admin_deps.py: admin check builds on CurrentUserId
+#   - auto_apply_app/infrastructures/api/routers/user.py: profile routes and logout
+#   - auto_apply_app/infrastructures/api/routers/agent.py: start, resume and review
+#   - auto_apply_app/infrastructures/api/routers/agent_state.py: agent state and shutdown
+#   - auto_apply_app/infrastructures/api/routers/subscription.py: billing routes
+#   - auto_apply_app/infrastructures/api/routers/application.py: application tracker
+#   - auto_apply_app/infrastructures/api/routers/preferences.py: user settings
+#   - auto_apply_app/infrastructures/api/routers/free_search.py: free search
+#   - ... and 2 more
+#
+# EXTERNAL DEPENDENCIES:
+#   - fastapi: Depends, HTTPBearer header parsing and HTTP errors
+#   - Redis: holds the logout blacklist (through container.token_repo)
+# ==============================================================================
 # interfaces/api/dependencies/auth.py
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -34,6 +58,9 @@ async def get_current_user_id(
         # 1. Decode and validate the token
         payload = container.token_provider.decode_token(token)
         
+        # NOTE: possible issue: the "purpose" claim is not checked here. Password-reset
+        # tokens (15 minutes) and unsubscribe tokens (365 days, sent in emails) are signed
+        # with the same key, issuer and audience, so they also pass as login tokens.
         # 2. Extract user_id from the 'sub' claim
         user_id = payload.get("sub")
         if not user_id:
@@ -44,6 +71,8 @@ async def get_current_user_id(
             )
         
         # 3. Check if token has been blacklisted (user logged out)
+        # JWTs are stateless and stay valid until they expire, so logout works by
+        # storing the token's unique id ("jti") in Redis until that expiry.
         token_id = container.token_provider.get_token_id(token)
         is_blacklisted = await container.token_repo.is_blacklisted(token_id)
         
@@ -68,6 +97,9 @@ async def get_current_user_id(
         raise
     except Exception as e:
         # Catch-all for unexpected errors
+        # This fails closed: if Redis is down, authenticated requests get a 401.
+        # NOTE: possible issue: `{e}` puts the raw internal error text (such as a Redis
+        # connection message) in the response, which the global handlers try to avoid.
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Authentication failed: {e}",
@@ -136,6 +168,8 @@ async def get_optional_user_id(
 
 
 # Type aliases for cleaner endpoint signatures
+# Annotated[str, Depends(fn)] tells FastAPI to call fn for each request and pass its
+# result into the route parameter that has this type.
 CurrentUserId = Annotated[str, Depends(get_current_user_id)]
 CurrentToken = Annotated[str, Depends(get_current_token)]
 OptionalUserId = Annotated[Optional[str], Depends(get_optional_user_id)]

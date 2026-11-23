@@ -1,3 +1,19 @@
+# ==============================================================================
+# FILE: alembic/_archived/dd50563cda31_add_langgraph_checkpointer_tables.py
+#
+# WHAT IT DOES:
+#   ARCHIVED migration. Creates checkpoints, checkpoint_blobs and checkpoint_writes,
+#   the tables LangGraph uses to save and resume graph state.
+#
+# USED BY:
+#   - None: archived. Alembic only loads alembic/versions, so this no longer runs.
+#
+# EXTERNAL DEPENDENCIES:
+#   - Alembic: migration framework
+#   - SQLAlchemy: imported by the template; this migration uses raw SQL
+#   - LangGraph: the library whose checkpoint table layout is created here
+# ==============================================================================
+
 """add langgraph checkpointer tables
 
 Revision ID: dd50563cda31

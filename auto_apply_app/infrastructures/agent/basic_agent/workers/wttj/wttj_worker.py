@@ -1,3 +1,21 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/agent/basic_agent/workers/wttj/wttj_worker.py
+#
+# WHAT IT DOES:
+#   STATUS: LEGACY, dead code. Nothing imports this file.
+#   Early Welcome to the Jungle worker, kept for reference only.
+#   The live worker is auto_apply_app/infrastructures/agent/workers/wttj/wttj_worker.py.
+#
+# USED BY:
+#   - no importers found (likely dead code)
+#
+# EXTERNAL DEPENDENCIES:
+#   - langgraph: worker subgraph
+#   - langchain_core: LLM message and model types
+#   - playwright / Chromium: browser automation
+#   - pdfplumber: resume PDF text extraction
+#   - Welcome to the Jungle: the job board it drives
+# ==============================================================================
 # auto_apply_app/infrastructure/agent/workers/wttj_worker.py
 import json
 import asyncio

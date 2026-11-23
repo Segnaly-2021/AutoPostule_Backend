@@ -1,3 +1,17 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/persistence/database/repositories/token_blacklist_repo_db.py
+#
+# WHAT IT DOES:
+#   Stores logged-out JWT ids in Redis under `blacklist:<jti>`. Each key expires when
+#   the token itself would expire, so the blacklist cleans itself up. Despite the
+#   folder name, this repository uses Redis and not the SQL database.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/repository_factory.py: built in DATABASE mode
+#
+# EXTERNAL DEPENDENCIES:
+#   - redis: async Redis client
+# ==============================================================================
 from redis.asyncio import Redis
 from auto_apply_app.application.repositories.token_blacklist import TokenBlacklistRepository
 

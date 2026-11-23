@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/api/routers/subscription.py
+#
+# WHAT IT DOES:
+#   Billing routes, mounted at /api/v1/subscription: read the subscription, start a
+#   Stripe Checkout, open the Customer Portal, and receive Stripe webhooks. The webhook
+#   is what actually activates or changes a plan after a payment.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/app.py: mounts this router in the "api" role
+#
+# EXTERNAL DEPENDENCIES:
+#   - fastapi: routing, headers and raw request access
+#   - Stripe: calls the webhook; reached through the controller's payment port
+# ==============================================================================
 from fastapi import APIRouter, status, Request, Header, Depends
 from typing import Annotated, Optional
 
@@ -103,6 +118,8 @@ async def stripe_webhook(
     ⚠️ **Important**: This endpoint must be publicly accessible (no auth).
     Configure this URL in your Stripe Dashboard.
     """
+    # Must stay the raw bytes: Stripe's signature is computed over the exact body, so
+    # parsing it into a Pydantic model first would make verification fail.
     payload = await request.body()
     
     result = await controller.handle_webhook(

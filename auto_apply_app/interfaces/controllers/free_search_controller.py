@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: auto_apply_app/interfaces/controllers/free_search_controller.py
+#
+# WHAT IT DOES:
+#   Adapter for the free-tier job search. Validates the request DTO, runs the
+#   quota-enforcing use case, and returns presented results or a structured error.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/routers/free_search.py: free-search route
+#   - auto_apply_app/infrastructures/configuration/container.py: builds this controller
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
+
 # auto_apply_app/interfaces/controllers/free_search_controller.py
 
 from dataclasses import dataclass

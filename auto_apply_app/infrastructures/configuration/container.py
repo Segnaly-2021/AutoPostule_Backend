@@ -1,3 +1,33 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/configuration/container.py
+#
+# WHAT IT DOES:
+#   The dependency-injection container and "composition root": the place where the
+#   whole backend is wired together. Use cases only know abstract ports; this file
+#   gives them real adapters (database, Redis, Stripe, GCS...) and builds controllers.
+#   create_application() wires the web API. create_worker_application() wires a smaller
+#   version for Cloud Run Jobs. The Application class holds the result.
+#   Lifetimes matter: @cached_property objects are shared singletons, while
+#   @property controllers are rebuilt on every access (normally once per request).
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/app.py: builds the container at startup
+#   - auto_apply_app/infrastructures/api/dependencies/container_dep.py: serves it to requests
+#   - auto_apply_app/infrastructures/api/dependencies/auth_deps.py: Application type
+#   - auto_apply_app/infrastructures/api/dependencies/admin_deps.py: Application type
+#   - auto_apply_app/infrastructures/api/routers/agent.py: controllers and broker
+#   - auto_apply_app/infrastructures/api/routers/user.py: controllers
+#   - auto_apply_app/infrastructures/api/routers/subscription.py: controllers
+#   - auto_apply_app/infrastructures/api/routers/admin.py: controllers
+#   - ... and 11 more
+#
+# EXTERNAL DEPENDENCIES:
+#   - redis: shared async client type (rate limiter, progress broker, blacklist)
+#   - PostgreSQL (Supabase): reached through the repositories and Unit of Work
+#   - Google Cloud Run Jobs: optional agent dispatch target (AGENT_DISPATCH_MODE)
+#   - Google Cloud Storage, Stripe, Resend, Cloudflare Turnstile: through injected adapters
+#   - 2Captcha residential proxies: optional (PROXY_PROVIDER)
+# ==============================================================================
 # auto_apply_app/infrastructures/configuration/container.py
 
 import os
@@ -310,6 +340,8 @@ def create_worker_application(*, for_messaging: bool = False) -> "Application":
     )
 
 
+# The fields below are the injected dependencies. uow_factory is a function rather
+# than one Unit of Work because each operation must open its own short transaction.
 @dataclass
 class Application:
     # Repositories & UoW Factory
@@ -354,6 +386,7 @@ class Application:
     # service and dispatcher MUST be singletons so background tasks aren't tied
     # to a request-scoped object, and so kill finds live workers across requests.
 
+    # @cached_property runs the method once per Application and then reuses the result.
     @cached_property
     def progress_broker(self) -> ProgressBrokerPort:
         if self.redis_client is not None:
@@ -426,6 +459,9 @@ class Application:
     # =========================================================================
     # CONTROLLER FACTORIES
     # =========================================================================
+    # Plain @property: a new controller and new use cases on every access. This is
+    # cheap and safe because they hold no per-request state; shared resources come in
+    # through uow_factory and the singletons above.
 
     @property
     def user_controller(self) -> UserController:
@@ -550,6 +586,8 @@ class Application:
         return FreeSearchController(
             free_search_use_case=FreeSearchUseCase(
                 uow_factory=self.uow_factory,
+                # Because this is inside a @property, a new fake agent is built for
+                # each free-search request.
                 fake_agent=create_fake_agent(),
             ),
             presenter=self.free_search_presenter,

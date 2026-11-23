@@ -1,3 +1,19 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/proxy/twocaptcha_proxy_adapter.py
+#
+# WHAT IT DOES:
+#   Builds the residential proxy settings for a browser run. A hash of the session key
+#   becomes a "sticky session" id, so one run (and its resume) keeps the same exit IP.
+#   Selected with PROXY_PROVIDER=twocaptcha; connection details come from env vars.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/configuration/container.py: _resolve_proxy_service()
+#   - tests/test_session_binding.py: tests sticky session behavior
+#
+# EXTERNAL DEPENDENCIES:
+#   - 2Captcha residential proxies: the proxy service (TWOCAPTCHA_* env vars)
+#   - Playwright / Chromium: consume the returned ProxyConfig in the workers
+# ==============================================================================
 # auto_apply_app/infrastructures/proxy/twocaptcha_proxy_adapter.py
 import os
 import hashlib
@@ -57,6 +73,7 @@ class TwoCaptchaProxyAdapter(ProxyServicePort):
         Derives a stable, alphanumeric session_id from the session_key.
         Same key -> same session_id -> same sticky exit IP for the whole run.
         """
+        # MD5 is fine here: it is only a stable short id, not a security measure.
         digest = hashlib.md5(session_key.encode()).hexdigest()
         return digest[:10]
 

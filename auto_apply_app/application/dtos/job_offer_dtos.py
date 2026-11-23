@@ -1,3 +1,21 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/dtos/job_offer_dtos.py
+#
+# WHAT IT DOES:
+#   Request and response shapes for job offers and the user's application history:
+#   filters, pagination, response/interview toggles, analytics and daily stats.
+#   JobOfferResponse maps the JobOffer entity to the fields the API returns.
+#
+# USED BY:
+#   - auto_apply_app/application/use_cases/job_offer_use_cases.py: inputs and outputs
+#   - auto_apply_app/infrastructures/agent/master/master_agent.py: uses job offer DTOs
+#   - auto_apply_app/interfaces/controllers/job_offer_controllers.py: builds requests
+#   - auto_apply_app/interfaces/presenters/base_presenter.py: presenter type hints
+#   - auto_apply_app/interfaces/presenters/web.py: presents job offers
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 from dataclasses import dataclass
 from typing import Optional, Dict, Self
 from uuid import UUID

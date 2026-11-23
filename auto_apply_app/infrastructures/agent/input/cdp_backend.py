@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/agent/input/cdp_backend.py
+#
+# WHAT IT DOES:
+#   The fallback input backend. Sends mouse and keyboard events through Playwright,
+#   which uses the Chrome DevTools Protocol (CDP). Used whenever X11 input is not
+#   available or fails its checks, including every headless run.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/agent/input/backend.py: default created by get_backend
+#   - tests/test_input_backends.py: backend tests
+#
+# EXTERNAL DEPENDENCIES:
+#   - Playwright / Chromium: receives the page object and delivers CDP input (no direct import)
+# ==============================================================================
 """Playwright's own input, i.e. CDP `Input.dispatch*Event`.
 
 This is what every run used before the seam existed, kept as the default and as

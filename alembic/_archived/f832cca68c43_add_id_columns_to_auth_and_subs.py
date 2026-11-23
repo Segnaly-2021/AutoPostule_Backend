@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: alembic/_archived/f832cca68c43_add_id_columns_to_auth_and_subs.py
+#
+# WHAT IT DOES:
+#   ARCHIVED migration. Adds a nullable UUID id column to auth_users,
+#   user_preferences and user_subscriptions.
+#
+# USED BY:
+#   - None: archived. Alembic only loads alembic/versions, so this no longer runs.
+#
+# EXTERNAL DEPENDENCIES:
+#   - Alembic: migration framework
+#   - SQLAlchemy: column and type definitions
+# ==============================================================================
+
 """add_id_columns_to_auth_and_subs
 
 Revision ID: f832cca68c43

@@ -1,3 +1,17 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/api/routers/announcement.py
+#
+# WHAT IT DOES:
+#   User-facing announcement routes, mounted at /api/v1/announcements: list the notices
+#   this user has not dismissed, and dismiss one.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/app.py: mounts this router in the "api" role
+#
+# EXTERNAL DEPENDENCIES:
+#   - fastapi: routing and dependency injection
+#   - slowapi: per-IP rate limits
+# ==============================================================================
 # auto_apply_app/infrastructures/api/routers/announcement.py
 #
 # The user-facing half of announcements. Both routes are authenticated: a

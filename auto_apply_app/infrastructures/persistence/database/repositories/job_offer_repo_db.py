@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/persistence/database/repositories/job_offer_repo_db.py
+#
+# WHAT IT DOES:
+#   The main repository for job offers. It saves what the agent finds, supplies
+#   recently-applied ids for deduplication, updates tracker statuses, and runs the
+#   filtered list, dashboard analytics and admin count queries.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/persistence/database/repositories/unit_of_work_repo_db.py: uow.job_repo
+#
+# EXTERNAL DEPENDENCIES:
+#   - SQLAlchemy: async queries, aggregates and ORM
+#   - PostgreSQL (Supabase): the job_offers table
+# ==============================================================================
 # =============================================================================
 # job_offer_repo_db.py
 # =============================================================================
@@ -59,6 +74,8 @@ class JobOfferRepoDB(JobOfferRepository):
             has_interview=offer.has_interview,
             has_response=offer.has_response,
         )
+        # merge() upserts by primary key. Every field set above is written, so an entity
+        # loaded with missing fields would overwrite the stored values with None.
         await self.session.merge(offer_db)
 
     async def save_all(self, offers: List[JobOffer]) -> None:
@@ -250,6 +267,7 @@ class JobOfferRepoDB(JobOfferRepository):
         total_unfiltered = total_unfiltered_result.scalar_one()
 
         # ── Dynamic filters ───────────────────────────────────────────────────
+        # ilike values are sent as bound parameters, so user input cannot inject SQL.
         if filters:
             if company := filters.get('company'):
                 base_stmt = base_stmt.where(JobOfferDB.company_name.ilike(f"%{company}%"))

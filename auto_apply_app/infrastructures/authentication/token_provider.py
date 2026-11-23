@@ -1,3 +1,20 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/authentication/token_provider.py
+#
+# WHAT IT DOES:
+#   Creates and validates signed JWTs. The same provider issues login tokens,
+#   15-minute password-reset tokens and long-lived unsubscribe tokens; the last two
+#   are told apart by a "purpose" claim. HS256 uses one shared secret (JWT_SECRET)
+#   for both signing and checking, so anyone holding it can forge any token.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/app.py: injected into the web container
+#   - auto_apply_app/infrastructures/configuration/container.py: built for the messaging job
+#   - tests/test_messaging.py: signs test unsubscribe tokens
+#
+# EXTERNAL DEPENDENCIES:
+#   - PyJWT (`jwt`): encoding, signature checks and claim validation
+# ==============================================================================
 from uuid import UUID, uuid4
 from typing import Dict, Any, Optional
 from datetime import datetime, timedelta, timezone
@@ -40,6 +57,7 @@ class JwtTokenProvider(TokenProviderPort):
         }
 
         # 2. Add extra claims (like email or purpose) if provided
+        # update() lets a caller's claims overwrite the standard ones above.
         if claims:
             payload.update(claims)
 
@@ -48,6 +66,9 @@ class JwtTokenProvider(TokenProviderPort):
   
     def decode_token(self, token: str) -> Dict[str, Any]:
         try:
+            # Pinning `algorithms` blocks algorithm-swap attacks such as alg=none.
+            # This checks signature, expiry, issuer and audience, but NOT "purpose":
+            # each caller that needs a specific token type must check that itself.
             payload = jwt.decode(
                 token,
                 key=self.secret,

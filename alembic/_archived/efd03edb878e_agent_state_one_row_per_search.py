@@ -1,3 +1,19 @@
+# ==============================================================================
+# FILE: alembic/_archived/efd03edb878e_agent_state_one_row_per_search.py
+#
+# WHAT IT DOES:
+#   ARCHIVED migration. Drops and recreates agent_states so there is one row per
+#   search instead of one per user. search_id becomes required, unique and a
+#   cascading foreign key to job_searches. Existing rows are discarded.
+#
+# USED BY:
+#   - None: archived. Alembic only loads alembic/versions, so this no longer runs.
+#
+# EXTERNAL DEPENDENCIES:
+#   - Alembic: migration framework
+#   - SQLAlchemy: column and type definitions
+# ==============================================================================
+
 """agent_state_one_row_per_search
 
 Revision ID: efd03edb878e

@@ -1,3 +1,25 @@
+# ==============================================================================
+# FILE: auto_apply_app/domain/entities/job_search.py
+#
+# WHAT IT DOES:
+#   One agent mission: what to search for, on which boards, and its status
+#   (PENDING -> SEARCHING -> COMPLETED, or PAUSED / CANCELLED / FAILED).
+#   Also holds the job offers matched during the run.
+#
+# USED BY:
+#   - auto_apply_app/application/use_cases/agent_use_cases.py: creates and controls searches
+#   - auto_apply_app/application/use_cases/run_context_use_cases.py: loads for a run
+#   - auto_apply_app/application/repositories/job_search_repo.py: repository interface
+#   - auto_apply_app/application/dtos/job_search_dtos.py: maps to responses
+#   - auto_apply_app/application/dtos/agent_dtos.py: builds AgentResponse
+#   - auto_apply_app/application/service_ports/agent_port.py: agent method signatures
+#   - auto_apply_app/infrastructures/agent/master/master_agent.py: run orchestration
+#   - auto_apply_app/infrastructures/agent/state.py: agent state type
+#   - ... and 7 more
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from uuid import UUID
@@ -20,6 +42,8 @@ class JobSearch(Entity):
     contract_types: List[ContractType] = field(default=None)
     min_salary: int = field(default=0)
     location: str= field(default="")
+    # NOTE: possible issue: this default is computed once at import, so every new
+    # search gets the process start time (default_factory would fix it).
     updated_at: datetime = field(default=datetime.now(timezone.utc))  
     
     def start_searching(self) -> None:

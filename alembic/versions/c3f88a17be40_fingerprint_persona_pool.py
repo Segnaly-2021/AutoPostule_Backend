@@ -1,3 +1,21 @@
+# ==============================================================================
+# FILE: alembic/versions/c3f88a17be40_fingerprint_persona_pool.py
+#
+# WHAT IT DOES:
+#   Active migration. Turns user_fingerprints into a pool of personas per user:
+#   adds rotation columns, backfills them from old rows, moves uniqueness from
+#   user_id to (user_id, slot), and drops the stored user_agent.
+#   NOTE: the "two heads" remark in the docstring predates archiving the old chain.
+#
+# USED BY:
+#   - Alembic (alembic/env.py, scripts/migrate.sh): applied by `alembic upgrade`
+#   - scripts/preflight.py: checks that this schema change has been applied
+#
+# EXTERNAL DEPENDENCIES:
+#   - Alembic: migration framework
+#   - SQLAlchemy: column and type definitions
+# ==============================================================================
+
 """fingerprint persona pool: drop unique user_id, add rotation columns
 
 Turns user_fingerprints from "one frozen device per user" into a pool of device

@@ -1,3 +1,20 @@
+# ==============================================================================
+# FILE: auto_apply_app/interfaces/controllers/agent_controllers.py
+#
+# WHAT IT DOES:
+#   Adapter between the agent API routes and the agent use cases: start, resume,
+#   kill, job review, and recent searches. Builds request DTOs, runs the use case,
+#   and returns an OperationResult that the router turns into HTTP.
+#   Start and resume have two steps: `prepare` validates, `dispatch` launches.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/routers/agent.py: calls these handlers
+#   - auto_apply_app/infrastructures/configuration/container.py: builds this controller
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
+
 from dataclasses import dataclass
 from uuid import UUID
 from typing import List, Optional

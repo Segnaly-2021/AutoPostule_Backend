@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/agent/fake_agent/create_fake_agent.py
+#
+# WHAT IT DOES:
+#   STATUS: LIVE. Used by the free-search service (APP_ROLE=free_search).
+#   Builds the FakeMasterAgent. Despite the word "singleton" in the docstring,
+#   container.py calls this each time free_search_controller is read, so each
+#   access gets a new agent with its own workers.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/configuration/container.py: passes the agent to FreeSearchUseCase
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only); its workers use Playwright
+# ==============================================================================
 # auto_apply_app/infrastructures/agent/create_fake_agent.py
 
 from auto_apply_app.infrastructures.agent.fake_agent.fake_master.fake_master_agent import FakeMasterAgent

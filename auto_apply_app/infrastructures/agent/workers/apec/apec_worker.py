@@ -1,3 +1,32 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/agent/workers/apec/apec_worker.py
+#
+# WHAT IT DOES:
+#   The active browser worker for the APEC job board (apec.fr). It is a small
+#   LangGraph graph run by the master agent, with two tracks:
+#   SCRAPE: open browser -> homepage -> log in -> search -> collect offers.
+#   SUBMIT: open browser with saved cookies -> fill and send approved forms.
+#   Both end in cleanup. APEC's front-end is Angular, which explains many of the
+#   form-handling workarounds below.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/agent/create_agent.py: builds the worker for MasterAgent
+#   - auto_apply_app/infrastructures/agent/master/master_agent.py: runs its graph as a node
+#   - auto_apply_app/infrastructures/agent/basic_agent/create_agent.py: legacy agent wiring
+#   - auto_apply_app/infrastructures/agent/basic_agent/master/master_agent.py: legacy master
+#   - tests/test_apec_nav_back.py: tests the return-to-results logic
+#   - tests/test_pacing.py: tests the pacing behavior of the workers
+#
+# EXTERNAL DEPENDENCIES:
+#   - langgraph: the state graph that defines the worker's steps
+#   - playwright / Chromium: drives the browser (optionally Chrome or Edge locally)
+#   - playwright_stealth: hides common browser-automation signals
+#   - pdfplumber: PDF text extraction in the unused _extract_resume helper
+#   - APEC (apec.fr): the job board being automated
+#   - Google Cloud Storage: durable cookie storage, through the optional session_store
+#   - Residential proxy: optional, per-board, from state["proxy_configs"]
+#   - Xvfb / OS-level input: optional virtual display and input, managed by HumanPacing
+# ==============================================================================
 # auto_apply_app/infrastructures/agent/workers/apec/apec_worker.py
 import asyncio
 import hashlib
@@ -89,6 +118,8 @@ class ApecWorker(HumanPacing):
     _READ_LONG_CHARS = 7200
 
     # CLASS CONSTANT: Single source of truth for the job card selector
+    # class*= matches this exact class text anywhere in the attribute, so it breaks
+    # if APEC reorders or renames these classes.
     CARD_SELECTOR = 'div[class*="card card-offer mb-20 card--clickable"]'
 
     # --- ADVANCED SEARCH FALLBACK URL ---
@@ -160,6 +191,8 @@ class ApecWorker(HumanPacing):
         except Exception:
             pass
 
+    # Conditional edge run after every node. "error" jumps to cleanup; "continue"
+    # moves on. It catches both a node's error and the user's kill switch.
     async def route_node_exit(self, state: JobApplicationState) -> str:
         if state.get("error"):
             logger.warning("[APEC] Circuit breaker tripped: %s", state["error"])
@@ -216,6 +249,8 @@ class ApecWorker(HumanPacing):
         except Exception:
             logger.exception("[APEC] Progress emit failed")
 
+    # Deduplication key for "has this user already seen this job on this board?".
+    # MD5 is fine here: it is an identity key, not a security feature.
     def _generate_fast_hash(self, company_name: str, job_title: str, user_id: str) -> str:
         c = str(company_name).replace(" ", "").lower().strip()
         t = str(job_title).replace(" ", "").lower().strip()
@@ -422,6 +457,9 @@ class ApecWorker(HumanPacing):
     # --- HELPER: Handle Pagination ---
     async def _handle_apec_pagination(self, page_number: int) -> bool:
         try:
+            # NOTE: possible issue: this selects every <li> whose class is exactly
+            # "page-item". If several match, the .click() below raises Playwright's
+            # strict-mode error and pagination stops after 3 attempts.
             next_button = self.page.locator(
                 'nav[aria-label="Page navigation"] li[class="page-item"]'
             )
@@ -484,6 +522,8 @@ class ApecWorker(HumanPacing):
                     else:
                         await asyncio.sleep(2 ** attempt)
 
+            # NOTE: possible issue: after the direct-URL fallback above we may already
+            # be on the advanced search page, where this link may not exist to click.
             #await human_click(self.page.locator('a[id="advancedSearch"]'))
             await self.page.locator('a[id="advancedSearch"]').click()
             await self.page.wait_for_load_state("networkidle", timeout=90000)
@@ -498,6 +538,7 @@ class ApecWorker(HumanPacing):
             await human_scroll(self.page, distance=random.randint(150, 350))
             await self._pause(state, 0.8, 2.2, tier=Tier.SCROLL)
 
+            # ContractType.value -> APEC's internal <option> id for that contract.
             contract_map = {
                 "CDI": "101888",
                 "CDD": "101887",
@@ -520,6 +561,8 @@ class ApecWorker(HumanPacing):
                     await self.page.reload(wait_until="networkidle")
                     await asyncio.sleep(2 ** attempt)
 
+            # NOTE: intent unclear: the `break` below means only the FIRST mapped
+            # contract type is applied, even if the user selected several.
             if contract_types:
                 for contract in contract_types:
                     val = contract_map.get(str(contract.value), None)
@@ -695,6 +738,11 @@ class ApecWorker(HumanPacing):
     # =========================================================================
 
     # --- NODE 1: Start Session (SCRAPE track) ---
+    # Launches Chromium and builds a context with this board's fingerprint and
+    # proxy. A "context" is an isolated browser profile with its own cookies.
+    # NOTE: possible issue: failures in this worker's early nodes return an error
+    # without calling _emit or setting error_code, unlike HelloWork and WTTJ, and
+    # cleanup then clears the error, so the user may never see the reason.
     async def start_session(self, state: JobApplicationState):
         await self._emit(state, "Initializing Browser", stage_code=StageCode.INITIALIZING_BROWSER, progress_percent=self._progress(state, "start"))
         await self._beat(state)
@@ -787,6 +835,12 @@ class ApecWorker(HumanPacing):
             self._plog("browser session failed to start")
             return {"error": "Failed to start the secure browsing session. Our servers might be under heavy load, please try again."}
 
+    # NODE "start_with_session" (SUBMIT track, step 1 of 2):
+    #   1. Pull saved cookies from GCS to a local file (if a store is wired).
+    #   2. Load them into the context through storage_state.
+    #   3. Open the homepage and check the logout element to confirm the login.
+    #   4. If expired, log in again; if that fails, delete the cookie file and stop.
+    #   5. Run the search again, so the session looks like normal browsing.
     async def start_session_with_auth(self, state: JobApplicationState):
         await self._emit(state, "Initializing Secure Browser", stage_code=StageCode.INITIALIZING_BROWSER, progress_percent=self._progress(state, "start_with_session"))
         await self._beat(state)
@@ -925,6 +979,7 @@ class ApecWorker(HumanPacing):
 
                 return {}
             except Exception:
+                # Deliberately not fatal: submit goes straight to each saved form_url.
                 logger.exception("[APEC] Search error during auth track")
                 self._plog("search failed during auth track -> continuing anyway")
                 return {}
@@ -983,6 +1038,8 @@ class ApecWorker(HumanPacing):
         logger.info("[APEC] Login phase")
         self._plog("NODE request_login -> entering login phase")
 
+        # NOTE: possible issue: creds["apec"] sits outside any try and raises if
+        # credentials are None or the key is missing, crashing the node.
         if prefs.is_full_automation and creds["apec"]:
             logger.info("[APEC] Full automation: attempting auto-login")
             self._plog("full automation mode -> attempting auto-login")
@@ -1143,6 +1200,10 @@ class ApecWorker(HumanPacing):
         return {}
 
     # --- NODE 5: Scrape Jobs ---
+    # Loop summary: for each result page (max 20), visit cards in a shuffled but
+    # plausible order. For each card: read it, skip duplicates, open it, "read" the
+    # description, then keep it only if its apply link is internal ("to=int") and
+    # the APEC form opens. nav_back returns to the list after each offer.
     async def get_matched_jobs(self, state: JobApplicationState):
         await self._emit(state, "Extracting Job Data", stage_code=StageCode.EXTRACTING_DATA, progress_percent=self._progress(state, "scrape"))
         await self._beat(state)
@@ -1305,6 +1366,8 @@ class ApecWorker(HumanPacing):
                                 break
                             await asyncio.sleep(2 ** attempt)
 
+                    # NOTE: possible issue: this continues without nav_back. If the click
+                    # did navigate, the next card lookup runs on the wrong page.
                     if not click_success:
                         continue
 
@@ -1429,6 +1492,8 @@ class ApecWorker(HumanPacing):
                 page_number += 1
 
         except Exception:
+            # NOTE: possible issue: the card loop has no per-card try, so one card's
+            # error lands here, and this return drops all offers already collected.
             logger.exception("[APEC] Scraping error")
             self._plog("critical scraping error -> halting process")
             return {"error": "A critical error occurred while scanning the job listings. We have safely halted the process."}
@@ -1442,6 +1507,9 @@ class ApecWorker(HumanPacing):
         return {"found_raw_offers": found_job_entities}
 
     # --- NODE 7: Submit Applications ---
+    # Form sections in order: load form -> choose "import CV" and upload -> cover
+    # letter (two page layouts exist) -> optional education dropdowns -> submit once.
+    # Only the "candidature a..." confirmation heading counts as success.
     async def submit_applications(self, state: JobApplicationState):
         await self._emit(state, "Submitting Applications", stage_code=StageCode.SUBMITTING, progress_percent=self._progress(state, "submit"))
         await self._beat(state)
@@ -1734,6 +1802,8 @@ class ApecWorker(HumanPacing):
                     except Exception:
                         logger.warning("[APEC] Submission failed — confirmation not received")
                         self._plog("submission NOT confirmed -> no confirmation banner appeared")
+                        # NOTE: possible issue: this `continue` skips the pause below
+                        # and the i counter, so the next form starts with no pacing.
                         continue
                 else:
                     logger.warning("[APEC] Submit button not visible")
@@ -1792,6 +1862,8 @@ class ApecWorker(HumanPacing):
             return "start_with_session"
         return "start"
 
+    # The master mounts this compiled graph as one node of its own graph.
+    # After every node, route_node_exit can divert straight to cleanup.
     def get_graph(self):
         workflow = StateGraph(JobApplicationState)
 

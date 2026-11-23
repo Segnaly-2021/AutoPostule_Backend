@@ -1,3 +1,17 @@
+# ==============================================================================
+# FILE: alembic/_archived/81ef9a15ddc3_add_resume_file_name.py
+#
+# WHAT IT DOES:
+#   ARCHIVED migration. Adds the nullable users.resume_file_name column.
+#
+# USED BY:
+#   - None: archived. Alembic only loads alembic/versions, so this no longer runs.
+#
+# EXTERNAL DEPENDENCIES:
+#   - Alembic: migration framework
+#   - SQLAlchemy: column and type definitions
+# ==============================================================================
+
 """add resume file name
 
 Revision ID: 81ef9a15ddc3

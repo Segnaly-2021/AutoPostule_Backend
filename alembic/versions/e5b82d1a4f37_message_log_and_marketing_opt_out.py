@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: alembic/versions/e5b82d1a4f37_message_log_and_marketing_opt_out.py
+#
+# WHAT IT DOES:
+#   Active migration. Adds auth_users.marketing_opt_out and creates message_log,
+#   whose UNIQUE (user_id, kind) stops the daily email job sending a message twice.
+#
+# USED BY:
+#   - Alembic (alembic/env.py, scripts/migrate.sh): applied by `alembic upgrade`
+#
+# EXTERNAL DEPENDENCIES:
+#   - Alembic: migration framework
+#   - SQLAlchemy: column and type definitions
+# ==============================================================================
+
 """message_log + auth_users.marketing_opt_out for lifecycle messaging
 
 Two things the first scheduled email job needs.

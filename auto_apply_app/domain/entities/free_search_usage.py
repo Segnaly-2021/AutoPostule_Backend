@@ -1,3 +1,17 @@
+# ==============================================================================
+# FILE: auto_apply_app/domain/entities/free_search_usage.py
+#
+# WHAT IT DOES:
+#   Counts a user's free searches per UTC day and defines the daily limit rule.
+#   A new date means a new row, so the counter resets without a scheduled job.
+#
+# USED BY:
+#   - auto_apply_app/application/repositories/free_search_usage_repo.py: repository interface
+#   - auto_apply_app/infrastructures/persistence/database/repositories/free_search_usage_repo_db.py: persistence
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 # auto_apply_app/domain/entities/free_search_usage.py
 from dataclasses import dataclass, field
 from datetime import date

@@ -1,3 +1,25 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/use_cases/agent_state_use_cases.py
+#
+# WHAT IT DOES:
+#   Kill-switch and liveness logic for a run. Users request a stop, workers poll
+#   the flag and write heartbeats, and the UI asks whether the agent is alive.
+#   The database row is how the API talks to an agent in another process.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/agent/master/master_agent.py: heartbeat and kill checks
+#   - auto_apply_app/infrastructures/agent/workers/apec/apec_worker.py: heartbeat and kill checks
+#   - auto_apply_app/infrastructures/agent/workers/hellowork/hw_worker.py: heartbeat and kill checks
+#   - auto_apply_app/infrastructures/agent/workers/wttj/wttj_worker.py: heartbeat and kill checks
+#   - auto_apply_app/infrastructures/agent/workers/teaser/teaser_worker.py: heartbeat and kill checks
+#   - auto_apply_app/infrastructures/agent/create_agent.py: injects into the agent
+#   - auto_apply_app/infrastructures/configuration/container.py: builds the use cases
+#   - auto_apply_app/interfaces/controllers/agent_state_controllers.py: stop and liveness endpoints
+#   - ... and 1 more
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 # auto_apply_app/application/use_cases/agent_state_use_cases.py
 import logging
 from dataclasses import dataclass
@@ -139,6 +161,8 @@ class IsAgentKilledForSearchUseCase:
                 "IsAgentKilledForSearchUseCase failed for user_id=%s search_id=%s",
                 user_id, search_id,
             )
+            # NOTE: possible issue: despite the wording below, this is fail-OPEN: during
+            # a database error, a run the user tried to stop keeps going.
             # Fail-closed: if we can't check, assume NOT killed.
             return Result.success(False)
 

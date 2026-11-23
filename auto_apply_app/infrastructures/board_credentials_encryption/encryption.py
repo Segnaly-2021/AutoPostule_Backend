@@ -1,3 +1,19 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/board_credentials_encryption/encryption.py
+#
+# WHAT IT DOES:
+#   Encrypts users' job-board logins and passwords before they are stored, and
+#   decrypts them when a worker must sign in. Unlike password hashing, this is
+#   reversible because the agent needs the original values. Losing ENCRYPTION_KEY
+#   makes stored credentials unreadable; leaking it exposes all of them.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/app.py: injected into the web container
+#   - auto_apply_app/infrastructures/configuration/container.py: built for worker jobs
+#
+# EXTERNAL DEPENDENCIES:
+#   - cryptography (Fernet): authenticated symmetric encryption
+# ==============================================================================
 # AutoApply\auto_apply_app\infrastructures\board_crendentilas_encryption\encryption.py
 import os
 from cryptography.fernet import Fernet, InvalidToken
@@ -35,6 +51,9 @@ class EncryptionService(EncryptionServicePort):
                 # Generate a new key (WARNING: This should only happen in dev/testing)
                 # In production, you MUST set ENCRYPTION_KEY in your environment
                 print("⚠️  WARNING: Generating new encryption key. Set ENCRYPTION_KEY in .env for production!")
+                # NOTE: a random key lasts only for this process, so
+                # anything encrypted with it cannot be decrypted after a restart. The
+                # current wiring avoids this path because Config raises on a missing key.
                 self._key = Fernet.generate_key()
         
         try:
@@ -79,6 +98,8 @@ class EncryptionService(EncryptionServicePort):
             # Return as string
             return decrypted_bytes.decode('utf-8')
         
+        # Fernet checks an HMAC before decrypting, so tampered data or a wrong key
+        # raises InvalidToken instead of returning garbage.
         except InvalidToken:
             raise ValueError("Decryption failed: Invalid token or wrong encryption key")
         except Exception as e:

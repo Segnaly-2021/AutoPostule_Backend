@@ -1,3 +1,19 @@
+# ==============================================================================
+# FILE: tests/test_messaging.py
+#
+# WHAT IT DOES:
+#   Protects the daily email job: calendar-day cohorts, opt-out rules, no double
+#   sends, failed sends not logged as sent, and unsubscribe tokens.
+#   Uses a recording email service, so no real email is sent.
+#
+# USED BY:
+#   - pytest: test entry point; nothing imports it
+#
+# EXTERNAL DEPENDENCIES:
+#   - pytest: test runner and fixtures
+#   - Resend: the email provider whose adapter is subclassed and stubbed here
+# ==============================================================================
+
 """Lifecycle messaging: who gets selected, and who never gets mailed twice.
 
 The whole subsystem is a scheduled job that nobody watches, so the failure modes

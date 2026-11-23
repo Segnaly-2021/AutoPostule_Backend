@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: auto_apply_app/interfaces/viewmodels/admin_vm.py
+#
+# WHAT IT DOES:
+#   Immutable response shapes for the admin dashboard: users, visitors, applications
+#   and AI credit metrics, grouped under AdminOverviewViewModel.
+#
+# USED BY:
+#   - auto_apply_app/interfaces/presenters/base_presenter.py: AdminPresenter types
+#   - auto_apply_app/interfaces/presenters/web.py: builds these view models
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
+
 from dataclasses import dataclass
 from typing import Optional
 

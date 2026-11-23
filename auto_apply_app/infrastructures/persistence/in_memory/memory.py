@@ -1,3 +1,21 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/persistence/in_memory/memory.py
+#
+# WHAT IT DOES:
+#   Dictionary-based versions of the repositories and Unit of Work, used in MEMORY
+#   mode and tests so the app can run without PostgreSQL or Redis. Data lives in
+#   class-level dicts, so it is shared within the process and lost on restart.
+#   Transactions are simulated with deep-copied snapshots restored on rollback.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/repository_factory.py: used when REPOSITORY_TYPE=memory
+#   - tests/test_announcements.py: database-free announcement tests
+#   - tests/test_fingerprint_rotation.py: database-free fingerprint tests
+#   - tests/test_messaging.py: database-free messaging tests
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 from typing import Dict, List, Optional, Set, Tuple
 from uuid import UUID
 from datetime import datetime, timezone, timedelta
@@ -1040,6 +1058,11 @@ class InMemoryUserFingerprintRepository(UserFingerprintRepository):
             del self._db[key]
 
 
+# Simulates a transaction: copy all data on enter, write directly to the shared dicts,
+# and restore the copy on rollback. There is no isolation, so a rollback here also undoes
+# writes made by other concurrent tasks since this Unit of Work began.
+# NOTE: possible issue: __aenter__ never sets agent_state_repo, agent_usage_repo or
+# free_search_usage_repo, so use cases that need them fail in MEMORY mode.
 class InMemoryUnitOfWork(UnitOfWork):
     # ✅ Class-level shared storage (acts like a persistent database)
     _shared_users_db: Dict[UUID, any] = {}

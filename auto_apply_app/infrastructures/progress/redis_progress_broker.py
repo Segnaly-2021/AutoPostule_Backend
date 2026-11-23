@@ -1,3 +1,19 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/progress/redis_progress_broker.py
+#
+# WHAT IT DOES:
+#   Carries live agent progress from the worker to the API's SSE stream, even when
+#   they run in different containers. The worker publishes JSON events to the Redis
+#   channel `progress:<search_id>`, and the API subscribes and relays them.
+#   Redis Pub/Sub keeps no history: only subscribers connected at publish time get
+#   a message, so anything sent earlier is lost.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/configuration/container.py: progress_broker in DATABASE mode
+#
+# EXTERNAL DEPENDENCIES:
+#   - redis: async client and Pub/Sub
+# ==============================================================================
 import json
 from typing import AsyncIterator, Optional
 
@@ -26,6 +42,8 @@ class RedisProgressBroker(ProgressBrokerPort):
     async def publish_end(self, search_id: str) -> None:
         await self._redis.publish(_channel(search_id), json.dumps({_EOT: True}))
 
+    # This is an async generator: calling stream() runs NONE of this body. The SUBSCRIBE
+    # below happens only when the caller starts iterating (see routers/agent.py).
     async def stream(self, search_id: str) -> AsyncIterator[Optional[dict]]:
         pubsub = self._redis.pubsub()
         await pubsub.subscribe(_channel(search_id))
@@ -39,6 +57,8 @@ class RedisProgressBroker(ProgressBrokerPort):
                 if frame.get(_EOT):
                     return
                 yield frame
+        # Also runs when the client disconnects and the generator is closed, so the
+        # Redis subscription does not leak.
         finally:
             await pubsub.unsubscribe(_channel(search_id))
             # redis-py 7 (this repo pins redis==7.3.0) uses aclose().

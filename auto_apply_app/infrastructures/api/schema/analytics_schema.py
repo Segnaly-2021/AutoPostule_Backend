@@ -1,3 +1,16 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/api/schema/analytics_schema.py
+#
+# WHAT IT DOES:
+#   Pydantic shape of the public page-view tracking request, with strict bounds
+#   because anyone on the internet can call that endpoint.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/routers/analytics.py: validates the /ping body
+#
+# EXTERNAL DEPENDENCIES:
+#   - pydantic: data validation
+# ==============================================================================
 from typing import Optional
 
 from pydantic import BaseModel, Field

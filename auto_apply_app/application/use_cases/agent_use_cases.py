@@ -1,3 +1,25 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/use_cases/agent_use_cases.py
+#
+# WHAT IT DOES:
+#   The business entry points around the agent. Start and resume work in two
+#   steps: prepare (checks plan limits, saves state) then dispatch (launches the
+#   run). Also covers kill, draft review, saving results and spending AI credits.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/configuration/container.py: builds the use cases
+#   - auto_apply_app/infrastructures/agent/create_agent.py: injects them into the agent
+#   - auto_apply_app/infrastructures/agent/master/master_agent.py: saves results, spends credits
+#   - auto_apply_app/infrastructures/agent/workers/hellowork/hw_worker.py: worker use cases
+#   - auto_apply_app/infrastructures/agent/workers/wttj/wttj_worker.py: worker use cases
+#   - auto_apply_app/infrastructures/agent/workers/apec/apec_worker.py: worker use cases
+#   - auto_apply_app/infrastructures/agent/workers/teaser/teaser_worker.py: worker use cases
+#   - auto_apply_app/infrastructures/agent/workers/hellowork/hw_worker_v1.py: legacy worker
+#   - ... and 5 more
+#
+# EXTERNAL DEPENDENCIES:
+#   - Google Cloud Run Jobs: can run the agent, through DispatchPort (no import here)
+# ==============================================================================
 # auto_apply_app/application/use_cases/agent_use_cases.py
 import logging
 from dataclasses import dataclass
@@ -494,6 +516,8 @@ class ProcessAgentResultsUseCase:
                 count_new = 0
                 
                 for offer in raw_offers:
+                    # NOTE: possible issue: set_job_posting_id() takes no argument, so
+                    # this raises TypeError. Only legacy hw_worker_v1.py reaches it.
                     offer.set_job_posting_id(user_id)
                     
                     if offer.get_job_posting_id() in ignored_hashes:

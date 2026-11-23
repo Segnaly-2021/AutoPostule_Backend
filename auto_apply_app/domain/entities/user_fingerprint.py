@@ -1,3 +1,24 @@
+# ==============================================================================
+# FILE: auto_apply_app/domain/entities/user_fingerprint.py
+#
+# WHAT IT DOES:
+#   A stored browser device profile (persona) and its per-run variants. Converts
+#   the profile into Playwright context settings and a JavaScript init script
+#   that makes the browser report those same device values to pages.
+#
+# USED BY:
+#   - auto_apply_app/application/repositories/user_fingerprint_repo.py: repository interface
+#   - auto_apply_app/application/service_ports/fingerprint_generator_port.py: generator signatures
+#   - auto_apply_app/application/use_cases/fingerprint_use_cases.py: rotation logic
+#   - auto_apply_app/infrastructures/agent/fingerprint_alignment.py: aligns to the real browser
+#   - auto_apply_app/infrastructures/agent/fingerprint_generator.py: creates profiles
+#   - auto_apply_app/infrastructures/agent/state.py: agent state type
+#   - auto_apply_app/infrastructures/persistence/database/repositories/user_fingerprint_repo_db.py: persistence
+#   - tests/test_fingerprint.py: test coverage
+#
+# EXTERNAL DEPENDENCIES:
+#   - Playwright and Chromium: consume the context args and init script (no import here)
+# ==============================================================================
 import json
 from dataclasses import dataclass, replace
 from datetime import datetime
