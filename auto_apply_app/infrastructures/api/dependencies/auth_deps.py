@@ -17,6 +17,15 @@ security = HTTPBearer()
 optional_security = HTTPBearer(auto_error=False)
 
 
+def _is_login_token(payload: dict) -> bool:
+    """
+    Password-reset and unsubscribe tokens share the login signing key and differ only
+    by a `purpose` claim. Login tokens have no such claim, so its presence, whatever
+    the value, means the token must not authenticate an API request.
+    """
+    return "purpose" not in payload
+
+
 async def get_current_user_id(
     credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)],
     container: Annotated[Application, Depends(get_container)]
@@ -43,6 +52,13 @@ async def get_current_user_id(
                 headers={"WWW-Authenticate": "Bearer"}
             )
         
+        if not _is_login_token(payload):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired token",
+                headers={"WWW-Authenticate": "Bearer"}
+            )
+
         # 3. Check if token has been blacklisted (user logged out)
         token_id = container.token_provider.get_token_id(token)
         is_blacklisted = await container.token_repo.is_blacklisted(token_id)
@@ -130,6 +146,8 @@ async def get_optional_user_id(
 
     try:
         payload = container.token_provider.decode_token(credentials.credentials)
+        if not _is_login_token(payload):
+            return None
         return payload.get("sub")
     except Exception:
         return None
