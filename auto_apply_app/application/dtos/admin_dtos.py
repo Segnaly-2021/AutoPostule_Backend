@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/dtos/admin_dtos.py
+#
+# WHAT IT DOES:
+#   Immutable data shapes for the admin dashboard: users, visitors, applications
+#   and AI credit metrics. Filled by the admin use case and rendered by presenters.
+#
+# USED BY:
+#   - auto_apply_app/application/use_cases/admin_use_cases.py: builds the overview
+#   - auto_apply_app/interfaces/presenters/base_presenter.py: presenter type hints
+#   - auto_apply_app/interfaces/presenters/web.py: converts metrics to view models
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 """
 DTOs for the admin observability dashboard.
 

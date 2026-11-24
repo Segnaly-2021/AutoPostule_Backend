@@ -1,3 +1,16 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/api/routers/preferences.py
+#
+# WHAT IT DOES:
+#   User settings routes, mounted at /api/v1/preferences: automation mode, AI model
+#   and creativity, active job boards, and saving job-board credentials.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/app.py: mounts this router in the "api" role
+#
+# EXTERNAL DEPENDENCIES:
+#   - fastapi: routing and dependency injection
+# ==============================================================================
 # auto_apply_app/infrastructures/api/routes/preferences_routes.py
 
 from fastapi import APIRouter, Depends, status
@@ -60,6 +73,8 @@ async def update_my_preferences(
     Update user preferences.
     """
     
+    # These are still plain-text job-board passwords: never log them. The update use
+    # case receives the encryption port and is responsible for encrypting before saving.
     credentials_dict = None
     if data.credentials:
         credentials_dict = {

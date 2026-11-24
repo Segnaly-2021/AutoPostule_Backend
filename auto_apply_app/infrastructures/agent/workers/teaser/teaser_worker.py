@@ -1,3 +1,25 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/agent/workers/teaser/teaser_worker.py
+#
+# WHAT IT DOES:
+#   NOT ACTIVE. A JobTeaser browser worker that nothing imports or starts:
+#   create_agent.py does not build it, and MasterAgent has no node for it
+#   (_get_worker_for_board returns None for "jobteaser").
+#   It has the same two-track graph as the live workers (SCRAPE and SUBMIT) but
+#   is an older design: no stealth, fingerprint, proxy, pacing, heartbeat or GCS
+#   session restore. It would need repair before it could be enabled.
+#
+# USED BY:
+#   - no importers found (likely dead code; JobBoard.JOBTEASER exists, but no worker is wired to it)
+#
+# EXTERNAL DEPENDENCIES:
+#   - langgraph: the state graph that defines the worker's steps
+#   - playwright / Chromium: drives the browser
+#   - langchain_core, langchain_google_genai: only for the unused, broken _get_llm helper
+#   - pdfplumber: PDF text extraction in the unused _extract_resume helper
+#   - JobTeaser (jobteaser.com): the job board this targets
+#   - Didomi: the third-party cookie-consent widget handled on that site
+# ==============================================================================
 # auto_apply_app/infrastructures/agent/workers/teaser/teaser_worker.py
 import hashlib
 import logging
@@ -39,6 +61,9 @@ class JobTeaserWorker:
 
     CARD_SELECTOR = 'ul[data-testid="job-ads-wrapper"] > li'
 
+    # Maps ContractType.value to JobTeaser's checkbox names.
+    # NOTE: possible issue: the enum value is "Freelance" (capital F), so the
+    # lowercase "freelance" key below never matches.
     TEASER_CONTRACT_NAME_MAP = {
         "CDI":         "cdi",
         "CDD":         "cdd",
@@ -80,6 +105,8 @@ class JobTeaserWorker:
         uid = user_id if user_id is not None else self._uid
         print(f"[{self._source_name} for {uid}] : {task}", flush=True)
 
+    # NOTE: possible issue: __init__ never sets self.api_keys, so this would raise
+    # AttributeError if called. Nothing in this file calls it.
     def _get_llm(self, preferences: UserPreferences) -> BaseChatModel:
         return ChatGoogleGenerativeAI(
             api_key=self.api_keys.get("gemini"),
@@ -139,6 +166,9 @@ class JobTeaserWorker:
             return path
         return None
 
+    # Clears the Didomi consent banner in three escalating steps: its JS API, its
+    # button, then removing the overlay from the DOM. Unlike the live workers,
+    # steps 1 and 2 ACCEPT all cookies rather than refusing them.
     async def _handle_cookies(self):
         try:
             # Wait briefly for the Didomi banner to appear
@@ -282,6 +312,8 @@ class JobTeaserWorker:
                 self._plog("no pagination nav -> single page of results")
                 return False
 
+            # The last child of the pagination nav is the "next" control. Its tag
+            # carries the state: <a> means a next page exists, <button> is disabled.
             next_control = nav.locator('> *:last-child')
             if await next_control.count() == 0:
                 logger.info("[JOBTEASER] No next control found.")
@@ -418,6 +450,8 @@ class JobTeaserWorker:
                     await asyncio.sleep(2 ** attempt)
 
             try:
+                # "Candidature simplifiée" (the INTERNAL filter) limits results to
+                # internal applications, the only kind this worker keeps.
                 simplifiee_id = "job-ads-candidacy-type-filter-INTERNAL"
                 checkbox = self.page.locator(f'input#{simplifiee_id}')
                 if await checkbox.count() > 0 and await checkbox.get_attribute("aria-checked") == "false":
@@ -455,6 +489,8 @@ class JobTeaserWorker:
             self._plog("error while applying filters -> raising")
             raise
 
+    # Three fallbacks to reach the results: the page's "back to results" link,
+    # then the saved URL (3 tries with backoff), then one final reload.
     async def nav_back(self, url: str) -> bool:
         try:
             if await self.page.locator('a[title="Retourner aux résultats"]').count() > 0:
@@ -491,6 +527,8 @@ class JobTeaserWorker:
                 await asyncio.sleep(2 ** attempt)
         return False
 
+    # Conditional edge after every node: "error" (node error or kill switch) goes
+    # to cleanup, "continue" goes to the next step.
     async def route_node_exit(self, state: JobApplicationState) -> str:
         if state.get("error"):
             logger.warning("[JOBTEASER] Circuit breaker tripped: %s", state["error"])
@@ -526,6 +564,8 @@ class JobTeaserWorker:
     # NODES
     # =========================================================================
 
+    # NODE "start" (SCRAPE step 1): launch a plain browser with a default context.
+    # The commented-out code below is the unfinished stealth/fingerprint/proxy setup.
     async def start_session(self, state: JobApplicationState):
         await self._emit(state, "Initializing Browser", stage_code=StageCode.INITIALIZING_BROWSER)
         logger.info("[JOBTEASER] Starting session")
@@ -539,6 +579,8 @@ class JobTeaserWorker:
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
+                # NOTE: possible issue: browser_headless is deprecated and means the
+                # opposite of run_browser_headless, which the live workers use.
                 headless= preferences.browser_headless,
                 args=['--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage'],
             )
@@ -576,6 +618,10 @@ class JobTeaserWorker:
             await self._emit(state, stage="Failed", status="error", error="Failed to start the secure browsing session.", error_code="BROWSER_START_FAILED")
             return {"error": "Failed to start the secure browsing session.", "error_code": "BROWSER_START_FAILED"}
 
+    # NODE "start_with_session" (SUBMIT step 1).
+    # NOTE: possible issue: the code that loads saved cookies is commented out, so
+    # this context is always logged out and the logged-in greeting wait below
+    # should fail. As written, the SUBMIT track cannot get past this node.
     async def start_session_with_auth(self, state: JobApplicationState):
         await self._emit(state, "Initializing Secure Browser", stage_code=StageCode.INITIALIZING_BROWSER)
         logger.info("[JOBTEASER] Booting browser (session injection)")
@@ -708,6 +754,7 @@ class JobTeaserWorker:
             await self._emit(state, stage="Failed", status="error", error="Failed to initialize browser with session.", error_code="BROWSER_AUTH_FAILED")
             return {"error": "Failed to initialize JobTeaser browser with session.", "error_code": "BROWSER_AUTH_FAILED"}
 
+    # NODE "nav" (SCRAPE step 2): open the homepage and clear the consent banner.
     async def go_to_job_board(self, state: JobApplicationState):
         await self._emit(state, "Navigating to Job Board", stage_code=StageCode.NAVIGATING)
         logger.info("[JOBTEASER] Navigating")
@@ -739,6 +786,9 @@ class JobTeaserWorker:
             await self._emit(state, stage="Failed", status="error", error="Could not reach JobTeaser.", error_code="JOB_BOARD_UNAVAILABLE")
             return {"error": "Navigation failed.", "error_code": "JOB_BOARD_UNAVAILABLE"}
 
+    # NODE "login" (SCRAPE step 3). The sign-in is a multi-page flow: account
+    # dropdown -> sign-in link -> /users/auth/connect -> email and password form.
+    # The "Greeting" element on the homepage is the proof of login.
     async def request_login(self, state: JobApplicationState):
         await self._emit(state, "Authenticating", stage_code=StageCode.AUTHENTICATING)
 
@@ -854,6 +904,7 @@ class JobTeaserWorker:
                 await self.page.locator('button#UnloggedUserDropdownButton').click()
                 await self.page.locator('a[data-testid="signinLink"]').click()
                 logger.info("[JOBTEASER] ACTION REQUIRED: Manual login required (waiting 90s)")
+                # A bare sleep with no heartbeat: this worker predates that system.
                 await asyncio.sleep(90)
                 await self._save_auth_state(user_id)
                 self._plog("manual login window elapsed -> session saved")
@@ -864,6 +915,8 @@ class JobTeaserWorker:
                 await self._emit(state, stage="Failed", status="error", error="Manual login timed out.", error_code="LOGIN_TIMEOUT")
                 return {"error": "Manual login timed out.", "error_code": "LOGIN_TIMEOUT"}
 
+    # NODE "search" (SCRAPE step 4): types the title, then submits the search by
+    # clicking the first autocomplete suggestion (not by pressing Enter).
     async def search_jobs(self, state: JobApplicationState):
         await self._emit(state, "Searching for Jobs", stage_code=StageCode.SEARCHING)
 
@@ -928,6 +981,8 @@ class JobTeaserWorker:
             await self._emit(state, stage="Failed", status="error", error="We encountered an issue applying your search filters.", error_code="SEARCH_FILTERS_FAILED")
             return {"error": f"Failed to execute search for '{job_title}' on JobTeaser.", "error_code": "SEARCH_FILTERS_FAILED"}
 
+    # NODE "scrape" (SCRAPE step 5): loop over pages (max 20) and cards. Keep only
+    # offers with an internal apply button. Kill switch checked per page and card.
     async def get_matched_jobs(self, state: JobApplicationState):
         await self._emit(state, "Extracting Job Data", stage_code=StageCode.EXTRACTING_DATA)
         logger.info("[JOBTEASER] Scraping jobs")
@@ -1030,6 +1085,9 @@ class JobTeaserWorker:
                                     break
                                 await asyncio.sleep(2 ** attempt)
 
+                        # NOTE: possible issue: if the click opened an offer with no
+                        # internal apply button, this continues WITHOUT returning to the
+                        # results, so the next card lookup runs on the wrong page.
                         if not click_success:
                             continue
 
@@ -1106,6 +1164,8 @@ class JobTeaserWorker:
                 page_number += 1
 
         except Exception:
+            # NOTE: possible issue: this return omits found_raw_offers, so offers
+            # already collected in this run are lost.
             logger.exception("[JOBTEASER] Fatal scraping error")
             self._plog("critical scraping error -> halting process")
             await self._emit(state, stage="Failed", status="error", error="A critical error occurred while scanning the job listings.", error_code="SCRAPING_FAILED")
@@ -1119,6 +1179,9 @@ class JobTeaserWorker:
         self._plog(f"scraping complete -> returning {len(found_job_entities)} new offers")
         return {"found_raw_offers": found_job_entities}
 
+    # NODE "submit" (SUBMIT step 2): open each approved offer, click Apply, upload
+    # the CV, fill the letter, and submit once. The "already applied" banner is the
+    # confirmation. Offers needing a letter are skipped if none was generated.
     async def submit_applications(self, state: JobApplicationState):
         await self._emit(state, "Submitting Applications", stage_code=StageCode.SUBMITTING)
         logger.info("[JOBTEASER] Submitting applications")
@@ -1300,6 +1363,9 @@ class JobTeaserWorker:
     # GRAPH
     # =========================================================================
 
+    # Same two-track shape as the live workers, but no code ever calls this method:
+    #   SCRAPE: start -> nav -> login -> search -> scrape -> cleanup -> END
+    #   SUBMIT: start_with_session -> submit -> cleanup -> END
     def get_graph(self):
         workflow = StateGraph(JobApplicationState)
 

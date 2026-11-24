@@ -1,3 +1,16 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/api/schema/preferences_schema.py
+#
+# WHAT IT DOES:
+#   Pydantic shapes for user settings. Credentials are write-only from the client's
+#   point of view: requests may carry them, but responses only say `configured`.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/routers/preferences.py: body and response models
+#
+# EXTERNAL DEPENDENCIES:
+#   - pydantic: data validation and serialization
+# ==============================================================================
 # auto_apply_app/infrastructures/api/schema/preferences_schema.py
 
 from pydantic import BaseModel, Field

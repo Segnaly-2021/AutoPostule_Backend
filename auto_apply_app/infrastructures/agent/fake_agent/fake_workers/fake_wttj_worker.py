@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/agent/fake_agent/fake_workers/fake_wttj_worker.py
+#
+# WHAT IT DOES:
+#   STATUS: WIRED BUT INACTIVE. FakeMasterAgent builds it but never launches it.
+#   Anonymous, search-only Welcome to the Jungle scraper for free search.
+#   Today only HelloWork runs, so the "APEC + HelloWork" line below is out of date.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/agent/fake_agent/fake_master/fake_master_agent.py: constructed, quota fixed at 0
+#
+# EXTERNAL DEPENDENCIES:
+#   - playwright / Chromium: headless browser
+#   - Welcome to the Jungle: the job board it would search
+# ==============================================================================
 # auto_apply_app/infrastructures/agent/fake_workers/fake_wttj_worker.py
 #
 # ⚠️ NOT CURRENTLY IN USE. The FakeMasterAgent routes the entire workload to

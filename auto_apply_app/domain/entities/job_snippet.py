@@ -1,3 +1,19 @@
+# ==============================================================================
+# FILE: auto_apply_app/domain/entities/job_snippet.py
+#
+# WHAT IT DOES:
+#   Lightweight job preview returned by the free search. It is never stored and
+#   does not extend Entity, so it has no id or application tracking.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/agent/fake_agent/fake_workers/fake_apec_worker.py: search results
+#   - auto_apply_app/infrastructures/agent/fake_agent/fake_workers/fake_hw_worker.py: search results
+#   - auto_apply_app/infrastructures/agent/fake_agent/fake_workers/fake_indeed_worker.py: search results
+#   - auto_apply_app/infrastructures/agent/fake_agent/fake_workers/fake_wttj_worker.py: search results
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 # auto_apply_app/domain/entities/job_snippet.py
 
 from dataclasses import dataclass

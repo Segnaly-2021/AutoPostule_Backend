@@ -1,4 +1,21 @@
 #!/usr/bin/env python
+# ==============================================================================
+# FILE: scripts/input_probe.py
+#
+# WHAT IT DOES:
+#   Manual diagnostic tool. Runs one fixed click, scroll and typing script through
+#   the CDP or X11 input backend against a local HTML page, then prints what the
+#   page measured so the two backends can be compared. Touches no job board.
+#
+# USED BY:
+#   - No importers: run by hand from the command line
+#
+# EXTERNAL DEPENDENCIES:
+#   - Playwright / Chromium: launches and controls the browser
+#   - Xvfb / X11: virtual display for the x11 backend
+#   - python-dotenv: loads the local .env file
+# ==============================================================================
+
 """Drive the same actions through both input backends and compare what a page sees.
 
     .venv/bin/python scripts/input_probe.py --backend cdp
@@ -71,6 +88,7 @@ async def _exercise(page):
 async def run(backend_name: str, keep_open: bool = False) -> dict:
     from playwright.async_api import async_playwright
 
+    # X11 input needs a real window on a display, so only the CDP run is headless.
     headless = backend_name == "cdp"
     xvfb = None
     env = None

@@ -1,3 +1,23 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/agent/input/x11_backend.py
+#
+# WHAT IT DOES:
+#   The OS-level input backend. It finds the browser's X window, measures how page
+#   coordinates map to screen pixels, then sends real X input events through XTEST:
+#   python-xlib for the mouse and xdotool for the keyboard. Any setup failure raises
+#   X11Unavailable so the worker can fall back to CDP.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/agent/pacing.py: creates, verifies and mounts it
+#   - scripts/input_probe.py: input measurement tool
+#   - tests/test_input_backends.py: backend tests
+#
+# EXTERNAL DEPENDENCIES:
+#   - python-xlib (Xlib): X connection, window search, XTEST mouse events
+#   - xdotool: keyboard input and window focus
+#   - X server with the XTEST extension: normally Xvfb
+#   - Playwright / Chromium: the page used for calibration and the window being driven
+# ==============================================================================
 """OS-level input: XTEST fake events against the X display the browser runs on.
 
 The difference from the CDP backend is provenance. `Input.dispatchMouseEvent`
@@ -190,6 +210,9 @@ class X11InputBackend:
     async def move(self, x: float, y: float) -> None:
         from Xlib.ext import xtest
 
+        # fake_input asks the X server to act as if a real device produced the event.
+        # The numbers are X event types: 4 press, 5 release, 6 motion. sync() flushes
+        # and waits for the server, so each event lands before the next is timed.
         root_x, root_y = self.to_root(x, y)
         xtest.fake_input(self._display, 6, x=root_x, y=root_y)  # MotionNotify
         self._display.sync()
@@ -221,6 +244,8 @@ class X11InputBackend:
         """
         from Xlib.ext import xtest
 
+        # X has no wheel event: each notch is a press + release of button 4 (up) or
+        # 5 (down). Only vertical scrolling is implemented; delta_x is ignored.
         self._wheel_residual += delta_y
         notches = int(abs(self._wheel_residual) / PIXELS_PER_NOTCH)
         if notches <= 0:
@@ -747,6 +772,9 @@ class X11InputBackend:
             if len(readings) != 2:
                 continue
 
+            # Two known points define a straight line per axis:
+            #   root = origin + client * scale
+            # scale = root distance / client distance; origin follows from point 1.
             (r1, c1), (r2, c2) = readings
             span_client_x = c2["x"] - c1["x"]
             span_client_y = c2["y"] - c1["y"]

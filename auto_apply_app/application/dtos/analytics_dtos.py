@@ -1,3 +1,17 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/dtos/analytics_dtos.py
+#
+# WHAT IT DOES:
+#   Input DTO for the public page-view endpoint. Validates the visitor id and
+#   cleans the path and referrer so untrusted input cannot reach the database raw.
+#
+# USED BY:
+#   - auto_apply_app/application/use_cases/analytics_use_cases.py: records the view
+#   - auto_apply_app/interfaces/controllers/analytics_controllers.py: builds the request
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 """
 DTOs for anonymous visitor tracking.
 

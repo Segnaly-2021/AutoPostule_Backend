@@ -1,3 +1,20 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/repositories/job_offer_repo.py
+#
+# WHAT IT DOES:
+#   Interface for job offers and applications: saving agent batches, duplicate
+#   detection, user history and analytics, and the counts that enforce the daily
+#   and per-billing-cycle application limits.
+#
+# USED BY:
+#   - auto_apply_app/application/repositories/unit_of_work.py: exposes it as job_repo
+#   - auto_apply_app/application/use_cases/job_offer_use_cases.py: type for direct injection
+#   - auto_apply_app/infrastructures/persistence/database/repositories/job_offer_repo_db.py: implementation
+#   - auto_apply_app/infrastructures/persistence/in_memory/memory.py: in-memory implementation
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 """
 This module defines the repository interface for JobOffer entity persistence.
 """

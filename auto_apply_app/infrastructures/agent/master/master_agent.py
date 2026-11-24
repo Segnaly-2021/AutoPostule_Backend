@@ -1,3 +1,26 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/agent/master/master_agent.py
+#
+# WHAT IT DOES:
+#   The brain of a run: a LangGraph graph that launches one browser worker per
+#   active job board, collects their offers, writes and ranks cover letters with
+#   an LLM, charges credits, saves drafts, pauses PREMIUM users for review, launches
+#   the submit workers, then records the final result. See GRAPH MAP above the class.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/agent/create_agent.py: builds the live MasterAgent
+#   - auto_apply_app/infrastructures/agent/basic_agent/create_agent.py: dead legacy factory
+#
+# EXTERNAL DEPENDENCIES:
+#   - langgraph: graph, Send fan-out, checkpointed pause and resume
+#   - langchain_core: chat message and model types
+#   - langchain_google_genai / Google Gemini: default LLM provider
+#   - langchain_openai / OpenAI: optional LLM provider
+#   - langchain_anthropic / Anthropic: optional LLM provider
+#   - pdfplumber: extracts resume text from PDF
+#   - PostgreSQL (Supabase): holds LangGraph checkpoints through Config.get_checkpointer
+#   - Proxy provider: through ProxyServicePort, one sticky exit IP per persona
+# ==============================================================================
 # auto_apply_app/infrastructures/agent/master.py
 
 import io
@@ -34,6 +57,8 @@ from auto_apply_app.infrastructures.agent.state import JobApplicationState
 from auto_apply_app.infrastructures.agent.stage_codes import StageCode
 from auto_apply_app.application.use_cases.job_offer_use_cases import CleanupUnsubmittedJobsUseCase
 from auto_apply_app.infrastructures.agent.workers.wttj.wttj_worker import WelcomeToTheJungleWorker
+# NOTE: possible issue: this imports the LEGACY v1 class, used only as a type hint
+# below. The object actually injected comes from hw_worker.py (see create_agent.py).
 from auto_apply_app.infrastructures.agent.workers.hellowork.hw_worker_v1 import HelloWorkWorker
 from auto_apply_app.infrastructures.agent.workers.apec.apec_worker import ApecWorker
 from auto_apply_app.infrastructures.config import Config
@@ -53,6 +78,43 @@ from auto_apply_app.application.use_cases.agent_use_cases import (
 from auto_apply_app.application.use_cases.agent_usage_use_cases import CompleteAgentRunUseCase
 
 logger = logging.getLogger(__name__)
+
+# ------------------------------------------------------------------------------
+# GRAPH MAP
+#
+#   START
+#     | dispatch_scrape: one Send per active board (parallel)
+#     v
+#   apec_worker / hellowork_worker / wttj_worker   (action_intent="SCRAPE")
+#     | worker_return_router
+#     v
+#   analyze  (LLM letters, ranking, billing, save drafts)
+#     | route_review
+#     +--> PREMIUM: [PAUSE] human_review --+
+#     +--> BASIC ---------------------------+--> prepare_submit
+#     +--> killed / no jobs --> finalize        | dispatch_submit: one Send per board
+#                                               v
+#                     the same worker nodes     (action_intent="SUBMIT")
+#                                               | worker_return_router
+#                                               v
+#                                            finalize
+#                                               | route_end
+#                                               v
+#                 completion / stop / no_jobs / error notification --> END
+#
+# LANGGRAPH CONCEPTS USED HERE:
+#   - Node: a function that receives the state and returns a partial update.
+#   - Subgraph: each worker is its own compiled graph, added here as a single node.
+#   - Conditional edge: a function that picks the next node at run time.
+#   - Send(node, state): starts that node with its OWN private input. Returning
+#     several Sends runs them in parallel; this is the "fan-out".
+#   - Superstep: LangGraph runs a batch of nodes, waits for all of them, merges
+#     their updates through the reducers in state.py, then moves on. That wait is
+#     the "fan-in": `analyze` runs once, after every scrape worker has returned.
+#   - Checkpointer: saves the state after each step under a thread_id
+#     (`search_<id>`). This is what lets a different process resume the run later.
+#   - interrupt_before: stops the graph just before a node and leaves it resumable.
+# ------------------------------------------------------------------------------
 
 # --- Update __init__ ---
 class MasterAgent(AgentServicePort):
@@ -597,6 +659,11 @@ class MasterAgent(AgentServicePort):
         except Exception:
             pass
 
+    # Conditional-edge function from START. It returns a list of Send objects, one
+    # per board. Returning [] schedules nothing, so the graph simply ends here.
+    # NOTE: possible issue: those early `return []` paths skip finalize and every
+    # terminal notification, so a kill at this point emits no STOPPED frame and the
+    # search status is not closed by the graph.
     async def dispatch_scrape(self, state: JobApplicationState):
         await self._beat(state)
         if await self._is_killed(state):
@@ -620,6 +687,8 @@ class MasterAgent(AgentServicePort):
             )
             return []
 
+        # NOTE: possible issue: the remainder is only ever given to HelloWork (below),
+        # so when HelloWork is not active those leftover jobs are never scraped.
         max_jobs = state.get("max_jobs", 20)
         worker_limit = max(1, max_jobs // len(active_boards))
         if len(active_boards) > 1:
@@ -632,6 +701,8 @@ class MasterAgent(AgentServicePort):
 
         sends = []
         
+        # Each Send carries a full copy of the state plus this worker's own mission.
+        # The worker's results come back through the reducers in state.py.
         for board in active_boards:
             worker_state = {
                 **state,
@@ -660,6 +731,9 @@ class MasterAgent(AgentServicePort):
 
         return sends
 
+    # The fan-in node. Letters are generated one at a time, with a heartbeat and a
+    # kill-switch check before each, so a stop request does not keep spending tokens.
+    # Order matters: generate -> rank -> keep the best `daily_limit` -> bill -> save.
     async def analyze_and_generate(self, state: JobApplicationState):
         await self._emit(state, "AI Generating Cover Letters", stage_code=StageCode.GENERATING_LETTERS,
                          progress_percent=self._progress(state, "letters"))
@@ -811,6 +885,10 @@ class MasterAgent(AgentServicePort):
 
     
 
+    # Second fan-out, from prepare_submit. It reuses the same worker nodes, and
+    # action_intent="SUBMIT" tells each worker which path to take.
+    # NOTE: possible issue: as in dispatch_scrape, every `return []` here ends the
+    # graph without finalize, so no cleanup, no completion record, no final frame.
     async def dispatch_submit(self, state: JobApplicationState):
         await self._beat(state)
         if await self._is_killed(state):
@@ -832,6 +910,8 @@ class MasterAgent(AgentServicePort):
             stats_result = await self.get_daily_stats.execute(
                 GetDailyStatsRequest(user_id=user_id_str)
             )
+            # NOTE: possible issue: a failed Result counts as 0 sent (full quota), while
+            # the `except` below fails safe with no quota. The two paths disagree.
             daily_count = stats_result.value.get("count", 0) if stats_result.is_success else 0
         except Exception as e:
             print(f"⚠️ Could not verify daily stats. Defaulting to safe limit. Error: {e}")
@@ -853,6 +933,8 @@ class MasterAgent(AgentServicePort):
             return []
 
         boards_needed = list(set(job.job_board for job in approved_jobs))
+        # NOTE: possible issue: max(1, ...) can exceed the daily limit. With 1 left and
+        # 3 boards: base 1, remainder 1, so the boards may attempt 2 + 1 + 1 = 4.
         base_quota = max(1, remaining_quota // len(boards_needed))
         remainder = remaining_quota % len(boards_needed)
         
@@ -929,10 +1011,17 @@ class MasterAgent(AgentServicePort):
             # We don't make cleanup failure fatal to the user, just log it.
             logger.warning("Database cleanup failed: %s", cleanup_result.error.message)
 
+        # NOTE: possible issue: `status` uses take_latest, so this overwrites
+        # "no_jobs_found" and route_end can no longer choose no_jobs_notification.
+        # A search with no jobs is reported as a normal completion.
         return {"status": "killed" if is_killed else "finished_successfully"}
         
 
     
+    # Runs once per returning worker. Several workers choosing "analyze" still
+    # trigger that node only once in the next step.
+    # NOTE: possible issue: the kill flag is read per worker, so a kill landing between
+    # two calls can schedule BOTH analyze and finalize in the same step.
     async def worker_return_router(self, state: JobApplicationState):
         """Catches returning workers and routes them to the correct Master phase."""
         user_id = state["user"].id
@@ -959,6 +1048,9 @@ class MasterAgent(AgentServicePort):
             logger.info("Kill switch detected for search %s. Skipping review/submission.", search_id)
             return "finalize"
 
+        # NOTE: possible issue: `state["error"]` is not checked here. When analyze fails
+        # (no credits, LLM or DB failure), PREMIUM still pauses for review and BASIC goes
+        # to prepare_submit, so error_notification is not reached.
         if state.get("status") == "no_jobs_found":
             return "finalize"
 
@@ -968,6 +1060,9 @@ class MasterAgent(AgentServicePort):
         
         return "prepare_submit"
 
+    # This body does not run in the normal flow. The graph stops before this node,
+    # and resume_job_search writes its update `as_node="human_review"`, which tells
+    # LangGraph the node is already done and execution continues at prepare_submit.
     async def human_review(self, state: JobApplicationState):
         """
         Dummy node serving strictly as the LangGraph interruption point.
@@ -1129,6 +1224,9 @@ class MasterAgent(AgentServicePort):
         workflow.add_edge("no_jobs_notification", END)
         workflow.add_edge("error_notification", END)
 
+        # compile() turns the definition into a runnable graph. With interrupt_before,
+        # astream() simply finishes when it reaches human_review; the state stays in
+        # the checkpointer until resume_job_search continues the same thread_id.
         return workflow.compile(
             checkpointer=self._checkpointer,
             interrupt_before=["human_review"] 
@@ -1194,6 +1292,9 @@ class MasterAgent(AgentServicePort):
 
         self._active_workers[str(search.id)] = active_instances
 
+        # NOTE: possible issue: the callback lives on shared worker objects. That is safe
+        # with one run per Cloud Run Job, but two concurrent runs under LocalDispatcher
+        # would overwrite each other's callback, and the first to finish clears it.
         # Set callback on all workers
         self._progress_callback = progress_callback
         self._wttj._progress_callback = progress_callback
@@ -1211,6 +1312,8 @@ class MasterAgent(AgentServicePort):
 
 
 
+    # `_active_workers` is per-process memory, so this only finds workers running in
+    # this same process. A run in a separate Cloud Run Job watches the DB kill flag.
     async def kill_job_search(self, search_id: UUID) -> None:
         print(f"🛑 KILLING job search {search_id}")
         
@@ -1361,13 +1464,18 @@ class MasterAgent(AgentServicePort):
         app = self.get_graph()
         config = {"configurable": {"thread_id": f"search_{search_id}"}}
 
+        # The stream's values are ignored: draining it is what drives the graph, and
+        # progress reaches the user through the callbacks instead.
         try: 
             async for _ in app.astream(initial_state, config, subgraphs=True):
                 pass 
 
+        # NOTE: possible issue: the error is logged but not re-raised or emitted, so
+        # AgentRunner sees a clean run and the user receives no failure frame.
         except Exception:
             logger.exception("Fatal graph error during agent execution")
 
+    # Currently unused: the only calls to this helper are its own recursive ones.
     def _clone_domain_entity(self, obj: Any) -> Any:
             """
             Deep clones a dataclass, recursively annihilating all SQLAlchemy 
@@ -1425,6 +1533,15 @@ class MasterAgent(AgentServicePort):
 
         print("🔄 Stripping all entities to raw dictionaries for LangGraph...")
 
+        # aupdate_state edits the saved checkpoint as if `human_review` had just
+        # returned this dict, so the next node is prepare_submit. Updates still pass
+        # through the reducers in state.py, with two consequences:
+        #   - processed_offers (operator.add) APPENDS the approved jobs to the saved
+        #     drafts. dispatch_submit relies on its APPROVED filter to ignore the rest.
+        # NOTE: possible issue:
+        #   - keep_first fields ignore these new values whenever the checkpoint already
+        #     has one, so fresh user, subscription, preferences, credentials,
+        #     fingerprints and proxies passed here are silently dropped.
         await app.aupdate_state(
             config, 
             {
@@ -1459,6 +1576,7 @@ class MasterAgent(AgentServicePort):
         except Exception:
             pass
 
+        # Passing None as the input means "continue this thread from its checkpoint".
         try:
             async for _ in app.astream(None, config, subgraphs=True):
                 pass

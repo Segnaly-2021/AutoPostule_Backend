@@ -1,3 +1,17 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/api/schema/user_schema.py
+#
+# WHAT IT DOES:
+#   Pydantic request shapes for account routes, including the password strength rule
+#   (8+ characters with an uppercase letter, a digit and a special character).
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/routers/user.py: validates account request bodies
+#
+# EXTERNAL DEPENDENCIES:
+#   - pydantic: data validation
+#   - email-validator: required by pydantic's EmailStr
+# ==============================================================================
 import re
 from typing import Optional
 from pydantic import BaseModel, EmailStr, Field, field_validator

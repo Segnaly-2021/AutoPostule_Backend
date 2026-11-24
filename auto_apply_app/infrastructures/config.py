@@ -1,3 +1,24 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/config.py
+#
+# WHAT IT DOES:
+#   Central access to environment-based settings: storage mode (MEMORY or DATABASE),
+#   database URL, secrets and the admin route prefix. It also builds the LangGraph
+#   checkpointer, the component that saves agent state to Postgres so a paused run
+#   can resume later. Importing this file loads a local .env file if there is one.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/agent/master/master_agent.py: gets the checkpointer
+#   - auto_apply_app/infrastructures/api/app.py: repository type, encryption key, admin prefix
+#   - auto_apply_app/infrastructures/configuration/container.py: encryption key for workers
+#   - auto_apply_app/infrastructures/repository_factory.py: chooses memory or database storage
+#
+# EXTERNAL DEPENDENCIES:
+#   - python-dotenv: loads .env files
+#   - langgraph (checkpoint-postgres): stores graph checkpoints
+#   - psycopg_pool: connection pool for the checkpointer
+#   - PostgreSQL (Supabase): database behind the checkpoint tables
+# ==============================================================================
 from dotenv import load_dotenv
 from enum import Enum
 from typing import Any, Optional
@@ -15,6 +36,11 @@ load_dotenv()
 # CUSTOM SERIALIZER
 # ============================================================================
 
+# SECURITY: pickle.loads can execute code embedded in its input. This is only safe
+# while the checkpoint tables can be written by this application alone.
+# NOTE: possible issue: langgraph-checkpoint 3.x (pinned in requirements.txt) defines
+# its serializer protocol with dumps_typed/loads_typed, which this class lacks. Confirm
+# that checkpoint writes work against the installed version.
 class PickleSerde:
     """
     A custom serializer that preserves rich Python objects
@@ -69,13 +95,24 @@ class Config:
         repo_type = cls.get_repository_type()
 
         if repo_type == RepositoryType.MEMORY:
+            # NOTE: possible issue: LangGraph's in-memory saver is normally named
+            # InMemorySaver/MemorySaver, so this import may fail in MEMORY mode.
             from langgraph.checkpoint.memory import AsyncMemorySaver
             return AsyncMemorySaver(serde=PickleSerde())
 
         elif repo_type == RepositoryType.DATABASE:
+            # The checkpointer uses psycopg, not asyncpg, so it needs a plain
+            # postgresql:// URL without SQLAlchemy's driver suffix.
             db_url = cls.get_database_url().replace("+asyncpg", "")
 
             if cls._langgraph_db_pool is None:
+                # This pool is separate from the SQLAlchemy engine in session.py.
+                # - open=False: psycopg pools should be opened with `await` (done below).
+                # - check: tests a connection before lending it, replacing dead ones.
+                # - autocommit: required by the Postgres checkpointer.
+                # - prepare_threshold=None: disables prepared statements, which are not
+                #   safe through a transaction-mode pooler such as Supavisor.
+                # - keepalives*: TCP probes that help keep idle connections alive.
                 cls._langgraph_db_pool = AsyncConnectionPool(
                     conninfo=db_url,
                     max_size=5,
@@ -100,6 +137,8 @@ class Config:
             )
 
             print("🛠️ [Config] Ensuring LangGraph checkpoint tables exist in Supabase...")
+            # setup() creates or migrates LangGraph's own tables. They are managed by
+            # LangGraph rather than by this project's Alembic migrations.
             await checkpointer.setup()
 
             return checkpointer

@@ -1,3 +1,19 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/service_ports/payment_port.py
+#
+# WHAT IT DOES:
+#   Interface to the payment provider: checkout, billing portal, customer email
+#   sync, and verification of incoming webhooks.
+#
+# USED BY:
+#   - auto_apply_app/application/use_cases/subscription_use_cases.py: checkout and webhooks
+#   - auto_apply_app/application/use_cases/user_use_cases.py: syncs a changed email
+#   - auto_apply_app/infrastructures/configuration/container.py: wires the adapter
+#   - auto_apply_app/infrastructures/payment/stripe_payment.py: implementation
+#
+# EXTERNAL DEPENDENCIES:
+#   - Stripe: payment provider behind the adapter (no import here)
+# ==============================================================================
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional
 from uuid import UUID

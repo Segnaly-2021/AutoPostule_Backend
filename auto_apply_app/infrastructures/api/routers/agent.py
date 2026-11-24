@@ -1,3 +1,21 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/api/routers/agent.py
+#
+# WHAT IT DOES:
+#   HTTP routes for the job-search agent, mounted at /api/v1/agent. They start and
+#   resume runs, stream live progress with Server-Sent Events (SSE), and support the
+#   premium review step (list, edit, approve or discard drafts).
+#   Streaming flow: prepare the run in the DB -> dispatch it to a background worker ->
+#   relay progress frames from the broker to the browser until the end marker.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/app.py: mounts this router in the "api" role
+#
+# EXTERNAL DEPENDENCIES:
+#   - fastapi: routing, dependency injection and StreamingResponse
+#   - Redis: Pub/Sub transport for progress (through the injected broker)
+#   - Google Cloud Run Jobs: runs the agent in production (through the dispatcher)
+# ==============================================================================
 # auto_apply_app/infrastructures/api/routers/agent.py
 from fastapi import APIRouter, status, Depends
 from fastapi.responses import StreamingResponse
@@ -57,6 +75,7 @@ def _sse_error(op_result) -> str:
     code = getattr(err, "code", None) or "SYSTEMERROR"
     payload = {"source": "MASTER", "stage": "Failed", "status": "error",
                "error": msg, "error_code": code}
+    # SSE wire format: a "data: ..." line ended by a blank line is one browser event.
     return f"data: {json.dumps(payload)}\n\n"
 
 
@@ -90,6 +109,8 @@ async def start_job_search_agent(
     )
     if not prep.is_success:
         return handle_result(prep)
+    # NOTE: possible issue: the dispatch result is ignored, so this route returns 202
+    # even if launching the run failed. The non-streaming resume route has the same gap.
     await controller.dispatch_start_agent(
         user_id=current_user_id, search_id=prep.success.search_id
     )
@@ -106,6 +127,8 @@ async def start_job_search_agent_stream(
     """
     Start the parallel job search agent and stream real-time progress.
     """
+    # All the work happens inside this generator, after the 200 response has started.
+    # Errors can therefore no longer change the HTTP status and are sent as SSE frames.
     async def event_generator():
         # 1. PREP — creates JobSearch + ALIVE AgentState, returns search_id.
         prep = await controller.prepare_start_agent(
@@ -125,6 +148,9 @@ async def start_job_search_agent_stream(
         print(f"DEBUG: API Router: search_id type: {type(search_id)}; value: {search_id}")
 
         # 2. SUBSCRIBE BEFORE DISPATCH — no lost frames.
+        # NOTE: possible issue: stream() is an async generator, so this line does NOT
+        # subscribe yet. The Redis SUBSCRIBE runs at the first `async for` step, after
+        # dispatch, and Pub/Sub drops any frame published in that gap.
         frames = broker.stream(search_id)
 
         # 3. DISPATCH the background run.
@@ -139,11 +165,14 @@ async def start_job_search_agent_stream(
         # work needs: did the SERVER end the stream or did the CLIENT vanish,
         # and how long / how many frames did it survive before that?
         async for frame in frames:
+            # None is the broker's idle tick. A line starting with ":" is an SSE comment:
+            # browsers ignore it, but it keeps proxies from closing a quiet connection.
             if frame is None:
                 yield ": heartbeat\n\n"
                 continue
             yield f"data: {json.dumps(frame)}\n\n"
 
+    # X-Accel-Buffering: no and no-cache stop proxies from holding events back.
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
@@ -202,6 +231,8 @@ async def resume_job_search_agent_stream(
         sid = prep.success.search_id
 
         # 2. SUBSCRIBE BEFORE DISPATCH — no lost frames.
+        # NOTE: possible issue: same as the start route: the real subscribe happens only
+        # at the first `async for` step, after dispatch.
         frames = broker.stream(sid)
 
         # 3. DISPATCH the background run.

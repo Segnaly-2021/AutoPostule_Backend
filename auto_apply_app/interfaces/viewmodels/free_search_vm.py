@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: auto_apply_app/interfaces/viewmodels/free_search_vm.py
+#
+# WHAT IT DOES:
+#   Response shapes for the free job search: one job snippet and the overall result.
+#   Field names are camelCase to match the React page's JSON.
+#
+# USED BY:
+#   - auto_apply_app/interfaces/presenters/base_presenter.py: FreeSearchPresenter types
+#   - auto_apply_app/interfaces/presenters/web.py: builds these view models
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
+
 # auto_apply_app/interfaces/viewmodels/free_search_vm.py
 
 from dataclasses import dataclass

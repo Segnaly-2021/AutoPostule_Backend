@@ -1,3 +1,21 @@
+# ==============================================================================
+# FILE: main.py
+#
+# WHAT IT DOES:
+#   Entry point of the HTTP API. Importing this module builds the FastAPI app and
+#   exposes it as `app`, which is what `uvicorn main:app` serves.
+#   Production (Dockerfile, Dockerfile.worker) runs uvicorn directly on $PORT.
+#   The `__main__` block below is only for local runs with `python main.py`.
+#
+# USED BY:
+#   - Dockerfile: starts the API with `uvicorn main:app`
+#   - Dockerfile.worker: same command, for the free-search Cloud Run service
+#
+# EXTERNAL DEPENDENCIES:
+#   - uvicorn: ASGI server that runs the FastAPI app
+#   - Google Cloud Run / Cloud Logging: where the boot errors printed here end up
+# ==============================================================================
+
 import uvicorn
 import sys
 import traceback
@@ -18,6 +36,8 @@ except Exception as e:
     raise e
 
 if __name__ == "__main__":
+    # NOTE: possible issue: the string "main:app" makes uvicorn import this file again
+    # as module `main`, so `python main.py` builds the FastAPI app twice.
     uvicorn.run(
         "main:app", 
         host="0.0.0.0", 

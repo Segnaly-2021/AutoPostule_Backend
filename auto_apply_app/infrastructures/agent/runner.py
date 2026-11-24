@@ -1,3 +1,20 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/agent/runner.py
+#
+# WHAT IT DOES:
+#   Runs ONE agent execution: load the context from the DB, run or resume the
+#   master agent, stream progress frames to the broker, and always finish with an
+#   end-of-stream sentinel. The same code runs in-process (LocalDispatcher) and
+#   inside a Cloud Run Job (worker_main.py).
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/agent/dispatch/local_dispatcher.py: runs it as a background task
+#   - auto_apply_app/infrastructures/configuration/container.py: builds it
+#   - tests/test_progress_bands.py: tests the progress aggregation
+#
+# EXTERNAL DEPENDENCIES:
+#   - Redis: indirectly, when the injected progress broker is RedisProgressBroker
+# ==============================================================================
 import logging
 from uuid import UUID
 
@@ -127,6 +144,9 @@ class AgentRunner:
                 return False
 
             ctx = res.value
+            # NOTE: possible issue: MasterAgent._execute_with_progress catches graph
+            # errors and only logs them, so a crashed graph still reaches `return True`
+            # below and no error frame is published.
             await self._agent.run_job_search(
                 user=ctx.user,
                 search=ctx.search,
@@ -140,6 +160,8 @@ class AgentRunner:
             logger.exception("AgentRunner start run crashed for %s", sid)
             await self._broker.publish(sid, _system_error_frame(sid, f"run crashed: {e!r}"))
             return False
+        # The sentinel ends THIS stream, not the whole search: a PREMIUM run that
+        # pauses for human review also lands here, and its resume opens a new stream.
         finally:
             await self._broker.publish_end(sid)  # exactly one sentinel, always
 

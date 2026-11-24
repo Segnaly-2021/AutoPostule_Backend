@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: auto_apply_app/interfaces/viewmodels/agent_vm.py
+#
+# WHAT IT DOES:
+#   Immutable response shapes for agent commands (start, resume, kill) and for the
+#   real-time progress events streamed to the UI over SSE.
+#
+# USED BY:
+#   - auto_apply_app/interfaces/presenters/base_presenter.py: AgentPresenter types
+#   - auto_apply_app/interfaces/presenters/web.py: builds these view models
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
+
 from dataclasses import dataclass
 from typing import Optional
 

@@ -1,3 +1,16 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/api/schema/admin_schema.py
+#
+# WHAT IT DOES:
+#   Pydantic response shapes for the admin dashboard's overview metrics: users,
+#   visitors, applications and AI credits.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/routers/admin.py: response model for /metrics/overview
+#
+# EXTERNAL DEPENDENCIES:
+#   - pydantic: data validation and serialization
+# ==============================================================================
 from typing import Optional
 
 from pydantic import BaseModel, Field

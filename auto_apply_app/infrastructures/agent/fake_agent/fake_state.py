@@ -1,3 +1,16 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/agent/fake_agent/fake_state.py
+#
+# WHAT IT DOES:
+#   STATUS: UNUSED. Defines FakeAgentState, but nothing imports it.
+#   The live fake agent is plain asyncio and does not use a LangGraph state.
+#
+# USED BY:
+#   - no importers found (likely dead code)
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 # auto_apply_app/infrastructures/agent/fake_state.py
 
 from typing import TypedDict, List

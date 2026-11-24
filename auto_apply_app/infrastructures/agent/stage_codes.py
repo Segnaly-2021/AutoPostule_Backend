@@ -1,3 +1,24 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/agent/stage_codes.py
+#
+# WHAT IT DOES:
+#   The shared vocabulary of agent progress. StageCode names each stage sent to the
+#   frontend, and the band tables turn "which node, how many done" into the
+#   progress-bar percentage for BASIC runs and both halves of PREMIUM runs.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/agent/master/master_agent.py: stage codes and master percentages
+#   - auto_apply_app/infrastructures/agent/runner.py: recomputes run-wide counted percentages
+#   - auto_apply_app/infrastructures/agent/pacing.py: worker percentages
+#   - auto_apply_app/infrastructures/agent/workers/apec/apec_worker.py: stage codes
+#   - auto_apply_app/infrastructures/agent/workers/hellowork/hw_worker.py: stage codes
+#   - auto_apply_app/infrastructures/agent/workers/wttj/wttj_worker.py: stage codes
+#   - auto_apply_app/infrastructures/agent/workers/teaser/teaser_worker.py: stage codes
+#   - tests/test_progress_bands.py: band tests
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 # auto_apply_app/infrastructures/agent/stage_codes.py
 from enum import Enum
 
@@ -55,6 +76,9 @@ class StageCode(str, Enum):
 # 0-100 to itself.
 # ---------------------------------------------------------------------------
 
+# The "master_agent.py:917" reference above is an old line number. The pause is
+# set by `interrupt_before=["human_review"]` in MasterAgent.get_graph.
+#
 # (start, end) per node. Nodes are named identically in all three workers, which
 # is what lets one table serve every board.
 BASIC_LAUNCH_BANDS = {

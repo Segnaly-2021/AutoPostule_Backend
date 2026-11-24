@@ -1,3 +1,17 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/persistence/database/repositories/user_repo_db.py
+#
+# WHAT IT DOES:
+#   Stores user profiles (name, contact, education, resume location). Login data is
+#   separate, in auth_repo_db.py. Deleting a user cascades to their related rows.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/persistence/database/repositories/unit_of_work_repo_db.py: uow.user_repo
+#
+# EXTERNAL DEPENDENCIES:
+#   - SQLAlchemy: async queries and ORM
+#   - PostgreSQL (Supabase): the users table
+# ==============================================================================
 # =============================================================================
 # user_repo_db.py
 # =============================================================================
@@ -81,6 +95,8 @@ class UserRepoDB(UserRepository):
         if user_db is None:
             raise UserNotFoundError(f"User {user_id} not found")
             
+        # user_db is tracked by the session, so these changes are flushed automatically
+        # when the Unit of Work commits; no explicit save is needed.
         for key, value in data.items():
             if key not in self.IMMUTABLE_FIELDS and hasattr(user_db, key):
                 setattr(user_db, key, value)

@@ -1,3 +1,17 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/use_cases/free_search_use_cases.py
+#
+# WHAT IT DOES:
+#   Runs the free job search through the fake agent and records usage only when
+#   it succeeds. The slow scraping happens outside any database transaction.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/configuration/container.py: builds the use case
+#   - auto_apply_app/interfaces/controllers/free_search_controller.py: calls it
+#
+# EXTERNAL DEPENDENCIES:
+#   - Job boards, through the injected fake agent (Playwright, no import here)
+# ==============================================================================
 # auto_apply_app/application/use_cases/free_search_use_cases.py
 import logging
 from dataclasses import dataclass
@@ -42,6 +56,8 @@ class FreeSearchUseCase:
             user_name = "unknown"
             async with self.uow_factory() as uow:
                 usage = await uow.free_search_usage_repo.get_or_create_for_today(user_id)
+                # NOTE: possible issue: the block below is commented out, so the daily
+                # free-search limit is NOT enforced; `allowed` is never used.
                 allowed, reason = usage.can_run()
                 # if not allowed:
                 #     # `reason` (English string) goes to the dev-facing message;

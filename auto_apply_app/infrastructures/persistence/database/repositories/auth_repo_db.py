@@ -1,3 +1,19 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/persistence/database/repositories/auth_repo_db.py
+#
+# WHAT IT DOES:
+#   Stores login records separately from the profile: email, password hash, admin
+#   flag, verification-code state, pending email change and marketing opt-out.
+#   When adding a column, update BOTH save() and _map_to_entity(), or merge() will
+#   overwrite the column with a default value.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/persistence/database/repositories/unit_of_work_repo_db.py: uow.auth_repo
+#
+# EXTERNAL DEPENDENCIES:
+#   - SQLAlchemy: async queries and ORM
+#   - PostgreSQL (Supabase): the auth_users table
+# ==============================================================================
 from datetime import datetime
 from typing import Optional
 from uuid import UUID

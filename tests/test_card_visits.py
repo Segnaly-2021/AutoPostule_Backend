@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: tests/test_card_visits.py
+#
+# WHAT IT DOES:
+#   Protects the randomized order in which result cards are opened: every card is
+#   still visited exactly once, so no offer is lost. Also inspects the APEC worker
+#   source with `ast` to confirm it uses this order.
+#
+# USED BY:
+#   - pytest: test entry point; nothing imports it
+#
+# EXTERNAL DEPENDENCIES:
+#   - pytest: test runner and fixtures
+# ==============================================================================
+
 """How a page of results gets worked.
 
 The signature this removes: the scrape loop walked `for i in range(count)`, so

@@ -1,3 +1,20 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/dtos/preferences_dtos.py
+#
+# WHAT IT DOES:
+#   Request and response shapes for user settings: automation mode, creativity,
+#   AI model, active boards and board credentials. Responses only say whether
+#   credentials are configured; stored logins and passwords are never returned.
+#
+# USED BY:
+#   - auto_apply_app/application/use_cases/preferences_use_cases.py: inputs and outputs
+#   - auto_apply_app/interfaces/controllers/preference_controllers.py: builds requests
+#   - auto_apply_app/interfaces/presenters/base_presenter.py: presenter type hints
+#   - auto_apply_app/interfaces/presenters/web.py: presents preferences
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 # auto_apply_app/application/dtos/preferences_dtos.py
 from dataclasses import dataclass
 from typing import Dict, Optional, List, Any, Self

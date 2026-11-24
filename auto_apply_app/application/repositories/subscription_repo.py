@@ -1,3 +1,19 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/repositories/subscription_repo.py
+#
+# WHAT IT DOES:
+#   Interface for user subscriptions: lookups by user or Stripe id, saving, and
+#   try_consume_credits, the atomic operation that spends AI credits safely when
+#   several agent workers run at once.
+#
+# USED BY:
+#   - auto_apply_app/application/repositories/unit_of_work.py: exposes it as subscription_repo
+#   - auto_apply_app/infrastructures/persistence/database/repositories/subscription_repo_db.py: implementation
+#   - auto_apply_app/infrastructures/persistence/in_memory/memory.py: in-memory implementation
+#
+# EXTERNAL DEPENDENCIES:
+#   - Stripe: subscription and customer ids are used as lookup keys (no import here)
+# ==============================================================================
 from abc import ABC, abstractmethod
 from typing import List, Optional
 from uuid import UUID

@@ -1,3 +1,19 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/use_cases/subscription_use_cases.py
+#
+# WHAT IT DOES:
+#   Billing flows: read a subscription, start Stripe Checkout, open the billing
+#   portal, and process Stripe webhooks. The webhook handler is what actually
+#   activates plans, refills credits, and handles failed payments and cancellations.
+#   Reads FRONTEND_URL, BASIC_PRICE_ID and PREMIUM_PRICE_ID from the environment.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/configuration/container.py: builds the use cases
+#   - auto_apply_app/interfaces/controllers/subscription_controllers.py: calls them
+#
+# EXTERNAL DEPENDENCIES:
+#   - Stripe: checkout, billing portal and webhooks, through PaymentPort (no import here)
+# ==============================================================================
 import logging
 import os
 from dataclasses import dataclass
@@ -157,6 +173,9 @@ class HandlePaymentWebhookUseCase:
         
         
         
+    # NOTE: possible issue: no event-id deduplication. A Stripe retry, or checkout
+    # followed by invoice.paid, resets credits again and adds another full REPLENISH
+    # ledger row, which can restore credits already spent in the cycle.
     async def _handle_successful_payment(self, data: dict, event_type: str) -> Result:
         print(f"\nProcessing event: {event_type}")
         

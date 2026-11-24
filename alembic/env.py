@@ -1,3 +1,23 @@
+# ==============================================================================
+# FILE: alembic/env.py
+#
+# WHAT IT DOES:
+#   Alembic's runtime configuration, executed on every `alembic` command. Loads
+#   DATABASE_DIRECT_URL, adapts it for the asyncpg driver, points autogenerate at
+#   the app's SQLAlchemy models, and runs migrations online or offline.
+#
+# USED BY:
+#   - Alembic CLI: loads this file through script_location in alembic.ini
+#   - scripts/migrate.sh: runs Alembic, which executes this file
+#
+# EXTERNAL DEPENDENCIES:
+#   - Alembic: migration framework
+#   - SQLAlchemy: async engine and model metadata
+#   - asyncpg: PostgreSQL driver selected by the rewritten URL
+#   - python-dotenv: loads the local .env file
+#   - Supabase: hosts the database; the direct URL is used for migrations
+# ==============================================================================
+
 import sys
 import asyncio
 
@@ -43,6 +63,8 @@ if database_url:
         if any(k == "sslmode" for k, _ in params):
             params = [("ssl" if k == "sslmode" else k, v) for k, v in params]
             database_url = urlunsplit(parts._replace(query=urlencode(params)))
+    # NOTE: possible issue: Alembic config values use %-interpolation, so a URL with a
+    # percent-encoded password (for example %40) can raise here unless % is doubled.
     config.set_main_option("sqlalchemy.url", database_url)
 
 # 3. Import your Base and set 
@@ -110,6 +132,8 @@ async def run_async_migrations() -> None:
         
     )
 
+    # Alembic's migration API is synchronous, so run_sync bridges it onto this async
+    # connection.
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)
 

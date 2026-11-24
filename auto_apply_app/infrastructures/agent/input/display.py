@@ -1,3 +1,25 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/agent/input/display.py
+#
+# WHAT IT DOES:
+#   Gives each headful browser an X display: a private Xvfb (a virtual screen in
+#   memory) in production, or the developer's existing screen when it can be
+#   borrowed. It also computes window placement and can expose the run over VNC.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/agent/pacing.py: opens the display before browser launch
+#   - auto_apply_app/infrastructures/agent/fake_agent/fake_workers/fake_indeed_worker.py: headful Indeed (currently disabled)
+#   - scripts/input_probe.py: input measurement tool
+#   - scripts/preflight.py: environment checks
+#   - tests/test_display_selection.py: display selection tests
+#
+# EXTERNAL DEPENDENCIES:
+#   - Xvfb: virtual X server
+#   - xdotool: asks a display for its size
+#   - xprop: detects a window manager
+#   - x11vnc, TigerVNC viewer: optional live view (AGENT_X11_VIEW)
+#   - WSLg: the developer display this code has special handling for
+# ==============================================================================
 """A private X display per browser, so OS-level input has somewhere to land.
 
 `AGENT_INPUT_BACKEND=x11` cannot work against a headless browser. Playwright
@@ -280,6 +302,10 @@ class XvfbDisplay:
             display = f":{number}"
             if Path(f"/tmp/.X{number}-lock").exists():
                 continue
+            # "-screen 0 WxHx24" = screen number 0, persona size, 24-bit color.
+            # "-nolisten tcp" keeps this X server off the network.
+            # NOTE: possible issue: stderr is a PIPE that is only read if Xvfb exits
+            # early. A long-running Xvfb that fills the pipe could block on writing.
             proc = subprocess.Popen(
                 [
                     "Xvfb", display,

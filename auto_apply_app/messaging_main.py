@@ -1,3 +1,22 @@
+# ==============================================================================
+# FILE: auto_apply_app/messaging_main.py
+#
+# WHAT IT DOES:
+#   Process entry point for the daily lifecycle-email Cloud Run Job. Selects users
+#   whose anchor event fell on one UTC day, sends the check-in or free-account
+#   reminder, and records each send in message_log so it is never repeated.
+#   MESSAGING_DRY_RUN and MESSAGING_ANCHOR_DAYS control test runs and backfills.
+#
+# USED BY:
+#   - .github/workflows/deploy-api.yml: configures the Job to run this module
+#   - tests/test_messaging.py: tests the window and delivery helpers
+#
+# EXTERNAL DEPENDENCIES:
+#   - Google Cloud Run Jobs: runs this on a schedule and sends SIGTERM on stop
+#   - Resend: delivers the emails (through the container's email service)
+#   - Supabase: hosts the PostgreSQL database read through the unit of work
+# ==============================================================================
+
 """
 Cloud Run Job entrypoint for lifecycle messaging.
 
@@ -115,6 +134,8 @@ async def _deliver(uow_factory, kind: MessageKind, user_id: UUID, send, stats: _
         stats.failed += 1
         return
 
+    # NOTE: possible issue: this write is outside the try above, so a database error
+    # here aborts the whole run, despite the "one failure does not stop the run" goal.
     async with uow_factory() as uow:
         await uow.message_log_repo.record(user_id, kind)
     stats.sent += 1
@@ -224,6 +245,8 @@ async def _amain() -> int:
     # unsubscribe links; the agent Job builds neither.
     app = create_worker_application(for_messaging=True)
 
+    # NOTE: possible issue: `stop` is only checked between the two cohorts, not between
+    # recipients as the handler comment says, so SIGTERM does not stop a cohort early.
     stop = asyncio.Event()
 
     def _on_sigterm() -> None:
@@ -250,6 +273,8 @@ async def _amain() -> int:
 
     # A failed send is a real outcome worth an alert -- with no scheduled-job
     # monitoring yet, the exit code is the only signal that leaves this process.
+    # NOTE: this differs from the module docstring, which says the exit code reflects
+    # only whether the run completed; here any failed send also returns 1.
     return 1 if (checkin.failed or reminder.failed) else 0
 
 

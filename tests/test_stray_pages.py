@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: tests/test_stray_pages.py
+#
+# WHAT IT DOES:
+#   Protects against unexpected popup windows, which would steal OS-level clicks:
+#   strays are closed, the main window is raised, submit clicks are never retried,
+#   and every worker installs the popup suppressor. Uses fakes, no browser.
+#
+# USED BY:
+#   - pytest: test entry point; nothing imports it
+#
+# EXTERNAL DEPENDENCIES:
+#   - pytest: test runner and fixtures
+# ==============================================================================
+
 """A click that opens a window the flow never asked for.
 
 Under CDP a spare window was harmless — events go to a Page object. Under XTEST

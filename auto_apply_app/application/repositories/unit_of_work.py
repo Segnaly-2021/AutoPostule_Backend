@@ -1,3 +1,25 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/repositories/unit_of_work.py
+#
+# WHAT IT DOES:
+#   Defines the Unit of Work: one database transaction shared by all repositories.
+#   Use cases open it with `async with uow_factory() as uow`; everything inside
+#   commits or rolls back together. The concrete class lives in infrastructure.
+#
+# USED BY:
+#   - auto_apply_app/application/use_cases/agent_use_cases.py: agent transactions
+#   - auto_apply_app/application/use_cases/agent_state_use_cases.py: kill switch and heartbeat
+#   - auto_apply_app/application/use_cases/agent_usage_use_cases.py: run completion
+#   - auto_apply_app/application/use_cases/subscription_use_cases.py: billing transactions
+#   - auto_apply_app/application/use_cases/job_offer_use_cases.py: application updates
+#   - auto_apply_app/application/use_cases/fingerprint_use_cases.py: persona rotation
+#   - auto_apply_app/application/use_cases/run_context_use_cases.py: loads run data
+#   - auto_apply_app/application/use_cases/admin_use_cases.py: dashboard reads
+#   - ... and 9 more
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 # auto_apply_app/application/repositories/unit_of_work.py
 from abc import ABC, abstractmethod
 from typing import Callable
@@ -43,6 +65,9 @@ class UnitOfWork(ABC):
     async def __aenter__(self):
         return self
 
+    # Important: a `return` inside the `async with` block is a normal exit, so it
+    # COMMITS. Use cases rely on this to save failed-attempt counters while
+    # returning Result.failure. Only a raised exception rolls back.
     async def __aexit__(self, exc_type, exc_value, traceback):
         if exc_type is None:
             await self.commit()

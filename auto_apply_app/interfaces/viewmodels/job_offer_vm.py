@@ -1,3 +1,20 @@
+# ==============================================================================
+# FILE: auto_apply_app/interfaces/viewmodels/job_offer_vm.py
+#
+# WHAT IT DOES:
+#   Immutable response shapes for job offers: application history items, the premium
+#   review card, the paginated dashboard, and the daily application count.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/routers/agent.py: response typing
+#   - auto_apply_app/interfaces/presenters/base_presenter.py: JobPresenter types
+#   - auto_apply_app/interfaces/presenters/web.py: builds these view models
+#   - auto_apply_app/interfaces/viewmodels/job_search_vm.py: nests JobOfferViewModel
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
+
 from dataclasses import dataclass
 from typing import Optional, List
 #from auto_apply_app.domain.value_objects import ApplicationStatus, JobBoard

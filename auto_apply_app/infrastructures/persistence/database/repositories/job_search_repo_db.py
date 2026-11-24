@@ -1,3 +1,17 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/persistence/database/repositories/job_search_repo_db.py
+#
+# WHAT IT DOES:
+#   Stores job searches (one per agent run) and can load or save their job offers
+#   together. Maps database rows to the JobSearch domain aggregate.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/persistence/database/repositories/unit_of_work_repo_db.py: uow.search_repo
+#
+# EXTERNAL DEPENDENCIES:
+#   - SQLAlchemy: async queries, ORM and eager loading
+#   - PostgreSQL (Supabase): job_searches and job_offers tables
+# ==============================================================================
 # =============================================================================
 # job_search_repo_db.py
 # =============================================================================
@@ -26,6 +40,8 @@ class JobSearchRepoDB(JobSearchRepository):
             print(f"Warning: search_id is not a UUID: {search_id} (type: {type(search_id)})")
         result = await self.session.execute(
             select(JobSearchDB)
+            # Load offers now with a second query. Async SQLAlchemy cannot lazy-load
+            # them later when _map_to_entity reads the relationship.
             .options(selectinload(JobSearchDB.job_offers))
             .where(JobSearchDB.id == search_id)
         )
@@ -170,6 +186,9 @@ class JobSearchRepoDB(JobSearchRepository):
 
         return search
 
+    # NOTE: possible issue: unlike JobOfferRepoDB, this mapper omits clean_title and
+    # submitted_at. Saving such an offer through JobOfferRepoDB.save can erase clean_title
+    # and re-stamp submitted_at.
     def _map_offer_to_entity(self, offer_db) -> JobOffer:
         offer = JobOffer(
             url=offer_db.url,

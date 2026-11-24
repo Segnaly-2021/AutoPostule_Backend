@@ -1,3 +1,15 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/api/schema/subs_schema.py
+#
+# WHAT IT DOES:
+#   Pydantic shapes for billing: the checkout request and a subscription view.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/routers/subscription.py: CheckoutSessionRequest
+#
+# EXTERNAL DEPENDENCIES:
+#   - pydantic: data validation and serialization
+# ==============================================================================
 # interfaces/api/schemas/subscription_schemas.py
 from pydantic import BaseModel, Field
 from typing import Optional

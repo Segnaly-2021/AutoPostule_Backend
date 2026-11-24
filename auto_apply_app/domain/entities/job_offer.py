@@ -1,3 +1,25 @@
+# ==============================================================================
+# FILE: auto_apply_app/domain/entities/job_offer.py
+#
+# WHAT IT DOES:
+#   One job found for a user, and its application lifecycle:
+#   FOUND -> GENERATED (letter written) -> APPROVED -> SUBMITTED.
+#   Also cleans the location and computes the hash used to skip duplicates.
+#
+# USED BY:
+#   - auto_apply_app/application/dtos/job_offer_dtos.py: maps to API responses
+#   - auto_apply_app/application/repositories/job_offer_repo.py: repository interface
+#   - auto_apply_app/application/use_cases/agent_use_cases.py: review and save flows
+#   - auto_apply_app/application/use_cases/job_offer_use_cases.py: application history
+#   - auto_apply_app/application/use_cases/run_context_use_cases.py: approved jobs for resume
+#   - auto_apply_app/domain/entities/job_search.py: matched jobs of a search
+#   - auto_apply_app/infrastructures/agent/state.py: agent state type
+#   - auto_apply_app/application/repositories/job_search_repo.py: repository signatures
+#   - ... and 12 more
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 from dataclasses import dataclass, field
 from uuid import UUID
 import hashlib
@@ -95,6 +117,8 @@ class JobOffer(Entity):
              raise ValueError("Job must be APPROVED before submission.")
         self.status = ApplicationStatus.SUBMITTED
 
+    # Duplicate-detection key, not a security hash, so MD5 is fine. Location is not
+    # included: the same title at the same company in two cities counts as one job.
     def _generate_fingerprint(self) -> str:
         company_name = self.company_name.replace(" ", "").lower().strip()
         job_title = self.job_title.replace(" ", "").lower().strip()

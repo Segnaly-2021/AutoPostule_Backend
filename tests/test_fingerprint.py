@@ -1,3 +1,19 @@
+# ==============================================================================
+# FILE: tests/test_fingerprint.py
+#
+# WHAT IT DOES:
+#   Protects browser fingerprints: devices are believable and not derived from the
+#   user id, only session values rotate, and the init script is valid and escaped.
+#   Also inspects live worker source with `ast` for the alignment call order.
+#
+# USED BY:
+#   - pytest: test entry point; nothing imports it
+#
+# EXTERNAL DEPENDENCIES:
+#   - pytest: test runner and fixtures
+#   - Node.js: optional; syntax-checks the generated JavaScript when installed
+# ==============================================================================
+
 """Fingerprint generation, coherence, and rotation.
 
 The bug these guard against: a fingerprint derived from the user id can never

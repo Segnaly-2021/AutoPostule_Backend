@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/persistence/database/repositories/board_credentials_repo_db.py
+#
+# WHAT IT DOES:
+#   Stores each user's job-board credentials. This repository only handles ciphertext:
+#   encryption and decryption happen elsewhere, through EncryptionServicePort.
+#   Board names are lowercased so lookups are consistent.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/persistence/database/repositories/unit_of_work_repo_db.py: uow.board_cred_repo
+#
+# EXTERNAL DEPENDENCIES:
+#   - SQLAlchemy: async queries and ORM
+#   - PostgreSQL (Supabase): the board_credentials table
+# ==============================================================================
 # =============================================================================
 # board_credentials_repo_db.py
 # =============================================================================

@@ -1,3 +1,17 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/api/schema/announcement_schema.py
+#
+# WHAT IT DOES:
+#   Pydantic shapes for announcements: what users receive, the extra fields admins
+#   see, and the validated body for creating or updating one.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/routers/admin.py: admin read and write shapes
+#   - auto_apply_app/infrastructures/api/routers/announcement.py: user-facing shape
+#
+# EXTERNAL DEPENDENCIES:
+#   - pydantic: data validation and serialization
+# ==============================================================================
 from datetime import datetime
 from typing import Optional
 

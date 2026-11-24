@@ -1,3 +1,19 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/service_ports/agent_port.py
+#
+# WHAT IT DOES:
+#   Interface between the application layer and the LangGraph agent: start a run,
+#   resume it after Premium review, or kill it. Keeps use cases free of LangGraph.
+#
+# USED BY:
+#   - auto_apply_app/application/use_cases/agent_use_cases.py: KillJobSearchUseCase calls it
+#   - auto_apply_app/infrastructures/agent/master/master_agent.py: main implementation
+#   - auto_apply_app/infrastructures/agent/basic_agent/master/master_agent.py: legacy implementation
+#   - auto_apply_app/infrastructures/agent/runner.py: runs the agent through this interface
+#
+# EXTERNAL DEPENDENCIES:
+#   - LangGraph, Playwright and Chromium: used by implementations (no imports here)
+# ==============================================================================
 # auto_apply_app/application/service_ports/agent_port.py
 from uuid import UUID
 from abc import ABC, abstractmethod

@@ -1,3 +1,21 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/emailing_service/resend_email_service.py
+#
+# WHAT IT DOES:
+#   Sends all product emails through the Resend HTTP API and holds their French HTML
+#   templates. Transactional mail: password reset, verification code, email-changed
+#   notice. Lifecycle mail, sent by the scheduled messaging job: customer check-in and
+#   free-account reminder (the reminder carries one-click unsubscribe headers).
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/app.py: injected as email_service_port
+#   - auto_apply_app/infrastructures/configuration/container.py: built for the messaging job
+#   - tests/test_messaging.py: tests the send behavior
+#
+# EXTERNAL DEPENDENCIES:
+#   - httpx: async HTTP client
+#   - Resend: email delivery API (RESEND_API_KEY)
+# ==============================================================================
 import os
 import logging
 import httpx
@@ -197,6 +215,8 @@ class ResendEmailService(EmailServicePort):
         # never fire -- leaving an email that asks for a reply with no reply_to
         # header, so the answers land at noreply@ and are lost.
         reply_to = os.getenv("EMAIL_REPLY_TO") or "contact@autopostule.com"
+        # NOTE: possible issue: first_name is user-controlled and goes into the HTML without
+        # escaping (html.escape), here and in send_free_account_reminder.
         greeting = f"Bonjour {first_name}," if first_name else "Bonjour,"
 
         body = f"""

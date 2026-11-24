@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: alembic/_archived/f74ac0ee9955_add_jobteaser_to_active_boards_json.py
+#
+# WHAT IT DOES:
+#   ARCHIVED data migration, with no schema change. Adds "jobteaser": false to the
+#   user_preferences.active_boards JSONB wherever the key is missing.
+#
+# USED BY:
+#   - None: archived. Alembic only loads alembic/versions, so this no longer runs.
+#
+# EXTERNAL DEPENDENCIES:
+#   - Alembic: migration framework
+#   - SQLAlchemy: imported by the template; this migration uses raw SQL
+# ==============================================================================
+
 """add jobteaser to active_boards json
 
 Revision ID: f74ac0ee9955

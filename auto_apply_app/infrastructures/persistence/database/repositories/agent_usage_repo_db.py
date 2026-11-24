@@ -1,3 +1,16 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/persistence/database/repositories/agent_usage_repo_db.py
+#
+# WHAT IT DOES:
+#   Tracks how many agent runs each user completed per UTC day (one row per user/day).
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/persistence/database/repositories/unit_of_work_repo_db.py: uow.agent_usage_repo
+#
+# EXTERNAL DEPENDENCIES:
+#   - SQLAlchemy: async queries and PostgreSQL upsert
+#   - PostgreSQL (Supabase): the agent_usages table
+# ==============================================================================
 # auto_apply_app/infrastructures/persistence/database/repositories/agent_usage_repo_db.py
 from datetime import datetime, timezone
 from uuid import UUID

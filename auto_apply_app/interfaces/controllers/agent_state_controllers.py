@@ -1,3 +1,20 @@
+# ==============================================================================
+# FILE: auto_apply_app/interfaces/controllers/agent_state_controllers.py
+#
+# WHAT IT DOES:
+#   Adapter for agent run state: reads the kill-switch state, reports whether a
+#   search's agent is alive, and requests a shutdown. Malformed UUIDs raise
+#   ValueError, which becomes a VALIDATION_ERROR result.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/routers/agent.py: uses the state handlers
+#   - auto_apply_app/infrastructures/api/routers/agent_state.py: agent-state routes
+#   - auto_apply_app/infrastructures/configuration/container.py: builds this controller
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
+
 # auto_apply_app/interfaces/controllers/agent_state_controllers.py
 from dataclasses import dataclass
 from uuid import UUID

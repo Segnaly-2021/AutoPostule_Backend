@@ -1,3 +1,16 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/api/routers/application.py
+#
+# WHAT IT DOES:
+#   Application tracker routes, mounted at /api/v1/applications: filtered and paginated
+#   lists, daily stats, response/interview toggles, and analytics for the dashboard.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/app.py: mounts this router in the "api" role
+#
+# EXTERNAL DEPENDENCIES:
+#   - fastapi: routing and query parameter parsing
+# ==============================================================================
 # auto_apply_app/infrastructures/api/routes/application_routes.py
 
 from fastapi import APIRouter, Depends, Query
@@ -38,6 +51,7 @@ JobControllerDep = Annotated[JobOfferController, Depends(get_job_controller)]
 async def get_user_applications(
     current_user_id: CurrentUserId,
     controller: JobControllerDep,
+    # Depends() on a Pydantic model makes FastAPI fill its fields from query parameters.
     filters: Annotated[ApplicationFilters, Depends()],
     pagination: Annotated[PaginationParams, Depends()]
 ):

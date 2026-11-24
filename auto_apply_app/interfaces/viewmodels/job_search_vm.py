@@ -1,3 +1,20 @@
+# ==============================================================================
+# FILE: auto_apply_app/interfaces/viewmodels/job_search_vm.py
+#
+# WHAT IT DOES:
+#   Immutable response shapes for job searches: full detail, the compact recent
+#   searches item, and a one-field terminal status.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/routers/agent.py: response typing
+#   - auto_apply_app/interfaces/controllers/job_search_controllers.py: return type
+#   - auto_apply_app/interfaces/presenters/base_presenter.py: JobSearchPresenter types
+#   - auto_apply_app/interfaces/presenters/web.py: builds these view models
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
+
 from dataclasses import dataclass
 from typing import Optional, List
 from auto_apply_app.interfaces.viewmodels.job_offer_vm import JobOfferViewModel

@@ -1,3 +1,24 @@
+# ==============================================================================
+# FILE: auto_apply_app/domain/entities/board_credentials.py
+#
+# WHAT IT DOES:
+#   A user's encrypted login for one job board, plus whether it last worked.
+#   Workers decrypt these values only at the moment they log in.
+#
+# USED BY:
+#   - auto_apply_app/application/dtos/preferences_dtos.py: reports configured status
+#   - auto_apply_app/application/repositories/board_credentials_repo.py: repository interface
+#   - auto_apply_app/application/service_ports/agent_port.py: agent method signatures
+#   - auto_apply_app/application/use_cases/preferences_use_cases.py: creates and updates
+#   - auto_apply_app/application/use_cases/run_context_use_cases.py: loads for a run
+#   - auto_apply_app/infrastructures/agent/master/master_agent.py: passes to workers
+#   - auto_apply_app/infrastructures/agent/state.py: agent state type
+#   - auto_apply_app/infrastructures/persistence/database/repositories/board_credentials_repo_db.py: persistence
+#   - ... and 1 more
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 # auto_apply_app/domain/entities/board_credentials.py
 
 from dataclasses import dataclass

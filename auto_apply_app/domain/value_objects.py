@@ -1,3 +1,24 @@
+# ==============================================================================
+# FILE: auto_apply_app/domain/value_objects.py
+#
+# WHAT IT DOES:
+#   The shared enums of the system: plan type, contract type, application status,
+#   search status, job board, credit movement kind and lifecycle email kind.
+#
+# USED BY:
+#   - auto_apply_app/application/use_cases/agent_use_cases.py: statuses in run flows
+#   - auto_apply_app/application/use_cases/subscription_use_cases.py: plan and credit kinds
+#   - auto_apply_app/application/use_cases/job_offer_use_cases.py: application statuses
+#   - auto_apply_app/application/use_cases/run_context_use_cases.py: approved status
+#   - auto_apply_app/application/dtos/agent_dtos.py: board and contract mapping
+#   - auto_apply_app/application/repositories/job_offer_repo.py: status signatures
+#   - auto_apply_app/application/repositories/message_log_repo.py: message kinds
+#   - auto_apply_app/domain/entities/credit_transaction.py: credit kind
+#   - ... and 33 more
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 from enum import Enum
 
 class ClientType(Enum):

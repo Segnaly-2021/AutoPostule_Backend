@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: tests/test_pacing.py
+#
+# WHAT IT DOES:
+#   Protects human-like pacing: tier ordering, pause limits, the time budget, and
+#   heartbeats during long pauses so slow runs are not declared dead. Also inspects
+#   live worker source with `ast` for required pacing patterns.
+#
+# USED BY:
+#   - tests/test_fingerprint.py: imports the LIVE_WORKERS list
+#
+# EXTERNAL DEPENDENCIES:
+#   - pytest: test runner and fixtures
+# ==============================================================================
+
 """Pacing tiers, the budget guard, and the heartbeat invariant.
 
 The heartbeat test is the important one. WTTJ and HelloWork had no budget guard

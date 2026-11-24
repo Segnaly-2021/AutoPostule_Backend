@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: tests/test_announcements.py
+#
+# WHAT IT DOES:
+#   Protects the announcements feature: validation of admin writes, only live notes
+#   reaching users, per-user dismissal that sticks, and delete behavior.
+#   Runs against the in-memory unit of work.
+#
+# USED BY:
+#   - pytest: test entry point; nothing imports it
+#
+# EXTERNAL DEPENDENCIES:
+#   - pytest: test runner and fixtures
+# ==============================================================================
+
 """Announcements: who sees one, and who stops seeing it.
 
 The read path runs on every authenticated page load, so its filters are the whole

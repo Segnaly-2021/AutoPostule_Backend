@@ -1,3 +1,19 @@
+# ==============================================================================
+# FILE: auto_apply_app/interfaces/controllers/announcement_controllers.py
+#
+# WHAT IT DOES:
+#   Adapter for in-app announcements, serving both users (read, dismiss) and admins
+#   (list, save, delete). Access control is not here: the routers guard each path.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/routers/admin.py: admin announcement routes
+#   - auto_apply_app/infrastructures/api/routers/announcement.py: user routes
+#   - auto_apply_app/infrastructures/configuration/container.py: builds this controller
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
+
 # auto_apply_app/interfaces/controllers/announcement_controllers.py
 
 from dataclasses import dataclass

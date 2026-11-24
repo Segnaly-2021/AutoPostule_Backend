@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: alembic/versions/b7f1c2d39a41_add_admin_dashboard_tables.py
+#
+# WHAT IT DOES:
+#   Active migration. Adds auth_users.is_admin, creates page_views and the
+#   credit_transactions ledger, and adds the indexes the admin metrics query.
+#
+# USED BY:
+#   - Alembic (alembic/env.py, scripts/migrate.sh): applied by `alembic upgrade`
+#
+# EXTERNAL DEPENDENCIES:
+#   - Alembic: migration framework
+#   - SQLAlchemy: column and type definitions
+# ==============================================================================
+
 """admin dashboard: is_admin, page_views, credit_transactions
 
 Revision ID: b7f1c2d39a41

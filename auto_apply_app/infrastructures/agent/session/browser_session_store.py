@@ -1,3 +1,20 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/agent/session/browser_session_store.py
+#
+# WHAT IT DOES:
+#   Saves and restores logged-in browser sessions (cookies and local storage) in a
+#   private GCS bucket, one encrypted file per user, board and device persona.
+#   Workers use it to skip logging in again. Every failure degrades to "log in".
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/agent/create_agent.py: builds it when GCP_SESSION_BUCKET is set
+#   - tests/test_session_binding.py: tests the per-device key
+#
+# EXTERNAL DEPENDENCIES:
+#   - google-cloud-storage: GCS client (GCP_CREDENTIALS locally, runtime service account on Cloud Run)
+#   - Google Cloud Storage: holds the encrypted session files
+#   - Playwright: produces the storage_state JSON files handled here
+# ==============================================================================
 # auto_apply_app/infrastructures/agent/session/browser_session_store.py
 """
 Best-effort durable cache of Playwright ``storage_state`` per (user, board) in GCS
@@ -56,6 +73,8 @@ class BrowserSessionStore:
             self._client = storage.Client()
         self._bucket = self._client.bucket(bucket)
 
+    # The GCS client is blocking, so these *_sync helpers run through
+    # asyncio.to_thread to keep the event loop (and the parallel workers) moving.
     def _download_sync(self, blob_name: str) -> Optional[bytes]:
         try:
             return self._bucket.blob(blob_name).download_as_bytes()

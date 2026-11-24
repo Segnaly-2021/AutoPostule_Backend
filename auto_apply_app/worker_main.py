@@ -1,3 +1,22 @@
+# ==============================================================================
+# FILE: auto_apply_app/worker_main.py
+#
+# WHAT IT DOES:
+#   Process entry point for one browser-agent run in a Cloud Run Job. Reads the run
+#   from AGENT_* environment variables, builds the worker container, runs the agent
+#   once, and turns the result into an exit code (0 ok, 1 failed, 2 bad action).
+#   On SIGTERM it closes the browser before the process is killed.
+#
+# USED BY:
+#   - .github/workflows/deploy-browser.yml: configures the Job to run this module
+#   - Dockerfile.worker: documents the same launch command
+#
+# EXTERNAL DEPENDENCIES:
+#   - Google Cloud Run Jobs: starts this process and sends SIGTERM on stop
+#   - Redis: carries progress back to the API (through the runner)
+#   - Chromium: the browser the agent drives (through the runner)
+# ==============================================================================
+
 """
 Cloud Run Job entrypoint for the heavy agent (Phase B-1).
 
@@ -68,6 +87,10 @@ async def _amain() -> int:
 
     try:
         loop = asyncio.get_running_loop()
+        # A signal handler must be a plain function, so it schedules the async
+        # cleanup as a task on the running event loop.
+        # NOTE: possible issue: no reference to this task is kept, and asyncio holds
+        # tasks only weakly, so it could in theory be garbage-collected mid-cleanup.
         loop.add_signal_handler(
             signal.SIGTERM, lambda: asyncio.create_task(_graceful_stop())
         )

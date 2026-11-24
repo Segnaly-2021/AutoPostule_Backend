@@ -1,3 +1,20 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/repositories/job_search_repo.py
+#
+# WHAT IT DOES:
+#   Interface for job searches (one agent mission each) and their matched jobs.
+#   The database implementation's list_recent_by_user takes `statuses` (a list),
+#   which is what callers pass, rather than the single `status` declared here.
+#
+# USED BY:
+#   - auto_apply_app/application/repositories/unit_of_work.py: exposes it as search_repo
+#   - auto_apply_app/application/use_cases/job_search_use_cases.py: type for direct injection
+#   - auto_apply_app/infrastructures/persistence/database/repositories/job_search_repo_db.py: implementation
+#   - auto_apply_app/infrastructures/persistence/in_memory/memory.py: in-memory implementation
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 """
 This module defines the repository interface for JobSearch entity persistence.
 """

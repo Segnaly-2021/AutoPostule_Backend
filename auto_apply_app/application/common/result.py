@@ -1,3 +1,26 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/common/result.py
+#
+# WHAT IT DOES:
+#   Defines Result (success value OR Error), the return type of every use case,
+#   plus ErrorCode (error category) and ErrorReason (stable i18n key for the UI).
+#   Use cases return failures instead of raising; controllers and presenters
+#   turn them into HTTP responses.
+#
+# USED BY:
+#   - auto_apply_app/application/use_cases/agent_use_cases.py: start/resume/kill results
+#   - auto_apply_app/application/use_cases/user_use_cases.py: auth and account results
+#   - auto_apply_app/application/use_cases/subscription_use_cases.py: billing results
+#   - auto_apply_app/application/use_cases/agent_state_use_cases.py: kill-switch results
+#   - auto_apply_app/application/use_cases/job_offer_use_cases.py: application results
+#   - auto_apply_app/application/use_cases/free_search_use_cases.py: free search results
+#   - auto_apply_app/application/use_cases/admin_use_cases.py: admin results
+#   - auto_apply_app/application/use_cases/run_context_use_cases.py: run context results
+#   - ... and 13 more
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 """
 This module contains the core error handling and result types for the application layer.
 These types provide a consistent way to handle success and failure cases across all use cases.
@@ -207,6 +230,8 @@ class Result(Generic[T]):
     _value: Optional[T] = None
     _error: Optional[Error] = None
 
+    # None means "not set" here, so Result.success(None) raises. Use cases with
+    # nothing to return must pass a real value such as True or a message dict.
     def __post_init__(self):
         if (self._value is None and self._error is None) or \
            (self._value is not None and self._error is not None):

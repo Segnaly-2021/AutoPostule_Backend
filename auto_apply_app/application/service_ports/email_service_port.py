@@ -1,3 +1,20 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/service_ports/email_service_port.py
+#
+# WHAT IT DOES:
+#   Interface for all outgoing email: password reset, verification codes,
+#   email-change notices and scheduled lifecycle messages.
+#   Callers and the Resend adapter name the verification argument `code`, not
+#   `verification_token` as declared here.
+#
+# USED BY:
+#   - auto_apply_app/application/use_cases/user_use_cases.py: sends account emails
+#   - auto_apply_app/infrastructures/configuration/container.py: wires the adapter
+#   - auto_apply_app/infrastructures/emailing_service/resend_email_service.py: implementation
+#
+# EXTERNAL DEPENDENCIES:
+#   - Resend: email delivery service behind the adapter (no import here)
+# ==============================================================================
 from abc import ABC, abstractmethod
 
 class EmailServicePort(ABC):

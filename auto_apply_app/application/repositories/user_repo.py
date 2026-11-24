@@ -1,3 +1,19 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/repositories/user_repo.py
+#
+# WHAT IT DOES:
+#   Interface for user profiles (name, contact details, resume, education).
+#   Login data is separate, in AuthRepository.
+#
+# USED BY:
+#   - auto_apply_app/application/repositories/unit_of_work.py: exposes it as user_repo
+#   - auto_apply_app/application/use_cases/job_search_use_cases.py: type for direct injection
+#   - auto_apply_app/infrastructures/persistence/database/repositories/user_repo_db.py: implementation
+#   - auto_apply_app/infrastructures/persistence/in_memory/memory.py: in-memory implementation
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 """
 This module defines the repository interface for User entity persistence.
 """

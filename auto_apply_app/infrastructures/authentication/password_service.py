@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/authentication/password_service.py
+#
+# WHAT IT DOES:
+#   Hashes and verifies passwords with Argon2. Argon2 is deliberately slow and
+#   memory-hungry, which makes stolen hashes expensive to crack. The container also
+#   passes this service to the flows that hash emailed verification codes.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/app.py: creates it and passes it to the container
+#
+# EXTERNAL DEPENDENCIES:
+#   - passlib: password hashing framework
+#   - argon2-cffi: the Argon2 implementation passlib calls
+# ==============================================================================
 from passlib.context import CryptContext
 from auto_apply_app.application.service_ports.password_service_port import PasswordServicePort
 

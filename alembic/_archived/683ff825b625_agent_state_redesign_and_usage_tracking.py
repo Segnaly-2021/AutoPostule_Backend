@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: alembic/_archived/683ff825b625_agent_state_redesign_and_usage_tracking.py
+#
+# WHAT IT DOES:
+#   ARCHIVED migration. Drops and recreates agent_states with its own id and a
+#   search_id, and creates agent_usages to count each user's runs per day.
+#
+# USED BY:
+#   - None: archived. Alembic only loads alembic/versions, so this no longer runs.
+#
+# EXTERNAL DEPENDENCIES:
+#   - Alembic: migration framework
+#   - SQLAlchemy: column and type definitions
+# ==============================================================================
+
 """agent_state_redesign_and_usage_tracking
 
 Revision ID: 683ff825b625

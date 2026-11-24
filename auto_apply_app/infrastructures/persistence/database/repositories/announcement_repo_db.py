@@ -1,3 +1,17 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/persistence/database/repositories/announcement_repo_db.py
+#
+# WHAT IT DOES:
+#   Reads and writes in-app announcements and per-user dismissals. The user path
+#   returns published, in-window, undismissed notices; the admin path manages them.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/persistence/database/repositories/unit_of_work_repo_db.py: uow.announcement_repo
+#
+# EXTERNAL DEPENDENCIES:
+#   - SQLAlchemy: async queries and PostgreSQL ON CONFLICT
+#   - PostgreSQL (Supabase): announcements and announcement_views tables
+# ==============================================================================
 # auto_apply_app/infrastructures/persistence/database/repositories/announcement_repo_db.py
 from datetime import datetime
 from typing import Optional

@@ -1,3 +1,19 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/payment/stripe_payment.py
+#
+# WHAT IT DOES:
+#   Adapter for Stripe billing. It creates hosted Checkout pages and Customer Portal
+#   links, syncs customer emails, and verifies incoming webhooks. Payment flow: the
+#   user pays on Stripe, Stripe calls POST /subscription/webhook, this file checks the
+#   signature, and HandlePaymentWebhookUseCase updates the subscription.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/app.py: injected as payment_port
+#
+# EXTERNAL DEPENDENCIES:
+#   - stripe: official SDK for Checkout, Billing Portal, Customers and Webhooks
+#   - Stripe: the payment service (STRIPE_API_KEY, STRIPE_WEBHOOK_SECRET)
+# ==============================================================================
 import stripe
 import logging
 from typing import Any, Dict, Optional
@@ -28,6 +44,9 @@ class StripePaymentAdapter(PaymentPort):
         Initializes the Stripe Checkout flow.
         We pass the user_id in metadata so we can identify them in the webhook.
         """
+        # NOTE: possible issue: this is the synchronous Stripe call inside an async method,
+        # so it blocks the event loop (all requests on this worker) until Stripe answers.
+        # The portal and customer-update calls below do the same.
         session = stripe.checkout.Session.create(
             customer_email=email,
             payment_method_types=['card'],
@@ -83,6 +102,9 @@ class StripePaymentAdapter(PaymentPort):
         Verifies the signature to prevent 'webhook spoofing'.
         """
         try:
+            # The webhook URL is public, so this signature check is what proves the
+            # call came from Stripe. It must receive the exact raw request bytes:
+            # re-serialized JSON would not match the signature.
             event = stripe.Webhook.construct_event(
                 payload, sig_header, self.webhook_secret
             )
@@ -90,6 +112,9 @@ class StripePaymentAdapter(PaymentPort):
         except ValueError as e:
             print(f"STRIPE WEBHOOK PAYLOAD ERROR: {e}")
             raise Exception("Invalid payload")
+        # NOTE: possible issue: confirm `stripe.error` still exists in the pinned stripe==14.4.1;
+        # newer SDKs expose this as stripe.SignatureVerificationError. If it is gone, a bad
+        # signature raises AttributeError here (the request is still rejected).
         except stripe.error.SignatureVerificationError as e:
             print(f"STRIPE WEBHOOK SIGNATURE ERROR: {e}")
             raise Exception("Invalid signature")

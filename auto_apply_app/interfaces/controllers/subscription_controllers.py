@@ -1,3 +1,20 @@
+# ==============================================================================
+# FILE: auto_apply_app/interfaces/controllers/subscription_controllers.py
+#
+# WHAT IT DOES:
+#   Adapter for billing: reads a subscription, creates Stripe checkout and portal
+#   sessions, and passes raw webhook bytes and signature to the webhook use case.
+#   NOTE: checkout and portal results actually arrive as {"message": ...}, so the
+#   URL payload travels in SubViewModel.message despite the inline comments below.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/routers/subscription.py: billing routes
+#   - auto_apply_app/infrastructures/configuration/container.py: builds this controller
+#
+# EXTERNAL DEPENDENCIES:
+#   - Stripe: payment provider reached through the use cases
+# ==============================================================================
+
 from dataclasses import dataclass
 
 from auto_apply_app.interfaces.viewmodels.base import OperationResult

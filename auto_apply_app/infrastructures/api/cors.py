@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/api/cors.py
+#
+# WHAT IT DOES:
+#   Holds the list of website origins (scheme + host + port) allowed to call this
+#   API from a browser. The CORS middleware uses it, and the page-view tracker
+#   uses it as a server-side origin check.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/app.py: passes it to CORSMiddleware
+#   - auto_apply_app/infrastructures/api/routers/analytics.py: drops page views from other origins
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 """
 The single list of origins allowed to talk to this API.
 

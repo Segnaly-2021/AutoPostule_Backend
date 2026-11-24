@@ -1,3 +1,16 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/repositories/agent_usage_repo.py
+#
+# WHAT IT DOES:
+#   Interface for the daily agent-run counter, one row per user and UTC date.
+#
+# USED BY:
+#   - auto_apply_app/application/repositories/unit_of_work.py: exposes it as agent_usage_repo
+#   - auto_apply_app/infrastructures/persistence/database/repositories/agent_usage_repo_db.py: implementation
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 # auto_apply_app/application/repositories/agent_usage_repo.py
 from abc import ABC, abstractmethod
 from uuid import UUID

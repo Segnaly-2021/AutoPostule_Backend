@@ -1,3 +1,24 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/api/app.py
+#
+# WHAT IT DOES:
+#   Builds the FastAPI application. create_fastapi_app() sets up rate limiting,
+#   error handlers, middleware and routers. lifespan() runs at server start and
+#   stop: it builds the dependency-injection container and stores it on app.state.
+#   APP_ROLE selects what this process serves: "api" (everything except free search)
+#   or "free_search" (only the free-search route, on the browser-capable image).
+#
+# USED BY:
+#   - main.py: calls create_fastapi_app() to create the ASGI app that uvicorn serves
+#
+# EXTERNAL DEPENDENCIES:
+#   - fastapi: web framework, routing and CORS middleware
+#   - slowapi: per-IP rate limiting and its 429 handler
+#   - SQLAlchemy / PostgreSQL (Supabase): engine disposed at shutdown in DATABASE mode
+#   - Concrete adapters built here reach Google Cloud Storage, Stripe, Resend and
+#     Cloudflare Turnstile
+#   - Cloud Run: hosts this app; ENV and APP_ROLE are set per service
+# ==============================================================================
 from contextlib import asynccontextmanager
 import os
 from fastapi import FastAPI
@@ -64,6 +85,9 @@ from auto_apply_app.infrastructures.api.cors import ALLOWED_ORIGINS
 logger = logging.getLogger(__name__)
 
 
+# FastAPI "lifespan": code before `yield` runs once at startup, before any request
+# is served; code after `yield` runs once at shutdown. A failure before `yield`
+# (for example a missing JWT_SECRET) stops the server from starting.
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -73,11 +97,16 @@ async def lifespan(app: FastAPI):
     
     config = Config()
 
+    # NOTE: this branch only logs. No database connection is opened or checked here,
+    # so a bad DATABASE_URL shows up on the first query, despite the message below.
     if config.get_repository_type() == RepositoryType.DATABASE:
         logger.info("PostgreSQL Database initialized and verified.")
     else:
         logger.info("Running in MEMORY mode. Skipping DB initialization.")
     
+    # Composition root: the one place where concrete adapters (Stripe, GCS, JWT...)
+    # are chosen and handed to the inner layers, which only know their abstract ports.
+    # Several constructors raise when their env var is missing, which fails startup.
     container = create_application(
         user_presenter=WebUserPresenter(),
         job_presenter=WebJobPresenter(),
@@ -99,6 +128,8 @@ async def lifespan(app: FastAPI):
         announcement_presenter=WebAnnouncementPresenter(),
     )
     
+    # app.state is shared across requests. dependencies/container_dep.py reads the
+    # container from here, which is how every route reaches its controller.
     app.state.container = container
     app.state.config = config
     
@@ -109,6 +140,8 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down application...")
     
     if config.get_repository_type() == RepositoryType.DATABASE:
+        # The engine uses NullPool (see session.py), so this has few or no idle
+        # connections to close. The Redis client is not closed here.
         await engine.dispose()
         logger.info("PostgreSQL connection pool closed successfully.")
         
@@ -122,6 +155,8 @@ def create_fastapi_app() -> FastAPI:
     is_production = os.getenv("ENV", "development") == "production"
     app_role = os.getenv("APP_ROLE", "api").lower()   # "api" | "free_search"
 
+    # Passing None for the three doc URLs disables Swagger, ReDoc and the OpenAPI JSON
+    # in production, so the API does not publish a map of its own routes.
     app = FastAPI(
         title="Auto Apply API",
         description="Job application automation service",
@@ -132,6 +167,8 @@ def create_fastapi_app() -> FastAPI:
         lifespan=lifespan
     )
 
+    # slowapi's @limiter.limit decorators look up the limiter on app.state at request
+    # time, and the handler turns RateLimitExceeded into an HTTP 429.
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -139,6 +176,13 @@ def create_fastapi_app() -> FastAPI:
     # This ensures no raw error (SQL, asyncpg, etc.) ever reaches the frontend
     register_exception_handlers(app)
 
+    # Middleware order: the LAST one added is the OUTERMOST. A request therefore goes
+    # CORS -> security headers -> IP blocklist -> route, and the response comes back
+    # the other way, so even a blocklist 403 gets CORS and security headers.
+    #
+    # NOTE: possible issue: Starlette runs the catch-all Exception handler outside all
+    # of these, so an unhandled 500 has no CORS headers. A browser then reports a CORS
+    # error, and the frontend cannot read the error_id in the response.
     app.middleware("http")(ip_blocklist_middleware)
     app.middleware("http")(security_headers_middleware)
 

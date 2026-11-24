@@ -1,3 +1,19 @@
+# ==============================================================================
+# FILE: tests/test_input_backends.py
+#
+# WHAT IT DOES:
+#   Protects the CDP and X11 input backends: backend selection, viewport-to-screen
+#   click mapping, wheel remainders, key translation, xdotool failure handling,
+#   and finding the right browser window.
+#
+# USED BY:
+#   - pytest: test entry point; nothing imports it
+#
+# EXTERNAL DEPENDENCIES:
+#   - pytest: test runner and fixtures
+#   - xdotool / X11: the system tools whose wrapper logic is tested
+# ==============================================================================
+
 """The input backend seam, and the arithmetic that decides where a click lands.
 
 The mapping and the wheel quantisation are the two places where the X11 backend

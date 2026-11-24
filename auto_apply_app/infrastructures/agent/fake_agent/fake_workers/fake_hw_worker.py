@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/agent/fake_agent/fake_workers/fake_hw_worker.py
+#
+# WHAT IT DOES:
+#   STATUS: LIVE. The only worker the free-search service actually runs.
+#   Anonymous, search-only HelloWork scraper: no login, no LLM, no applications.
+#   Opens headless Chromium, searches, and returns JobSnippet objects.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/agent/fake_agent/fake_master/fake_master_agent.py: receives the whole search quota
+#
+# EXTERNAL DEPENDENCIES:
+#   - playwright / Chromium: headless browser
+#   - HelloWork (hellowork.com): the job board it searches
+# ==============================================================================
 # auto_apply_app/infrastructures/agent/fake_workers/fake_hw_worker.py
 
 from typing import List, Optional

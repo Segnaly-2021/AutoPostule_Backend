@@ -1,3 +1,19 @@
+# ==============================================================================
+# FILE: alembic/_archived/31c54c62cbb0_initial_schema_sync.py
+#
+# WHAT IT DOES:
+#   ARCHIVED migration. Root of the old migration chain: creates the original
+#   schema, including users, auth_users, board_credentials and job_searches.
+#   The live chain now starts at alembic/versions/6dc1a09af310 instead.
+#
+# USED BY:
+#   - None: archived. Alembic only loads alembic/versions, so this no longer runs.
+#
+# EXTERNAL DEPENDENCIES:
+#   - Alembic: migration framework
+#   - SQLAlchemy: column and type definitions
+# ==============================================================================
+
 """initial_schema_sync
 
 Revision ID: 31c54c62cbb0

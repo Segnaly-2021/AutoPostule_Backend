@@ -1,3 +1,17 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/progress/in_memory_progress_broker.py
+#
+# WHAT IT DOES:
+#   In-process version of the progress broker for MEMORY mode and tests. Each search
+#   has an asyncio.Queue: the agent puts events in and the SSE generator takes them out.
+#   Unlike Redis Pub/Sub, a queue keeps events published before the reader starts.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/configuration/container.py: progress_broker without Redis
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 import asyncio
 from collections import defaultdict
 from typing import AsyncIterator, Dict, Optional
@@ -32,6 +46,7 @@ class InMemoryProgressBroker(ProgressBrokerPort):
                 try:
                     frame = await asyncio.wait_for(q.get(), timeout=1.0)
                 except asyncio.TimeoutError:
+                    # None means "nothing yet"; the SSE route turns it into a heartbeat.
                     yield None
                     continue
                 if frame.get(_EOT):

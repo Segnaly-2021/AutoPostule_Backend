@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/use_cases/run_context_use_cases.py
+#
+# WHAT IT DOES:
+#   Rebuilds everything an agent run needs from just (user_id, search_id). This
+#   is what lets a run start in a separate Cloud Run Job, since entities cannot
+#   be passed across processes.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/agent/runner.py: loads context before running
+#   - auto_apply_app/infrastructures/configuration/container.py: builds the use cases
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 import logging
 from dataclasses import dataclass
 from typing import Dict, List, Optional

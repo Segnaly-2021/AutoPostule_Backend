@@ -1,3 +1,25 @@
+# ==============================================================================
+# FILE: auto_apply_app/domain/entities/user_subscription.py
+#
+# WHAT IT DOES:
+#   The user's plan and billing state, and the home of the plan rules: who may run
+#   the agent, daily and per-cycle application limits, scrape budget, AI credits,
+#   grace period, and what happens when a billing cycle starts or a payment fails.
+#
+# USED BY:
+#   - auto_apply_app/application/dtos/subscription_dtos.py: maps to responses
+#   - auto_apply_app/application/repositories/subscription_repo.py: repository interface
+#   - auto_apply_app/application/service_ports/agent_port.py: agent method signatures
+#   - auto_apply_app/application/use_cases/run_context_use_cases.py: loads for a run
+#   - auto_apply_app/application/use_cases/user_use_cases.py: creates it at signup
+#   - auto_apply_app/infrastructures/agent/master/master_agent.py: enforces limits in a run
+#   - auto_apply_app/infrastructures/agent/state.py: agent state type
+#   - auto_apply_app/infrastructures/persistence/database/repositories/subscription_repo_db.py: persistence
+#   - ... and 2 more
+#
+# EXTERNAL DEPENDENCIES:
+#   - Stripe: stores its customer and subscription ids (no import here)
+# ==============================================================================
 from dataclasses import dataclass, field
 from datetime import datetime,timezone, timedelta
 from uuid import UUID
@@ -50,6 +72,8 @@ class UserSubscription(Entity):
         if datetime.now(timezone.utc) > effective_deadline:
             return False            
         
+        # Past-due plans: BASIC stops immediately, PREMIUM keeps running through
+        # its grace days (see calculate_grace_days).
         if self.is_past_due and self.account_type == ClientType.BASIC:
             return False
 

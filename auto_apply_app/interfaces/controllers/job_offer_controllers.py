@@ -1,3 +1,19 @@
+# ==============================================================================
+# FILE: auto_apply_app/interfaces/controllers/job_offer_controllers.py
+#
+# WHAT IT DOES:
+#   Adapter for the applications dashboard: filtered lists, response and interview
+#   toggles, analytics, and daily counts. Passes user_id to every use case so each
+#   request is scoped to the caller's own applications.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/routers/application.py: application routes
+#   - auto_apply_app/infrastructures/configuration/container.py: builds this controller
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
+
 # auto_apply_app/interfaces/controllers/job_offer_controller.py
 
 from dataclasses import dataclass

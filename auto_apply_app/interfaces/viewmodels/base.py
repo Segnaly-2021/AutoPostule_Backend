@@ -1,3 +1,27 @@
+# ==============================================================================
+# FILE: auto_apply_app/interfaces/viewmodels/base.py
+#
+# WHAT IT DOES:
+#   Defines ErrorViewModel and OperationResult, the success-or-error wrapper every
+#   controller returns. Routers pass it to handle_result, which returns the value
+#   or raises the matching HTTP error.
+#   Watch out: succeed(None) raises ValueError, so a success must carry a value.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/dependencies/result.py: converts it to HTTP
+#   - auto_apply_app/interfaces/controllers/agent_controllers.py: return type
+#   - auto_apply_app/interfaces/controllers/auth_controllers.py: return type
+#   - auto_apply_app/interfaces/controllers/user_controllers.py: return type
+#   - auto_apply_app/interfaces/controllers/job_offer_controllers.py: return type
+#   - auto_apply_app/interfaces/controllers/subscription_controllers.py: return type
+#   - auto_apply_app/interfaces/controllers/admin_controllers.py: return type
+#   - auto_apply_app/interfaces/controllers/announcement_controllers.py: return type
+#   - ... and 7 more
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
+
 from typing import Generic, TypeVar, Optional
 from dataclasses import dataclass
 

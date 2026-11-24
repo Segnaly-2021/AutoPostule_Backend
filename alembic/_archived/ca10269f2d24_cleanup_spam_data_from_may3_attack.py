@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: alembic/_archived/ca10269f2d24_cleanup_spam_data_from_may3_attack.py
+#
+# WHAT IT DOES:
+#   ARCHIVED data migration, with no schema change. Permanently deletes every user
+#   whose auth row was created between 16:00 and 19:00 UTC on 2026-05-03; foreign
+#   key cascades remove their data. The downgrade cannot restore them.
+#
+# USED BY:
+#   - None: archived. Alembic only loads alembic/versions, so this no longer runs.
+#
+# EXTERNAL DEPENDENCIES:
+#   - Alembic: migration framework
+# ==============================================================================
+
 """cleanup_spam_data_from_may3_attack
 
 Revision ID: ca10269f2d24

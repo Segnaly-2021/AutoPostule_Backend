@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: alembic/_archived/c4e1a9b7d2f8_add_pending_email_to_auth_users.py
+#
+# WHAT IT DOES:
+#   ARCHIVED migration. Adds the nullable auth_users.pending_email column. The
+#   live chain makes the same change in alembic/versions/cc39489ef754.
+#
+# USED BY:
+#   - None: archived. Alembic only loads alembic/versions, so this no longer runs.
+#
+# EXTERNAL DEPENDENCIES:
+#   - Alembic: migration framework
+#   - SQLAlchemy: column and type definitions
+# ==============================================================================
+
 """add pending_email to auth_users
 
 Revision ID: c4e1a9b7d2f8

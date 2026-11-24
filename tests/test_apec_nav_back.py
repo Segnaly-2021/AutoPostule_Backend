@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: tests/test_apec_nav_back.py
+#
+# WHAT IT DOES:
+#   Protects how the APEC worker gets back to the results list after an offer,
+#   including interstitial pages and missing back links. Uses stubs, no browser,
+#   and inspects the worker source with `ast` to check its call sites.
+#
+# USED BY:
+#   - pytest: test entry point; nothing imports it
+#
+# EXTERNAL DEPENDENCIES:
+#   - pytest: test runner and fixtures
+# ==============================================================================
+
 """How APEC returns to the results list.
 
 Two independent steps, because APEC can put up to two pages between an offer and

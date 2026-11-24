@@ -1,3 +1,19 @@
+# ==============================================================================
+# FILE: tests/test_asset_blocking.py
+#
+# WHAT IT DOES:
+#   Protects bandwidth saving on paid proxies: blocking is off by default, captcha
+#   hosts stay allowed, blocked images still look loaded, and the tracking blocker
+#   keeps working. Some tests launch a real local Chromium through Playwright.
+#
+# USED BY:
+#   - pytest: test entry point; nothing imports it
+#
+# EXTERNAL DEPENDENCIES:
+#   - pytest: test runner and fixtures
+#   - Playwright / Chromium: real browser for the request-routing tests
+# ==============================================================================
+
 """Residential bandwidth: what the browser is allowed to pay for.
 
 Residential proxy traffic is billed per GB and the agent reads the DOM, never a

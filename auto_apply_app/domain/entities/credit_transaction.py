@@ -1,3 +1,20 @@
+# ==============================================================================
+# FILE: auto_apply_app/domain/entities/credit_transaction.py
+#
+# WHAT IT DOES:
+#   One row of the append-only AI credit ledger: a signed change and the balance
+#   after it. Preserves history that the billing-cycle balance reset would erase.
+#
+# USED BY:
+#   - auto_apply_app/application/repositories/credit_transaction_repo.py: repository interface
+#   - auto_apply_app/application/use_cases/subscription_use_cases.py: records grants
+#   - auto_apply_app/infrastructures/persistence/database/repositories/credit_transaction_repo_db.py: persistence
+#   - auto_apply_app/infrastructures/persistence/in_memory/memory.py: in-memory store
+#   - tests/test_messaging.py: test fixtures
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from uuid import UUID

@@ -1,3 +1,17 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/persistence/database/repositories/page_view_repo_db.py
+#
+# WHAT IT DOES:
+#   Stores anonymous page views and computes visitor metrics: unique visitors, views,
+#   signed-in visitors and sessions. Also deletes rows past the retention period.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/persistence/database/repositories/unit_of_work_repo_db.py: uow.page_view_repo
+#
+# EXTERNAL DEPENDENCIES:
+#   - SQLAlchemy: async queries and raw SQL text()
+#   - PostgreSQL (Supabase): the page_views table and LAG() window function
+# ==============================================================================
 # =============================================================================
 # page_view_repo_db.py
 # =============================================================================

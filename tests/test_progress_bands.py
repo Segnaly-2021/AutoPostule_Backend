@@ -1,3 +1,17 @@
+# ==============================================================================
+# FILE: tests/test_progress_bands.py
+#
+# WHAT IT DOES:
+#   Protects submit progress reporting: the right track per plan, a steady climb,
+#   and 100% only on the last job. Also inspects worker source with `ast`.
+#
+# USED BY:
+#   - pytest: test entry point; nothing imports it
+#
+# EXTERNAL DEPENDENCIES:
+#   - pytest: test runner and fixtures
+# ==============================================================================
+
 """The progress bar must climb steadily and only fill on the last job."""
 import ast
 import asyncio

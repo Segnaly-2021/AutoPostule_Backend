@@ -1,3 +1,19 @@
+# ==============================================================================
+# FILE: auto_apply_app/interfaces/viewmodels/user_vm.py
+#
+# WHAT IT DOES:
+#   Immutable response shapes for user profiles, resume uploads, login tokens,
+#   subscription details, and simple message responses.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/routers/user.py: response typing
+#   - auto_apply_app/interfaces/presenters/base_presenter.py: UserPresenter and SubPresenter types
+#   - auto_apply_app/interfaces/presenters/web.py: builds these view models
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
+
 from dataclasses import dataclass
 from typing import Optional 
 

@@ -1,3 +1,19 @@
+# ==============================================================================
+# FILE: auto_apply_app/interfaces/controllers/job_search_controllers.py
+#
+# WHAT IT DOES:
+#   Synchronous create, read, update, complete and delete handlers for job searches.
+#   Nothing constructs this controller; agent_controllers.py handles live searches.
+#   NOTE: possible issue: if revived, its success path fails because
+#   WebJobSearchPresenter.present_search reads fields JobSearch does not have.
+#
+# USED BY:
+#   - no importers found (likely dead code)
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
+
 from dataclasses import dataclass
 from typing import List, Optional
 

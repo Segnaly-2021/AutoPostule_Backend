@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: auto_apply_app/interfaces/controllers/admin_controllers.py
+#
+# WHAT IT DOES:
+#   Adapter between the admin API route and the admin metrics use case. Runs the
+#   use case and wraps the presented overview or error in an OperationResult.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/routers/admin.py: handles the overview route
+#   - auto_apply_app/infrastructures/configuration/container.py: builds this controller
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
+
 # auto_apply_app/interfaces/controllers/admin_controllers.py
 
 from dataclasses import dataclass

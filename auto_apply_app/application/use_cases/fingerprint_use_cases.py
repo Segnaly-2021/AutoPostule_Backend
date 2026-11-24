@@ -1,3 +1,22 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/use_cases/fingerprint_use_cases.py
+#
+# WHAT IT DOES:
+#   Chooses the browser device profile for one run on one board, retiring and
+#   replacing old profiles as needed. FINGERPRINT_MODE selects `pool` or `per_run`.
+#   FINGERPRINT_POOL_SIZE, FINGERPRINT_DEVICE_MAX_AGE_DAYS,
+#   FINGERPRINT_DEVICE_MAX_SESSIONS and FINGERPRINT_RETIRED_KEEP tune the pool.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/agent/create_agent.py: injects it into the agent
+#   - auto_apply_app/infrastructures/agent/master/master_agent.py: resolves each run's profile
+#   - auto_apply_app/infrastructures/configuration/container.py: builds the use case
+#   - scripts/preflight.py: pre-run check
+#   - tests/test_fingerprint_rotation.py: test coverage
+#
+# EXTERNAL DEPENDENCIES:
+#   - Google Cloud Storage: callers delete cookie jars of retired profiles (no import here)
+# ==============================================================================
 # auto_apply_app/application/use_cases/fingerprint_use_cases.py
 import logging
 import os

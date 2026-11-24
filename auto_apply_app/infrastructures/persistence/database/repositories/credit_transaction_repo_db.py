@@ -1,3 +1,17 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/persistence/database/repositories/credit_transaction_repo_db.py
+#
+# WHAT IT DOES:
+#   Append-only ledger of AI credit movements, used for admin metrics such as credits
+#   consumed and first purchases. CONSUME rows are written by SubscriptionRepoDB.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/persistence/database/repositories/unit_of_work_repo_db.py: uow.credit_tx_repo
+#
+# EXTERNAL DEPENDENCIES:
+#   - SQLAlchemy: async queries and aggregates
+#   - PostgreSQL (Supabase): the credit_transactions table
+# ==============================================================================
 # =============================================================================
 # credit_transaction_repo_db.py
 # =============================================================================

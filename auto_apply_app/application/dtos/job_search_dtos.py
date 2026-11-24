@@ -1,3 +1,21 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/dtos/job_search_dtos.py
+#
+# WHAT IT DOES:
+#   Request and response shapes for job searches. JobSearchSummaryResponse and
+#   ListRecentSearchesRequest serve the live "recent searches" list. The CRUD
+#   DTOs serve job_search_use_cases.py, whose controller nothing imports.
+#
+# USED BY:
+#   - auto_apply_app/application/use_cases/agent_use_cases.py: summary response
+#   - auto_apply_app/application/use_cases/job_search_use_cases.py: CRUD inputs/outputs
+#   - auto_apply_app/interfaces/controllers/job_search_controllers.py: builds requests
+#   - auto_apply_app/interfaces/presenters/base_presenter.py: presenter type hints
+#   - auto_apply_app/interfaces/presenters/web.py: presents search summaries
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 from dataclasses import dataclass
 from typing import Optional, Dict, List, Self
 from uuid import UUID
@@ -50,6 +68,8 @@ class GetJobSearchRequest:
         if not self.job_search_id.strip():
             raise ValueError("Job search ID is required")
 
+    # NOTE: possible issue: this class has no job_offer_id field, so calling this
+    # raises AttributeError (it likely should read self.job_search_id).
     def to_execution_params(self) -> Dict:
         return {"job_search_id": UUID(self.job_offer_id)}
 

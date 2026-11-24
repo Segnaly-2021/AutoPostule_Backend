@@ -1,3 +1,17 @@
+# ==============================================================================
+# FILE: tests/test_pricing.py
+#
+# WHAT IT DOES:
+#   Protects plan limits: volumes, daily caps, scrape budgets and credits must fit
+#   together, zero credits block a run, and a new billing cycle restores access.
+#
+# USED BY:
+#   - pytest: test entry point; nothing imports it
+#
+# EXTERNAL DEPENDENCIES:
+#   - pytest: test runner and fixtures
+# ==============================================================================
+
 """Plan allowances must be solvent against each other.
 
 The three limits are not independent: the scrape budget decides how many cover

@@ -1,3 +1,20 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/agent/fake_agent/fake_master/fake_master_agent.py
+#
+# WHAT IT DOES:
+#   STATUS: LIVE. Runs the free-search feature (APP_ROLE=free_search service).
+#   Despite the name it scrapes real listings, anonymously. "Fake" means no login,
+#   no LLM, no saved applications, and no LangGraph (plain asyncio.gather).
+#   Today it sends the whole quota to HelloWork; the other workers are not launched.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/agent/fake_agent/create_fake_agent.py: builds it
+#   - auto_apply_app/application/use_cases/free_search_use_cases.py: calls search_all_boards (duck-typed, no import)
+#
+# EXTERNAL DEPENDENCIES:
+#   - None directly (standard library only); its workers use Playwright and Chromium
+#   - HelloWork (hellowork.com): the only board currently searched
+# ==============================================================================
 # auto_apply_app/infrastructures/agent/fake_master.py
 
 import asyncio
@@ -94,6 +111,9 @@ class FakeMasterAgent:
                     all_jobs.extend(worker_result)
                 else:
                     # Worker returned an exception (return_exceptions=True)
+                    # NOTE: possible issue: with HelloWork as the only worker, its crash
+                    # still ends in status "success" with 0 jobs, so callers cannot
+                    # tell a failed search from an empty one.
                     print(f"⚠️ Worker failed: {worker_result}")
 
             jobs_dict = [job.to_dict() for job in all_jobs]

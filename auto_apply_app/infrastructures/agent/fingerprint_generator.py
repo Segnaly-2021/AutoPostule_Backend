@@ -1,3 +1,21 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/agent/fingerprint_generator.py
+#
+# WHAT IT DOES:
+#   Creates believable browser "device personas": screen, GPU, CPU, memory, platform
+#   and Chrome version that fit together. It also derives a per-run variant (window
+#   size and canvas/audio noise) that is repeatable for the same run token.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/configuration/container.py: injected as the generator port
+#   - tests/conftest.py: shared fixtures
+#   - tests/test_fingerprint.py: generation tests
+#   - tests/test_fingerprint_rotation.py: rotation tests
+#   - tests/test_viewport_fit.py: viewport tests
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 # auto_apply_app/infrastructures/agent/fingerprint_generator.py
 import hashlib
 import random

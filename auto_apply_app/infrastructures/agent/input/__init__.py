@@ -1,3 +1,17 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/agent/input/__init__.py
+#
+# WHAT IT DOES:
+#   Package entry point for input backends. Re-exports the backend interface and
+#   the helpers that choose, attach and fetch a page's backend.
+#
+# USED BY:
+#   - tests/test_display_selection.py: imports from the input package
+#   - tests/test_input_backends.py: imports from the input package
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 """Input backends: how a synthesized action actually reaches the browser.
 
 `human_behavior` decides the SHAPE of an action — the curve the cursor takes, the

@@ -1,3 +1,26 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/use_cases/user_use_cases.py
+#
+# WHAT IT DOES:
+#   All account flows: register, email-code verification, login, logout, password
+#   change and reset, profile, resume upload, account deletion, verified email
+#   change, and marketing unsubscribe. Emails and Stripe sync run after commit, so
+#   their failure cannot undo a saved change. Reads API_PUBLIC_URL for unsubscribe links.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/configuration/container.py: builds the use cases
+#   - auto_apply_app/interfaces/controllers/auth_controllers.py: auth endpoints
+#   - auto_apply_app/interfaces/controllers/user_controllers.py: profile endpoints
+#   - messaging_main.py: builds unsubscribe links for lifecycle emails
+#   - tests/test_messaging.py: test coverage
+#
+# EXTERNAL DEPENDENCIES:
+#   - Resend: sends account emails, through EmailServicePort (no import here)
+#   - Redis: resend and email-change cooldowns, through RateLimiterPort (no import here)
+#   - Google Cloud Storage: resume files, through FileStoragePort (no import here)
+#   - Stripe: customer email sync, through PaymentPort (no import here)
+#   - PyJWT and passlib: tokens and hashing, through their ports (no import here)
+# ==============================================================================
 from dataclasses import dataclass
 from uuid import UUID
 import datetime
@@ -183,6 +206,8 @@ class LoginUserUseCase:
             async with self.uow_factory() as uow:
                 auth_user = await uow.auth_repo.get_by_email(params["email"])
 
+                # NOTE: possible issue: the two failure messages below differ and the
+                # controller forwards err.message, so a client can tell which emails exist.
                 if not auth_user:
                     logger.info("Login failed: this email does not exist - %s", params["email"])
                     return Result.failure(Error.unauthorized(
@@ -982,6 +1007,10 @@ class ConfirmEmailChangeUseCase:
 # leave someone unable to stop mail they no longer want -- the failure modes point
 # in opposite directions, so the lifetime does too. One year outlives any message
 # still sitting in an inbox.
+# NOTE: possible issue (security): auth_deps.py never rejects tokens with a
+# `purpose` claim, and these share the login tokens' secret, issuer and audience.
+# So an emailed unsubscribe link works as a one-year login token for the account
+# (password-reset tokens have the same flaw for 15 minutes).
 UNSUBSCRIBE_TOKEN_TTL = datetime.timedelta(days=365)
 UNSUBSCRIBE_TOKEN_PURPOSE = "unsubscribe"
 

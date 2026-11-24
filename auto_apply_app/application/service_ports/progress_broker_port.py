@@ -1,3 +1,20 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/service_ports/progress_broker_port.py
+#
+# WHAT IT DOES:
+#   Interface for carrying live agent progress from the process running the agent
+#   to the API's SSE (Server-Sent Events) stream that updates the browser.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/agent/runner.py: publishes progress
+#   - auto_apply_app/infrastructures/api/routers/agent.py: subscribes for SSE
+#   - auto_apply_app/infrastructures/configuration/container.py: selects the broker
+#   - auto_apply_app/infrastructures/progress/in_memory_progress_broker.py: in-process implementation
+#   - auto_apply_app/infrastructures/progress/redis_progress_broker.py: Redis implementation
+#
+# EXTERNAL DEPENDENCIES:
+#   - Redis Pub/Sub: transport for the Redis broker (no import here)
+# ==============================================================================
 from abc import ABC, abstractmethod
 from typing import AsyncIterator, Optional
 

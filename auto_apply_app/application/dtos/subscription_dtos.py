@@ -1,3 +1,19 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/dtos/subscription_dtos.py
+#
+# WHAT IT DOES:
+#   Request and response shapes for billing: reading a subscription, starting a
+#   checkout, receiving a payment webhook and opening the billing portal.
+#
+# USED BY:
+#   - auto_apply_app/application/use_cases/subscription_use_cases.py: inputs and outputs
+#   - auto_apply_app/interfaces/controllers/subscription_controllers.py: builds requests
+#   - auto_apply_app/interfaces/presenters/base_presenter.py: presenter type hints
+#   - auto_apply_app/interfaces/presenters/web.py: presents subscriptions
+#
+# EXTERNAL DEPENDENCIES:
+#   - Stripe: the webhook payload and signature originate there (no import here)
+# ==============================================================================
 from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID

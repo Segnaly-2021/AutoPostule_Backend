@@ -1,3 +1,17 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/service_ports/fingerprint_generator_port.py
+#
+# WHAT IT DOES:
+#   Interface for creating browser device profiles: a stored persona, and the
+#   per-run variant derived from it. Used when resolving a run's browser identity.
+#
+# USED BY:
+#   - auto_apply_app/application/use_cases/fingerprint_use_cases.py: calls the generator
+#   - auto_apply_app/infrastructures/agent/fingerprint_generator.py: implementation
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 # auto_apply_app/application/service_ports/fingerprint_generator_port.py
 from abc import ABC, abstractmethod
 from typing import Sequence

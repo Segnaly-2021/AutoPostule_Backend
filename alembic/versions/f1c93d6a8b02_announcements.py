@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: alembic/versions/f1c93d6a8b02_announcements.py
+#
+# WHAT IT DOES:
+#   Active migration. Creates announcements (bilingual release notes with a publish
+#   flag and schedule) and announcement_views (which user dismissed which note).
+#
+# USED BY:
+#   - Alembic (alembic/env.py, scripts/migrate.sh): applied by `alembic upgrade`
+#
+# EXTERNAL DEPENDENCIES:
+#   - Alembic: migration framework
+#   - SQLAlchemy: column and type definitions
+# ==============================================================================
+
 """announcements + announcement_views for the in-app release modal
 
 Two tables so a release note can be published from the admin screen with no

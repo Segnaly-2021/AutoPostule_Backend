@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: auto_apply_app/interfaces/controllers/analytics_controllers.py
+#
+# WHAT IT DOES:
+#   Adapter for page-view tracking. Builds the request DTO, records the view through
+#   its use case, and returns an OperationResult. The router logs failures only.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/routers/analytics.py: page-view route
+#   - auto_apply_app/infrastructures/configuration/container.py: builds this controller
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
+
 # auto_apply_app/interfaces/controllers/analytics_controllers.py
 
 from dataclasses import dataclass

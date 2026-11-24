@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: auto_apply_app/interfaces/controllers/preference_controllers.py
+#
+# WHAT IT DOES:
+#   Adapter for user settings and job-board credentials. Converts raw credential
+#   dictionaries to DTOs before the use case stores them.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/routers/preferences.py: preference routes
+#   - auto_apply_app/infrastructures/configuration/container.py: builds this controller
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
+
 # auto_apply_app/interfaces/controllers/preferences_controller.py
 from dataclasses import dataclass
 from typing import Dict, Optional
@@ -56,6 +71,8 @@ class PreferencesController:
                     login = cred_data.get("login", "")
                     password = cred_data.get("password", "")
                     
+                    # Boards submitted with both fields blank are skipped, so an
+                    # untouched settings form does not send empty credentials.
                     if login or password:
                         credentials_dtos[board] = BoardCredentialDTO(
                             login=login,

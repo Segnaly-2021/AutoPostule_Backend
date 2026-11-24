@@ -1,3 +1,19 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/dtos/agent_dtos.py
+#
+# WHAT IT DOES:
+#   Request and response shapes for agent actions: start, resume, kill, and the
+#   Premium draft review actions (edit, approve, discard). Controllers build
+#   these from HTTP input and agent use cases consume them.
+#
+# USED BY:
+#   - auto_apply_app/application/use_cases/agent_use_cases.py: inputs and outputs
+#   - auto_apply_app/interfaces/controllers/agent_controllers.py: builds requests
+#   - auto_apply_app/interfaces/presenters/web.py: presents AgentResponse
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 # auto_apply_app/application/dtos/agent_dtos.py
 from dataclasses import dataclass
 from uuid import UUID

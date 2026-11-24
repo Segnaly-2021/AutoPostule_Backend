@@ -1,3 +1,17 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/persistence/database/repositories/user_preferences_repo_db.py
+#
+# WHAT IT DOES:
+#   Stores each user's agent settings: automation mode, active boards, AI model and
+#   creativity. Converts SQLAlchemy values to plain Python before they reach LangGraph.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/persistence/database/repositories/unit_of_work_repo_db.py: uow.user_pref_repo
+#
+# EXTERNAL DEPENDENCIES:
+#   - SQLAlchemy: async queries and ORM
+#   - PostgreSQL (Supabase): the user_preferences table
+# ==============================================================================
 # =============================================================================
 # user_preferences_repo_db.py
 # =============================================================================

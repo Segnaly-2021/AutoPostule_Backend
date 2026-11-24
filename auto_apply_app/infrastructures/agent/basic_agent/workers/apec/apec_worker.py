@@ -1,3 +1,21 @@
+# ==============================================================================
+# FILE: auto_apply_app/infrastructures/agent/basic_agent/workers/apec/apec_worker.py
+#
+# WHAT IT DOES:
+#   STATUS: LEGACY, dead code. Nothing imports this file.
+#   Early APEC scrape-and-apply worker, kept for reference only.
+#   The live worker is auto_apply_app/infrastructures/agent/workers/apec/apec_worker.py.
+#
+# USED BY:
+#   - no importers found (likely dead code)
+#
+# EXTERNAL DEPENDENCIES:
+#   - langgraph: worker subgraph
+#   - langchain_core: LLM message and model types
+#   - playwright / Chromium: browser automation
+#   - pdfplumber: resume PDF text extraction
+#   - APEC (apec.fr): the job board it drives
+# ==============================================================================
 import asyncio
 import json
 from langgraph.graph import StateGraph, END, START

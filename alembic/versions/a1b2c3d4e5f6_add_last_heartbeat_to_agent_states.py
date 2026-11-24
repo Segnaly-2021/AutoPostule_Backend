@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: alembic/versions/a1b2c3d4e5f6_add_last_heartbeat_to_agent_states.py
+#
+# WHAT IT DOES:
+#   Active migration. Adds the nullable agent_states.last_heartbeat timestamp,
+#   used to tell whether an agent run is still alive.
+#
+# USED BY:
+#   - Alembic (alembic/env.py, scripts/migrate.sh): applied by `alembic upgrade`
+#
+# EXTERNAL DEPENDENCIES:
+#   - Alembic: migration framework
+#   - SQLAlchemy: column and type definitions
+# ==============================================================================
+
 """add last_heartbeat to agent_states
 
 Revision ID: a1b2c3d4e5f6

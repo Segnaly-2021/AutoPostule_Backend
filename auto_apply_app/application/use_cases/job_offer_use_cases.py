@@ -1,3 +1,21 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/use_cases/job_offer_use_cases.py
+#
+# WHAT IT DOES:
+#   The user's application history: listing with filters, response and interview
+#   toggles, analytics and daily stats, plus cleanup of unsent APPROVED jobs.
+#   The Create/Get/DeleteJobOffer use cases at the bottom are synchronous and not
+#   referenced by the container or controllers.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/agent/create_agent.py: injects cleanup into the agent
+#   - auto_apply_app/infrastructures/agent/master/master_agent.py: runs cleanup
+#   - auto_apply_app/infrastructures/configuration/container.py: builds the use cases
+#   - auto_apply_app/interfaces/controllers/job_offer_controllers.py: calls them
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 import logging
 import math
 from dataclasses import dataclass

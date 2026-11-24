@@ -1,3 +1,24 @@
+# ==============================================================================
+# FILE: scripts/preflight.py
+#
+# WHAT IT DOES:
+#   Readiness check before running the agent. Inspects environment settings, the
+#   input backend, the fingerprint schema and the worker wiring, then prints ok,
+#   warn or FAIL lines. Exits 1 if anything blocks a run.
+#   `--resolve USER_ID` also exercises real fingerprint resolution for that user.
+#
+# USED BY:
+#   - scripts/migrate.sh: runs it to verify the database after migrating
+#
+# EXTERNAL DEPENDENCIES:
+#   - SQLAlchemy: inspects the live database schema
+#   - python-dotenv: loads the local .env file
+#   - Supabase: hosts the PostgreSQL database when REPOSITORY_TYPE is database
+#   - 2Captcha proxy: its settings are checked, with no proxy connection made
+#   - Google Cloud Storage: only the session bucket setting is checked
+#   - Xvfb, xdotool, python-xlib, x11vnc: availability is checked
+# ==============================================================================
+
 """Preflight for the fingerprint-rotation + pacing release.
 
 Checks the things that silently degrade instead of failing loudly, which is the
@@ -115,6 +136,7 @@ def _check_sticky_window():
 
     template = os.getenv("TWOCAPTCHA_USERNAME_TEMPLATE", "")
     budget = float(os.getenv("AGENT_HUMAN_BUDGET_S", 6300))
+    # The template's sessTime-<N> value is the sticky IP lifetime in minutes.
     match = re.search(r"sessTime-(\d+)", template)
     if not match:
         warn("  no sessTime found in TWOCAPTCHA_USERNAME_TEMPLATE — cannot verify "
@@ -319,6 +341,9 @@ async def check_resolve(user_id: str):
 
     app = create_worker_application()
     uc = app._agent_service.resolve_run_fingerprint
+
+    # NOTE: possible issue: this calls the real use case, which can create, update or
+    # retire the user's personas, so `--resolve` is not a read-only check.
 
     for board in ("apec", "wttj"):
         result = await uc.execute(UUID(user_id), board, "preflight-token")

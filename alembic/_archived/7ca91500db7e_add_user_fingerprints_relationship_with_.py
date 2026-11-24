@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: alembic/_archived/7ca91500db7e_add_user_fingerprints_relationship_with_.py
+#
+# WHAT IT DOES:
+#   ARCHIVED migration. Makes no schema change: upgrade and downgrade are both
+#   empty. An ORM relationship needs no database change, which is likely why.
+#
+# USED BY:
+#   - None: archived. Alembic only loads alembic/versions, so this no longer runs.
+#
+# EXTERNAL DEPENDENCIES:
+#   - Alembic: migration framework
+#   - SQLAlchemy: imported by the template, not used by the empty migration
+# ==============================================================================
+
 """add user_fingerprints relationship with users
 
 Revision ID: 7ca91500db7e

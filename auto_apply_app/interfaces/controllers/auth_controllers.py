@@ -1,3 +1,21 @@
+# ==============================================================================
+# FILE: auto_apply_app/interfaces/controllers/auth_controllers.py
+#
+# WHAT IT DOES:
+#   Adapter for account security flows: register, login, logout, password change
+#   and reset, email verification, email change, and marketing unsubscribe.
+#   Errors keep a stable `reason` (the frontend's translation key) and `details`
+#   such as retry_after, which is why error mapping is richer here than elsewhere.
+#
+# USED BY:
+#   - auto_apply_app/infrastructures/api/routers/user.py: auth and account routes
+#   - auto_apply_app/infrastructures/api/routers/messaging.py: unsubscribe route
+#   - auto_apply_app/infrastructures/configuration/container.py: builds this controller
+#
+# EXTERNAL DEPENDENCIES:
+#   - pydantic: EmailStr type for email parameters
+# ==============================================================================
+
 from dataclasses import dataclass
 from pydantic import EmailStr
 

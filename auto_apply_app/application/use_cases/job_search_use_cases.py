@@ -1,3 +1,18 @@
+# ==============================================================================
+# FILE: auto_apply_app/application/use_cases/job_search_use_cases.py
+#
+# WHAT IT DOES:
+#   Older synchronous CRUD use cases for job searches. Likely dead code: its only
+#   importer is job_search_controllers.py, which nothing imports, and it predates
+#   the current JobSearch fields and async repositories. Live search creation is
+#   in agent_use_cases.py.
+#
+# USED BY:
+#   - auto_apply_app/interfaces/controllers/job_search_controllers.py: only importer (itself unused)
+#
+# EXTERNAL DEPENDENCIES:
+#   - None (standard library only)
+# ==============================================================================
 import logging
 from dataclasses import dataclass
 
